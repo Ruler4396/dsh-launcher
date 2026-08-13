@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.1.6] - 2026-08-14
 
 ### 变更
 
@@ -15,6 +15,10 @@
 
 - **根治装→卸报错 1926/"无法设置文件…Config.Msi…的安全权限，错误: 5"**。根因：Windows Installer 在**卸载**期仍会创建回滚文件（.rbf）到安装盘根目录的 `Config.Msi`，并以用户身份对其设置安全，而该目录 ACL 由 MSI 服务硬编码为仅 SYSTEM/管理员（任何盘根/目录 ACL 都无法绕过，已实测）；非提权用户（含 UAC 过滤的管理员）在自定义 ACL 的磁盘（如本机 E:\）上必然失败。修复：per-machine 提权后，卸载事务以管理员身份匹配 `Config.Msi` 的 Administrators ACL，不再报错；另保留安装期 `DISABLEROLLBACK=1` 作额外保险。默认目录（C:）与非提权路径本无此问题
 - 从 0.1.5（per-user）升级：本机实测可自动升级（RemoveExistingProducts）；标准机器上 per-user 旧版注册在 HKCU、per-machine 新版找不到时，新版启动后会自动提示"检测到旧版本"，一键提权卸载旧版（无需手动清理，也不再有 1926 报错）
+
+> **升级提醒 / For users of older versions**
+> 0.1.6 修复了旧版本（per-user，0.1.5 及更早）在部分磁盘上"安装后立即卸载报错 1926/错误 5"的问题，并会自动清理机器上残留的旧版本，**建议尽快更新**。
+> 旧版本用户如果之前把 dsh-launcher 装到了 E:\ 等自定义目录，卸载旧版时可能看到 1926/"无法设置文件 Config.Msi 的安全权限，错误 5"提示——这是 Windows Installer 对回滚文件的系统级行为，**报错后产品仍会被正常删除**，不影响结果；更新到 0.1.6 后，新版首次启动会检测到旧版本并提示一键提权卸载（不再有 1926 报错）。如果升级后发现"设置 → 应用"里有两个 dsh-launcher，直接用新版弹出的提示清理即可。
 
 ## [0.1.5] - 2026-08-14
 
