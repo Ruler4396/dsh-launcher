@@ -155,7 +155,7 @@
     </Component>
   </Fragment>
 
-  <!-- 简单向导：Welcome → License → Options(三个勾选框) → InstallDir(自定义目录) → Ready → Install → Finish；
+  <!-- 简单向导：Welcome → License → Options(三个勾选框) → ChooseFolder(自定义目录) → Ready → Install → Finish；
        已安装时走 MaintenanceWelcome → MaintenanceType(修复/移除)。
        Id 带 _X64 后缀（<ui:WixUI> 引用时会按构建架构追加后缀）。 -->
   <Fragment>
@@ -163,13 +163,15 @@
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
       <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
       <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <!-- 自定义页使用的现代字体 -->
+      <TextStyle Id="DshUIFont" FaceName="Segoe UI" Size="9" />
+      <TextStyle Id="DshUIFontBold" FaceName="Segoe UI" Size="9" Bold="yes" />
       <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
 
       <DialogRef Id="WelcomeDlg" />
       <DialogRef Id="LicenseAgreementDlg" />
       <DialogRef Id="OptionsDlg" />
-      <DialogRef Id="InstallDirDlg" />
-      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="ChooseFolderDlg" />
       <DialogRef Id="InvalidDirDlg" />
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="ProgressDlg" />
@@ -195,17 +197,9 @@
       <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
       <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Condition="LicenseAccepted = &quot;1&quot;" />
 
-      <!-- InstallDirDlg：自定义安装目录（SetTargetPath + 路径校验 + 浏览） -->
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_X64" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
-      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
-      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
-      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
-      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="OptionsDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Condition="1" />
 
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="ChooseFolderDlg" Order="1" Condition="NOT Installed" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
 
@@ -219,28 +213,58 @@
     <UIRef Id="WixUI_Common" />
   </Fragment>
 
-  <!-- 安装选项对话框：三个勾选框；目录选择在下一步（InstallDirDlg） -->
+  <!-- 说明：现代文件夹选择器（浏览按钮）因 Windows Installer 在本环境的自定义动作
+       远程上下文崩溃（DTF 与 Type-38 exe 两种方案均复现）而移除；目录页支持直接输入路径。
+       CustomAction/Binary 相关代码保留在 git 历史（installer/Picker）供其他环境复用。 -->
+
+  <!-- 安装选项对话框：三个勾选框（Segoe UI 风格） -->
   <Fragment>
     <UI>
       <Dialog Id="OptionsDlg" Width="370" Height="270" Title="[ProductName] — 安装选项">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="!(loc.InstallDirDlgBannerBitmap)" />
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" Text="!(loc.InstallDirDlgTitle)" />
-        <Control Id="Description" Type="Text" X="15" Y="23" Width="340" Height="15" Transparent="yes" Text="选择要启用的功能" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" Text="{\DshUIFontBold}安装选项" />
+        <Control Id="Description" Type="Text" X="15" Y="23" Width="340" Height="15" Transparent="yes" Text="{\DshUIFont}选择要启用的功能" />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
-          <Publish Event="NewDialog" Value="LicenseAgreementDlg" Condition="1" />
-        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)">
-          <Publish Event="NewDialog" Value="InstallDirDlg" Condition="1" />
+          <Publish Event="NewDialog" Value="ChooseFolderDlg" Condition="1" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
           <Publish Event="EndDialog" Value="Return" Condition="1" />
         </Control>
-        <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="开机自启（登录时静默启动 dsh 服务）" />
-        <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="115" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建桌面快捷方式" />
-        <Control Id="MenuShortcut" Type="CheckBox" X="25" Y="145" Width="320" Height="17" Property="MENU_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建开始菜单快捷方式" />
-        <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="卸载只删除本应用的 7 个文件，不会删除目录里的其他内容（如与 DeepSeek Harness 共用目录也安全）。安装目录在下一步选择。" />
+        <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="{\DshUIFont}开机自启（登录时静默启动 dsh 服务）" />
+        <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="115" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="{\DshUIFont}创建桌面快捷方式" />
+        <Control Id="MenuShortcut" Type="CheckBox" X="25" Y="145" Width="320" Height="17" Property="MENU_SHORTCUT_OPTION" CheckBoxValue="1" Text="{\DshUIFont}创建开始菜单快捷方式" />
+        <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="{\DshUIFont}卸载只删除本应用的 7 个文件，不会删除目录里的其他内容（与 DeepSeek Harness 共用目录也安全）。" />
+      </Dialog>
+    </UI>
+  </Fragment>
+
+  <!-- 选择安装目录：现代风格，路径输入 + 系统现代文件夹选择器（浏览按钮） -->
+  <Fragment>
+    <UI>
+      <Dialog Id="ChooseFolderDlg" Width="370" Height="270" Title="[ProductName] — 选择安装目录">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" Text="{\DshUIFontBold}选择安装目录" />
+        <Control Id="Description" Type="Text" X="15" Y="23" Width="340" Height="15" Transparent="yes" Text="{\DshUIFont}选择 dsh-launcher 的安装位置" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="FolderLabel" Type="Text" X="20" Y="78" Width="330" Height="15" Text="{\DshUIFont}安装到：" />
+        <Control Id="Folder" Type="PathEdit" X="20" Y="95" Width="330" Height="19" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %LOCALAPPDATA%\dsh-launcher。可在此直接输入或粘贴其他路径。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
+          <Publish Event="NewDialog" Value="OptionsDlg" Condition="1" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)">
+          <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" Condition="1" />
+          <Publish Event="DoAction" Value="WixUIValidatePath_X64" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+          <Publish Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
+          <Publish Event="EndDialog" Value="Return" Condition="1" />
+        </Control>
       </Dialog>
     </UI>
   </Fragment>

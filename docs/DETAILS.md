@@ -123,7 +123,7 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
 
 **Q：能自定义安装目录吗？卸载会不会误删同目录的其他文件？**
-MSI 向导中有"选择安装目录"一步（可手动输入或浏览选择，默认 `%LOCALAPPDATA%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
+MSI 向导中有"选择安装目录"一步（Segoe UI 现代风格，可直接输入/粘贴路径，默认 `%LOCALAPPDATA%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
 
 **Q：安装/卸载报"无法设置文件…Config.Msi…的安全权限，错误: 5"或"错误 1926"？或一直提示"另一个安装正在进行中"(1618)？**
 这是 **Windows Installer 的系统级问题，与本安装包无关**：某次安装被中断（常见于强杀 msiexec 或断电）后，安装盘根目录的 `Config.Msi` 回滚目录权限损坏，会挡住该盘上所有后续安装/卸载事务。修复：
