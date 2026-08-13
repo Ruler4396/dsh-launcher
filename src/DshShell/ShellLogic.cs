@@ -1,0 +1,121 @@
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.Web.WebView2.Core;
+
+namespace DshWeb;
+
+/// <summary>
+/// 与 UI 无关的纯策略逻辑（文件名推导、权限策略、弹窗分类）。
+/// 独立成类以便单元测试覆盖；Program.cs 只负责 UI 与事件接线。
+/// </summary>
+public static class ShellLogic
+{
+    /// <summary>弹窗目标分类。</summary>
+    public enum PopupTarget
+    {
+        /// <summary>不拦截，保持 WebView2 默认行为（blob: / data: / about: 等）。</summary>
+        Default,
+        /// <summary>外部 http(s) 链接 → 系统默认浏览器。</summary>
+        External,
+        /// <summary>同源 http(s) 弹窗 → 壳内新建轻量窗口。</summary>
+        Internal,
+    }
+
+    /// <summary>Windows 保留设备名（这些名字带任意扩展名都不可用作文件名）。</summary>
+    private static readonly string[] ReservedNames =
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    /// <summary>MIME → 扩展名映射（用于 blob: 等无文件名下载的兜底）。</summary>
+    private static readonly Dictionary<string, string> MimeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["text/plain"] = ".txt",
+        ["text/markdown"] = ".md",
+        ["text/html"] = ".html",
+        ["text/csv"] = ".csv",
+        ["application/json"] = ".json",
+        ["application/pdf"] = ".pdf",
+        ["application/zip"] = ".zip",
+        ["application/x-zip-compressed"] = ".zip",
+        ["application/gzip"] = ".gz",
+        ["application/x-tar"] = ".tar",
+        ["image/png"] = ".png",
+        ["image/jpeg"] = ".jpg",
+        ["image/gif"] = ".gif",
+        ["image/webp"] = ".webp",
+        ["image/svg+xml"] = ".svg",
+        ["audio/mpeg"] = ".mp3",
+        ["audio/wav"] = ".wav",
+        ["video/mp4"] = ".mp4",
+    };
+
+    /// <summary>权限策略：自动放行的权限项（插件/DSH 依赖），其余保持默认拒绝。</summary>
+    internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind) =>
+        kind is CoreWebView2PermissionKind.Notifications
+            or CoreWebView2PermissionKind.ClipboardRead
+            or CoreWebView2PermissionKind.Autoplay
+            or CoreWebView2PermissionKind.MultipleAutomaticDownloads
+            or CoreWebView2PermissionKind.PersistentStorage;
+
+    /// <summary>弹窗 URL 分类：外部链接 / 同源弹窗 / 保持默认。</summary>
+    internal static PopupTarget ClassifyPopup(string? rawUri)
+    {
+        if (!Uri.TryCreate(rawUri, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("http" or "https"))
+            return PopupTarget.Default;
+        return uri.Host is ("127.0.0.1" or "localhost") ? PopupTarget.Internal : PopupTarget.External;
+    }
+
+    /// <summary>
+    /// 从 Content-Disposition / 下载 URI / MIME 推导建议文件名。
+    /// （当前 SDK 版本没有 SuggestedFileName API，只能自行推导。）
+    /// </summary>
+    internal static string SuggestDownloadName(string? disposition, string? downloadUri, string? mimeType)
+    {
+        string? name = null;
+        if (!string.IsNullOrWhiteSpace(disposition))
+        {
+            var m = Regex.Match(disposition, @"filename\*?=(?:UTF-8'')?[""']?(?<name>[^""';]+)");
+            if (m.Success && !string.IsNullOrWhiteSpace(m.Groups["name"].Value))
+                name = m.Groups["name"].Value.Trim();
+        }
+        // 仅 http(s) 用 URI 尾段；blob:/data: 的尾段是随机 UUID/内联内容，对用户无意义，
+        // 一律走下面的时间戳 + MIME 扩展名兜底。
+        if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(downloadUri)
+            && Uri.TryCreate(downloadUri, UriKind.Absolute, out var uri)
+            && uri.Scheme is "http" or "https")
+        {
+            var segment = Path.GetFileName(uri.AbsolutePath);
+            if (!string.IsNullOrWhiteSpace(segment))
+                name = segment;
+        }
+        name = string.IsNullOrWhiteSpace(name)
+            ? $"dsh-{DateTime.Now:yyyyMMddHHmmss}"
+            : Uri.UnescapeDataString(name);
+
+        // blob: 等无扩展名下载：按 MIME 类型补一个扩展名，便于识别
+        if (!Path.HasExtension(name) && !string.IsNullOrWhiteSpace(mimeType)
+            && MimeExtensions.TryGetValue(mimeType.Split(';')[0].Trim(), out var ext))
+            name += ext;
+        return name;
+    }
+
+    /// <summary>清理文件名中的非法字符；Windows 保留设备名与结尾的点/空格一并处理。</summary>
+    internal static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var c in name)
+            sb.Append(invalid.Contains(c) ? '_' : c);
+        var result = sb.ToString().Trim().TrimEnd('.', ' ');
+        if (result.Length == 0)
+            return $"dsh-{DateTime.Now:yyyyMMddHHmmss}";
+        var stem = Path.GetFileNameWithoutExtension(result).ToUpperInvariant();
+        if (Array.IndexOf(ReservedNames, stem) >= 0)
+            result = "_" + result;
+        return result;
+    }
+}

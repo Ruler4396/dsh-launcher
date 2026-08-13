@@ -3,8 +3,6 @@ using System.Drawing;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -126,20 +124,11 @@ internal static class Program
         settings.IsGeneralAutofillEnabled = false;       // 关闭表单自动填充，减少后台开销
         settings.IsPasswordAutosaveEnabled = false;      // 不保存密码
 
-        // 权限：自动放行插件/DSH 依赖的能力，其余保持默认拒绝。
-        // - Notifications：桌面通知插件（dsh-notification 等）
-        // - ClipboardRead：复制/粘贴（此 SDK 版本剪贴板读写的唯一权限项）
-        // - Autoplay：声音类插件（打字音效、自定义提示音）无手势时也能播放
-        // - MultipleAutomaticDownloads：多文件导出插件不被拦截
-        // - PersistentStorage：插件 IndexedDB/localStorage 免于被驱逐
-        // 麦克风/摄像头保持默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
+        // 权限：自动放行插件/DSH 依赖的能力（见 ShellLogic.IsAutoGrantedPermission），
+        // 其余保持默认拒绝。麦克风/摄像头默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
         web.CoreWebView2.PermissionRequested += (_, e) =>
         {
-            if (e.PermissionKind is CoreWebView2PermissionKind.Notifications
-                or CoreWebView2PermissionKind.ClipboardRead
-                or CoreWebView2PermissionKind.Autoplay
-                or CoreWebView2PermissionKind.MultipleAutomaticDownloads
-                or CoreWebView2PermissionKind.PersistentStorage)
+            if (ShellLogic.IsAutoGrantedPermission(e.PermissionKind))
                 e.State = CoreWebView2PermissionState.Allow;
         };
 
@@ -151,7 +140,7 @@ internal static class Program
                 var downloads = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
                 Directory.CreateDirectory(downloads);
-                var name = SanitizeFileName(SuggestDownloadName(
+                var name = ShellLogic.SanitizeFileName(ShellLogic.SuggestDownloadName(
                     e.DownloadOperation.ContentDisposition, e.DownloadOperation.Uri, e.DownloadOperation.MimeType));
                 var path = Path.Combine(downloads, name);
                 for (var i = 1; File.Exists(path); i++)
@@ -174,37 +163,39 @@ internal static class Program
             catch { /* 处理失败时回退 WebView2 默认下载行为 */ }
         };
 
-        // 弹窗策略：
-        // - http(s) 外部链接 → 系统默认浏览器
-        // - http(s) 同源（127.0.0.1/localhost）→ 新建轻量壳窗口（保留会话，避免主窗口被导航走）
+        // 弹窗策略（分类逻辑见 ShellLogic.ClassifyPopup）：
+        // - 外部 http(s) 链接 → 系统默认浏览器
+        // - 同源 http(s) 弹窗 → 新建轻量壳窗口（保留会话，避免主窗口被导航走）
         // - blob: / data: / about: 等 → WebView2 默认行为（插件生成的预览等）
         web.CoreWebView2.NewWindowRequested += async (_, e) =>
         {
-            if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri)
-                || uri.Scheme is not ("http" or "https"))
-                return;
-
-            if (uri.Host is not ("127.0.0.1" or "localhost"))
+            switch (ShellLogic.ClassifyPopup(e.Uri))
             {
-                e.Handled = true;
-                try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
-                return;
-            }
-
-            var deferral = e.GetDeferral();
-            try
-            {
-                var popup = CreatePopupForm();
-                await InitWebViewAsync(popup.Web, userDataFolder);
-                popup.Web.CoreWebView2.DocumentTitleChanged += (_, _) =>
+                case ShellLogic.PopupTarget.External:
+                    e.Handled = true;
+                    try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
+                    return;
+                case ShellLogic.PopupTarget.Internal:
                 {
-                    var title = popup.Web.CoreWebView2.DocumentTitle;
-                    if (!string.IsNullOrWhiteSpace(title)) popup.Form.Text = title;
-                };
-                e.NewWindow = popup.Web.CoreWebView2;
-                popup.Form.Show();
+                    var deferral = e.GetDeferral();
+                    try
+                    {
+                        var popup = CreatePopupForm();
+                        await InitWebViewAsync(popup.Web, userDataFolder);
+                        popup.Web.CoreWebView2.DocumentTitleChanged += (_, _) =>
+                        {
+                            var title = popup.Web.CoreWebView2.DocumentTitle;
+                            if (!string.IsNullOrWhiteSpace(title)) popup.Form.Text = title;
+                        };
+                        e.NewWindow = popup.Web.CoreWebView2;
+                        popup.Form.Show();
+                    }
+                    finally { deferral.Complete(); }
+                    return;
+                }
+                default:
+                    return;
             }
-            finally { deferral.Complete(); }
         };
 
         // 渲染进程崩溃/无响应：自动重载避免白屏（每 10 秒最多一次，防止崩溃死循环）
@@ -258,76 +249,6 @@ internal static class Program
         {
             return null;
         }
-    }
-
-    /// <summary>
-    /// 从 Content-Disposition / 下载 URI / MIME 推导建议文件名。
-    /// （当前 SDK 版本没有 SuggestedFileName API，只能自行推导。）
-    /// </summary>
-    private static string SuggestDownloadName(string? disposition, string? downloadUri, string? mimeType)
-    {
-        string? name = null;
-        if (!string.IsNullOrWhiteSpace(disposition))
-        {
-            var m = Regex.Match(disposition, @"filename\*?=(?:UTF-8'')?[""']?(?<name>[^""';]+)");
-            if (m.Success && !string.IsNullOrWhiteSpace(m.Groups["name"].Value))
-                name = m.Groups["name"].Value.Trim();
-        }
-        if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(downloadUri)
-            && Uri.TryCreate(downloadUri, UriKind.Absolute, out var uri))
-        {
-            var segment = Path.GetFileName(uri.AbsolutePath);
-            if (!string.IsNullOrWhiteSpace(segment))
-                name = segment;
-        }
-        name = string.IsNullOrWhiteSpace(name)
-            ? $"dsh-{DateTime.Now:yyyyMMddHHmmss}"
-            : Uri.UnescapeDataString(name);
-
-        // blob: 等无扩展名下载：按 MIME 类型补一个扩展名，便于识别
-        if (!Path.HasExtension(name) && !string.IsNullOrWhiteSpace(mimeType))
-        {
-            var ext = MimeToExtension(mimeType);
-            if (ext is not null) name += ext;
-        }
-        return name;
-    }
-
-    private static string? MimeToExtension(string mime)
-    {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["text/plain"] = ".txt",
-            ["text/markdown"] = ".md",
-            ["text/html"] = ".html",
-            ["text/csv"] = ".csv",
-            ["application/json"] = ".json",
-            ["application/pdf"] = ".pdf",
-            ["application/zip"] = ".zip",
-            ["application/x-zip-compressed"] = ".zip",
-            ["application/gzip"] = ".gz",
-            ["application/x-tar"] = ".tar",
-            ["image/png"] = ".png",
-            ["image/jpeg"] = ".jpg",
-            ["image/gif"] = ".gif",
-            ["image/webp"] = ".webp",
-            ["image/svg+xml"] = ".svg",
-            ["audio/mpeg"] = ".mp3",
-            ["audio/wav"] = ".wav",
-            ["video/mp4"] = ".mp4",
-        };
-        return map.TryGetValue(mime.Split(';')[0].Trim(), out var ext) ? ext : null;
-    }
-
-    /// 清理文件名中的非法字符，避免拼接路径时报错。
-    private static string SanitizeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new StringBuilder(name.Length);
-        foreach (var c in name)
-            sb.Append(invalid.Contains(c) ? '_' : c);
-        var result = sb.ToString().Trim();
-        return result.Length == 0 ? $"dsh-{DateTime.Now:yyyyMMddHHmmss}" : result;
     }
 
     private static bool PortOpen()
