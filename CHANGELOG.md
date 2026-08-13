@@ -4,6 +4,12 @@
 
 ## [0.1.1] - 2026-08-13
 
+### 新增
+
+- 壳应用自动授权桌面通知权限（WebView2 `PermissionRequested`），支持 dsh-notification 等通知插件
+- 壳应用单实例保护：重复启动自动聚焦已开窗口，不重复创建 WebView2 进程
+- 壳应用默认关闭 DevTools 与表单自动填充/密码保存，降低后台开销
+
 ### 修复
 
 - 卸载脚本 `uninstall-autostart.cmd` 改为删除启动文件夹中的自启项与指向 `DshWeb.exe` 的桌面快捷方式（此前误删不存在的计划任务）
