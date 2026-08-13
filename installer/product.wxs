@@ -61,10 +61,11 @@
       <ComponentRef Id="ProgramMenuShortcut" />
     </Feature>
 
-    <!-- checkbox defaults: all on -->
+    <!-- checkbox defaults: all on; WIXUI_INSTALLDIR points the folder picker at INSTALLFOLDER -->
     <Property Id="AUTO_START_OPTION" Value="1" Secure="yes" />
     <Property Id="DESKTOP_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
 
     <UI>
       <ui:WixUI Id="WixUI_SimpleCheckbox" />
@@ -154,7 +155,7 @@
     </Component>
   </Fragment>
 
-  <!-- 简单向导：Welcome → License → Options(三个勾选框) → Ready → Install → Finish；
+  <!-- 简单向导：Welcome → License → Options(三个勾选框) → InstallDir(自定义目录) → Ready → Install → Finish；
        已安装时走 MaintenanceWelcome → MaintenanceType(修复/移除)。
        Id 带 _X64 后缀（<ui:WixUI> 引用时会按构建架构追加后缀）。 -->
   <Fragment>
@@ -167,6 +168,9 @@
       <DialogRef Id="WelcomeDlg" />
       <DialogRef Id="LicenseAgreementDlg" />
       <DialogRef Id="OptionsDlg" />
+      <DialogRef Id="InstallDirDlg" />
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="InvalidDirDlg" />
       <DialogRef Id="VerifyReadyDlg" />
       <DialogRef Id="ProgressDlg" />
       <DialogRef Id="ExitDialog" />
@@ -191,7 +195,17 @@
       <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
       <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Condition="LicenseAccepted = &quot;1&quot;" />
 
-      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="1" Condition="NOT Installed" />
+      <!-- InstallDirDlg：自定义安装目录（SetTargetPath + 路径校验 + 浏览） -->
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath_X64" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath_X64" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1" Condition="NOT Installed" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
 
@@ -205,7 +219,7 @@
     <UIRef Id="WixUI_Common" />
   </Fragment>
 
-  <!-- 安装选项对话框：三个勾选框，无安装位置选择 -->
+  <!-- 安装选项对话框：三个勾选框；目录选择在下一步（InstallDirDlg） -->
   <Fragment>
     <UI>
       <Dialog Id="OptionsDlg" Width="370" Height="270" Title="[ProductName] — 安装选项">
@@ -218,7 +232,7 @@
           <Publish Event="NewDialog" Value="LicenseAgreementDlg" Condition="1" />
         </Control>
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)">
-          <Publish Event="NewDialog" Value="VerifyReadyDlg" Condition="1" />
+          <Publish Event="NewDialog" Value="InstallDirDlg" Condition="1" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
           <Publish Event="EndDialog" Value="Return" Condition="1" />
@@ -226,7 +240,7 @@
         <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="开机自启（登录时静默启动 dsh 服务）" />
         <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="115" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建桌面快捷方式" />
         <Control Id="MenuShortcut" Type="CheckBox" X="25" Y="145" Width="320" Height="17" Property="MENU_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建开始菜单快捷方式" />
-        <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="安装目录固定为 %LOCALAPPDATA%\dsh-launcher，无需选择。" />
+        <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="卸载只删除本应用的 7 个文件，不会删除目录里的其他内容（如与 DeepSeek Harness 共用目录也安全）。安装目录在下一步选择。" />
       </Dialog>
     </UI>
   </Fragment>
