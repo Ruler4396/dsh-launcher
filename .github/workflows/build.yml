@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build release package
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -OutputDir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-launcher-windows
+          path: dist/dsh-launcher-windows.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/dsh-launcher-windows.zip
+          generate_release_notes: true
