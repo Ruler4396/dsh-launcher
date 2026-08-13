@@ -18,13 +18,13 @@
 | --- | --- |
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
-| 端口探测 | `TcpClient.Connect("127.0.0.1", 3080)`，壳启动时探测、未就绪则轮询等待（最长 90s） |
+| 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 90s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
 | 开机自启 | MSI：`HKCU\...\Run` 一项；便携版：启动文件夹放置 `start-dsh.vbs`，均由 `wscript` 无窗口执行 |
-| 权限 | `PermissionRequested` 自动放行：通知、剪贴板、自动播放、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝 |
+| 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |
 | 弹窗 | 外部 http(s) → 系统默认浏览器；同源弹窗新建轻量窗口（保留会话）；blob:/data: 保持默认 |
 | 崩溃自愈 | 渲染进程崩溃/无响应自动重载（10 秒节流） |
-| 单实例 | 重复启动自动聚焦已开窗口 |
+| 单实例 | 按目标端口隔离的互斥锁：重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
 | 安装包 | WiX v5 per-user MSI：无管理员、无服务、无计划任务，可卸载 |
 
 ## 安全说明 / Security
@@ -43,9 +43,9 @@
 
 ## 版本兼容性 / Version compatibility
 
-- 只调用 `dsh web` 的 CLI（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，dsh 升级一般无需重新编译壳
+- 只调用 `dsh web` 的 CLI（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，dsh 升级一般无需重新编译壳；壳的目标地址可用环境变量 `DSH_WEB_URL` 覆盖（默认 `http://127.0.0.1:3080`）
 - `npm update -g @deepseek-ai/dsh` 后重启服务即可
-- dsh 处于开发者预览阶段，若官方变更启动参数或默认端口，同步修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 三处
+- dsh 处于开发者预览阶段，若官方变更启动参数或默认端口：壳侧设置 `DSH_WEB_URL` 即可免重建；自启脚本需同步修改 `start-dsh.vbs`、`dsh-web.cmd` 两处
 - 本工具不锁定 dsh 版本，始终跟随本地最新版
 
 ## 从源码构建 / Building from source
@@ -106,7 +106,7 @@ dsh-launcher/
 ## 常见问题 / FAQ
 
 **Q：端口 3080 被占用怎么办？**
-修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 中的端口号后重新构建/部署。
+设置环境变量 `DSH_WEB_URL=http://127.0.0.1:<新端口>` 再启动壳即可（免重建）；若还需要壳自动拉起服务，则同步修改 `start-dsh.vbs`、`dsh-web.cmd` 中的端口。
 
 **Q：为什么不用 Electron / Tauri？**
 Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri 底层同样是 WebView2 但需要 Rust 工具链。本工具直接用 WebView2 封装，产物更小、构建更简单。
