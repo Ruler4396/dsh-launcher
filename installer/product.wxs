@@ -67,6 +67,11 @@
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
 
+    <!-- 禁用回滚：安装盘根目录 Config.Msi 的 ACL 在某些自定义根权限的磁盘（如本机 E:\）
+         上由 MSI 服务（SYSTEM）创建后交互用户无法写入，导致"装→卸"报错 1926/错误5。
+         本包仅 7 个小文件，禁用回滚的代价可接受，换取消该异常。 -->
+    <Property Id="DISABLEROLLBACK" Value="1" Secure="yes" />
+
     <UI>
       <ui:WixUI Id="WixUI_SimpleCheckbox" />
     </UI>

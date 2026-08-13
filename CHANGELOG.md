@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- 安装→立即卸载报错 1926/"无法设置文件…Config.Msi…的安全权限，错误: 5"：安装包内置 `DISABLEROLLBACK=1`（禁用回滚文件创建）。此前在根目录 ACL 异常的磁盘（如自定义权限的 E:\）上，MSI 服务创建的回滚目录交互用户无法写入，装→卸必现报错；现在 /qn 静默与向导两种卸载模式均已实测通过、事件日志零 1926 错误。注：这只是本安装包的预防措施，其他 MSI 包在该盘仍可能报错，根治需修复磁盘根 ACL（见 docs/DETAILS.md FAQ）
+
 ## [0.1.5] - 2026-08-14
 
 ### 新增
