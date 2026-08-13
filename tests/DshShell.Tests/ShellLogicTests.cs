@@ -7,6 +7,24 @@ namespace DshShell.Tests;
 /// <summary>ShellLogic 纯逻辑单元测试。</summary>
 public class ShellLogicTests
 {
+    // ---------- 目标地址解析（DSH_WEB_URL） ----------
+
+    [Theory]
+    [InlineData(null, "http://127.0.0.1:3080", 3080)]
+    [InlineData("", "http://127.0.0.1:3080", 3080)]
+    [InlineData("   ", "http://127.0.0.1:3080", 3080)]
+    [InlineData("http://127.0.0.1:3090", "http://127.0.0.1:3090", 3090)]
+    [InlineData("http://127.0.0.1:3090/", "http://127.0.0.1:3090", 3090)]
+    [InlineData("https://example.com:8443", "https://example.com:8443", 8443)]
+    [InlineData("not a url", "http://127.0.0.1:3080", 3080)]   // 非法输入回退默认
+    [InlineData("ftp://x:21", "http://127.0.0.1:3080", 3080)]  // 非 http(s) 回退默认
+    public void ResolveTarget_Works(string? env, string expectedUrl, int expectedPort)
+    {
+        var (url, port) = ShellLogic.ResolveTarget(env);
+        Assert.Equal(expectedUrl, url);
+        Assert.Equal(expectedPort, port);
+    }
+
     // ---------- 弹窗分类 ----------
 
     [Theory]

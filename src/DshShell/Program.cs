@@ -10,12 +10,41 @@ namespace DshWeb;
 
 internal static class Program
 {
-    private const string Url = "http://127.0.0.1:3080";
-    private const int Port = 3080;
+    private const string DefaultUrl = "http://127.0.0.1:3080";
     private const int SW_RESTORE = 9;
+
+    /// 目标服务地址/端口：默认 3080，可用环境变量 DSH_WEB_URL 覆盖（免重建，见 ShellLogic.ResolveTarget）。
+    private static readonly (string Url, int Port) Target = ShellLogic.ResolveTarget(
+        Environment.GetEnvironmentVariable("DSH_WEB_URL"));
+
+    /// 设置 DSH_WEB_URL 时视为“外部托管服务”，壳不再自动拉起 dsh。
+    private static readonly bool ServerManagedExternally =
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"));
 
     /// 渲染进程崩溃自动重载的节流时间戳（避免崩溃死循环）。
     private static long _lastReloadTick;
+
+    /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
+    private static CoreWebView2Environment? _sharedEnvironment;
+
+    /// <summary>
+    /// 创建（或复用）共享 WebView2 环境。
+    /// AdditionalBrowserArguments 放行无手势自动播放：WebView2 在当前 SDK 中不会为
+    /// Autoplay 触发 PermissionRequested 事件（直接静默拒绝），
+    /// --autoplay-policy=no-user-gesture-required 是唯一可用的开关（声音类插件依赖）。
+    /// </summary>
+    private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync(string userDataFolder)
+    {
+        if (_sharedEnvironment is null)
+        {
+            var options = new CoreWebView2EnvironmentOptions
+            {
+                AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required",
+            };
+            _sharedEnvironment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options);
+        }
+        return _sharedEnvironment;
+    }
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool DestroyIcon(IntPtr handle);
@@ -32,8 +61,9 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
-        // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存
-        using var mutex = new Mutex(true, @"Local\DshWeb.SingleInstance", out var firstInstance);
+        // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
+        // 锁按目标端口隔离，不同服务可各开一个壳窗口。
+        using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);
         if (!firstInstance)
         {
             var existing = FindWindow(null, "DeepSeek Harness");
@@ -45,27 +75,28 @@ internal static class Program
             return;
         }
 
-        // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）
-        if (!PortOpen())
+        // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）。
+        // 设置了 DSH_WEB_URL 时不自动拉起（视为外部托管服务）。
+        if (!ServerManagedExternally && !PortOpen(Target.Port))
         {
             var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
             if (File.Exists(vbs))
             {
                 Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
-                for (var i = 0; i < 90 && !PortOpen(); i++)
+                for (var i = 0; i < 90 && !PortOpen(Target.Port); i++)
                     Thread.Sleep(1000);
             }
             else
             {
-                MessageBox.Show("未找到 start-dsh.vbs，无法启动 dsh 服务。", "DeepSeek Harness",
+                MessageBox.Show($"未找到 start-dsh.vbs，无法启动 dsh 服务（{Target.Url}）。", "DeepSeek Harness",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
         }
 
-        if (!PortOpen())
+        if (!PortOpen(Target.Port))
         {
-            MessageBox.Show("dsh 服务启动超时，请查看日志：%USERPROFILE%\\.dsh-web.log", "DeepSeek Harness",
+            MessageBox.Show($"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看日志：%USERPROFILE%\\.dsh-web.log", "DeepSeek Harness",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -103,7 +134,7 @@ internal static class Program
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DshWeb", "WebView2");
             await InitWebViewAsync(web, userDataFolder);
-            web.CoreWebView2.Navigate(Url);
+            web.CoreWebView2.Navigate(Target.Url);
         };
 
         Application.Run(form);
@@ -115,8 +146,8 @@ internal static class Program
     /// </summary>
     private static async Task InitWebViewAsync(WebView2 web, string userDataFolder)
     {
-        web.CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = userDataFolder };
-        await web.EnsureCoreWebView2Async();
+        var env = await GetSharedEnvironmentAsync(userDataFolder);
+        await web.EnsureCoreWebView2Async(env);
 
         var settings = web.CoreWebView2.Settings;
         settings.AreDefaultContextMenusEnabled = true;   // 保留右键菜单（复制/粘贴等）
@@ -251,12 +282,12 @@ internal static class Program
         }
     }
 
-    private static bool PortOpen()
+    private static bool PortOpen(int port)
     {
         try
         {
             using var c = new TcpClient();
-            c.Connect("127.0.0.1", Port);
+            c.Connect("127.0.0.1", port);
             return true;
         }
         catch
