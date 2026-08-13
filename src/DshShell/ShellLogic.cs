@@ -60,6 +60,28 @@ public static class ShellLogic
             or CoreWebView2PermissionKind.MultipleAutomaticDownloads
             or CoreWebView2PermissionKind.PersistentStorage;
 
+    /// <summary>
+    /// 解析目标服务地址与端口。空值/非法值/非 http(s) 一律回退默认 3080。
+    /// 供 DSH_WEB_URL 环境变量覆盖目标地址（免重建）时使用。
+    /// </summary>
+    internal static (string Url, int Port) ResolveTarget(string? envUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(envUrl))
+        {
+            try
+            {
+                var uri = new Uri(envUrl, UriKind.Absolute);
+                if (uri.Scheme is "http" or "https")
+                    return (uri.GetLeftPart(UriPartial.Path).TrimEnd('/'), uri.Port);
+            }
+            catch
+            {
+                // 非法输入回退默认
+            }
+        }
+        return ("http://127.0.0.1:3080", 3080);
+    }
+
     /// <summary>弹窗 URL 分类：外部链接 / 同源弹窗 / 保持默认。</summary>
     internal static PopupTarget ClassifyPopup(string? rawUri)
     {
