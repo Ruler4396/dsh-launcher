@@ -81,6 +81,10 @@ internal static class Program
         // 这里由壳提示用户提权卸载（提权卸载不触发 Config.Msi 1926）。
         TryPromptOldVersionCleanup();
 
+        // 自愈孤儿快捷方式：per-user 旧版被（提权）卸载后，其用户级快捷方式可能残留
+        //（指向已删除的 exe），这里每次启动扫描并清理，避免开始菜单/桌面出现幽灵图标。
+        CleanupOrphanShortcuts();
+
         // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）。
         // 设置了 DSH_WEB_URL 时不自动拉起（视为外部托管服务）。
         if (!ServerManagedExternally && !PortOpen(Target.Port))
@@ -223,6 +227,37 @@ internal static class Program
         catch
         {
             // 检测/清理失败不打扰用户
+        }
+    }
+
+    /// <summary>
+    /// 清理 per-user 旧版本（0.1.0-0.1.5）残留的用户级快捷方式。
+    /// 旧版被（提权）卸载后，其用户开始菜单/桌面快捷方式可能不被删除（MSI 提权卸载
+    /// 跳过 per-user 上下文组件）；而 per-machine 新版（0.1.6+）只写公共位置，
+    /// 因此用户级位置的 dsh-launcher 快捷方式只可能是旧版残留，直接清理即可。
+    /// </summary>
+    private static void CleanupOrphanShortcuts()
+    {
+        try
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var userMenuDir = Path.Combine(appData, @"Microsoft\Windows\Start Menu\Programs\dsh-launcher");
+            if (Directory.Exists(userMenuDir)) Directory.Delete(userMenuDir, true);
+        }
+        catch
+        {
+            // 忽略无法访问的目录
+        }
+
+        try
+        {
+            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var userDesktopLnk = Path.Combine(desktop, "dsh-launcher.lnk");
+            if (File.Exists(userDesktopLnk)) File.Delete(userDesktopLnk);
+        }
+        catch
+        {
+            // 忽略
         }
     }
 
