@@ -4,12 +4,16 @@ setlocal
 rem Remove autostart entries and shortcuts created by dsh-launcher
 rem (covers both the portable ZIP layout and the MSI installer).
 
-rem 1) Startup-folder entry (portable layout)
+rem 1) Startup-folder entry (portable layout; also cleans the legacy
+rem    dsh-autostart.vbs name used by some older setups)
 set "STARTUP=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
-if exist "%STARTUP%\start-dsh.vbs" (
-  del /q "%STARTUP%\start-dsh.vbs"
-  echo [OK] Removed autostart entry: "%STARTUP%\start-dsh.vbs"
-) else (
+for %%V in ("start-dsh.vbs" "dsh-autostart.vbs") do (
+  if exist "%STARTUP%\%%~V" (
+    del /q "%STARTUP%\%%~V"
+    echo [OK] Removed autostart entry: "%STARTUP%\%%~V"
+  )
+)
+if not exist "%STARTUP%\start-dsh.vbs" if not exist "%STARTUP%\dsh-autostart.vbs" (
   echo [SKIP] No autostart entry in the Startup folder.
 )
 
