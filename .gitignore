@@ -3,6 +3,8 @@ bin/
 obj/
 dist/
 .publish-tmp/
+.tmp-wix/          # WiX v5 temp files generated next to the build source
+.wix/              # WiX tool cache (defensive)
 
 # Test output
 TestResults/
