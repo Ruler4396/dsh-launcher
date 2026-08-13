@@ -24,7 +24,13 @@ jobs:
 
       - name: Build release package (zip + msi + checksums)
         shell: pwsh
-        run: ./scripts/build-release.ps1 -OutputDir dist
+        run: |
+          $ver = "${{ github.ref_name }}"
+          if ($ver -like 'v*') {
+            ./scripts/build-release.ps1 -OutputDir dist -Version $ver.TrimStart('v')
+          } else {
+            ./scripts/build-release.ps1 -OutputDir dist
+          }
 
       - uses: actions/upload-artifact@v4
         with:
