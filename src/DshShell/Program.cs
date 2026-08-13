@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32;
 
 namespace DshWeb;
 
@@ -75,6 +76,11 @@ internal static class Program
             return;
         }
 
+        // 升级场景：检测并提示清理旧版本（per-user 0.1.0-0.1.5 等）。
+        // MSI 的跨作用域 MajorUpgrade 在标准机器上找不到 HKCU 里的 per-user 旧版，
+        // 这里由壳提示用户提权卸载（提权卸载不触发 Config.Msi 1926）。
+        TryPromptOldVersionCleanup();
+
         // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）。
         // 设置了 DSH_WEB_URL 时不自动拉起（视为外部托管服务）。
         if (!ServerManagedExternally && !PortOpen(Target.Port))
@@ -138,6 +144,86 @@ internal static class Program
         };
 
         Application.Run(form);
+    }
+
+    /// <summary>
+    /// 升级场景：检测已安装的其他版本 dsh-launcher（per-user 旧版 0.1.0-0.1.5 等），
+    /// 提示用户提权卸载。用户选择"否"时记录 HKCU 标记，之后不再打扰（直到旧版被移除）。
+    /// 卸载失败（被取消/旧版仍在运行）不阻断启动，提示用户稍后到"设置 → 应用"手动卸载。
+    /// </summary>
+    private static void TryPromptOldVersionCleanup()
+    {
+        try
+        {
+            // 当前产品代码（安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）：永远不清理自己
+            string? currentCode = null;
+            try
+            {
+                using var selfKey = Registry.LocalMachine.OpenSubKey(@"Software\dsh-launcher");
+                currentCode = selfKey?.GetValue("CurrentProductCode") as string;
+            }
+            catch
+            {
+                // 读不到按无当前产品处理（便携版等）
+            }
+
+            var olds = ShellLogic.PickOldInstalls(ShellLogic.ReadInstalledDshProducts(), currentCode);
+            if (olds.Count == 0) return;
+
+            const string skipKeyName = @"Software\dsh-launcher";
+            try
+            {
+                using var skipKey = Registry.CurrentUser.OpenSubKey(skipKeyName);
+                if (skipKey?.GetValue("SkipOldUninstall") is int skipFlag && skipFlag == 1)
+                    return;
+            }
+            catch
+            {
+                // 读不到标记按未标记处理
+            }
+
+            var list = string.Join("\n", olds.Select(o => $"  • {o.ProductCode}  (v{o.Version})"));
+            var answer = MessageBox.Show(
+                "检测到旧版本的 dsh-launcher，建议先卸载旧版本，避免两个版本共存。\n\n" + list +
+                "\n\n是否现在卸载？\n（卸载需要管理员确认；请先关闭其他 dsh-launcher 窗口）",
+                "DeepSeek Harness", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes)
+            {
+                try { Registry.CurrentUser.CreateSubKey(skipKeyName)?.SetValue("SkipOldUninstall", 1); }
+                catch { /* ignore */ }
+                return;
+            }
+
+            var failed = 0;
+            foreach (var old in olds)
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo("msiexec.exe", $"/x {old.ProductCode} /qn /norestart")
+                    {
+                        UseShellExecute = true,
+                        Verb = "runas",
+                    };
+                    using var p = Process.Start(psi);
+                    p?.WaitForExit();
+                    if (p is null || p.ExitCode != 0) failed++;
+                }
+                catch
+                {
+                    failed++;
+                }
+            }
+
+            MessageBox.Show(failed == 0
+                ? "旧版本已全部卸载。"
+                : "部分旧版本未能卸载（可能被取消，或旧版本窗口仍在运行）。\n可稍后在 设置 → 应用 中手动卸载。",
+                "DeepSeek Harness", MessageBoxButtons.OK,
+                failed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+        catch
+        {
+            // 检测/清理失败不打扰用户
+        }
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Win32;
 
 namespace DshWeb;
 
@@ -139,5 +140,95 @@ public static class ShellLogic
         if (Array.IndexOf(ReservedNames, stem) >= 0)
             result = "_" + result;
         return result;
+    }
+
+    /// <summary>已安装的 dsh-launcher 产品（ProductCode + 版本）。</summary>
+    public sealed record InstalledDsh(string ProductCode, Version Version);
+
+    /// <summary>
+    /// 枚举注册表中已安装的 dsh-launcher 产品（HKLM / HKLM WOW6432 / HKCU / HKCU WOW6432）。
+    /// 供升级场景识别 per-user 旧版本（0.1.0-0.1.5）——MSI 的跨作用域 MajorUpgrade 在标准
+    /// 机器上找不到 HKCU 里的旧版，壳程序据此提示用户提权卸载（提权卸载不触发 Config.Msi 1926）。
+    /// </summary>
+    internal static List<InstalledDsh> ReadInstalledDshProducts()
+    {
+        var result = new List<InstalledDsh>();
+        var roots = new[]
+        {
+            Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Registry.LocalMachine.OpenSubKey(@"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Registry.CurrentUser.OpenSubKey(@"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        };
+        foreach (var root in roots)
+        {
+            if (root is null) continue;
+            try
+            {
+                foreach (var sub in root.GetSubKeyNames())
+                {
+                    try
+                    {
+                        using var key = root.OpenSubKey(sub);
+                        if (key?.GetValue("DisplayName") is string name
+                            && string.Equals(name, "dsh-launcher", StringComparison.OrdinalIgnoreCase)
+                            && key.GetValue("DisplayVersion") is string verStr
+                            && Version.TryParse(verStr, out var ver))
+                        {
+                            result.Add(new InstalledDsh(sub, ver));
+                        }
+                    }
+                    catch
+                    {
+                        // 跳过无法读取的键
+                    }
+                }
+            }
+            catch
+            {
+                // 跳过无法枚举的根
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 从已安装产品中选出"旧版本"：
+    /// - 当前产品（currentCode，安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）永远保留；
+    /// - 当前产品存在时，清理所有版本不高于当前版本的其他产品（同版本重复安装也清理），
+    ///   比当前更高的版本保留（异常场景，不做判断）；
+    /// - 便携版等没有当前产品时，保留一个最高版本，其余清理。
+    /// 返回空表示无需清理。
+    /// </summary>
+    internal static List<InstalledDsh> PickOldInstalls(List<InstalledDsh> products, string? currentCode = null)
+    {
+        var olds = new List<InstalledDsh>();
+        if (products.Count <= 1) return olds;
+
+        InstalledDsh? current = null;
+        if (!string.IsNullOrWhiteSpace(currentCode))
+            current = products.FirstOrDefault(p =>
+                string.Equals(p.ProductCode, currentCode, StringComparison.OrdinalIgnoreCase));
+
+        if (current is null)
+        {
+            // 便携版等：保留一个最高版本，其余清理
+            var max = products.Max(p => p.Version);
+            var kept = false;
+            foreach (var p in products)
+            {
+                if (!kept && p.Version == max) { kept = true; continue; }
+                olds.Add(p);
+            }
+            return olds;
+        }
+
+        // 当前产品存在：清理所有不高于当前版本的其他产品
+        foreach (var p in products)
+        {
+            if (ReferenceEquals(p, current)) continue;
+            if (p.Version <= current.Version) olds.Add(p);
+        }
+        return olds;
     }
 }

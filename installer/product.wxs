@@ -57,6 +57,7 @@
     <Feature Id="Main" Title="dsh-launcher" Description="dsh-launcher application files" Level="1">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="UninstallShortcut" />
+      <ComponentRef Id="CurrentProductCodeReg" />
     </Feature>
     <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（HKCU Run，卸载时移除）" Level="1">
       <Level Value="0" Condition="NOT AUTO_START_OPTION" />
@@ -114,6 +115,17 @@
         <File Source="$(var.SourceDir)\uninstall-autostart.cmd" />
       </Component>
     </ComponentGroup>
+
+    <!-- 当前产品代码：壳程序据此识别"正在运行的这个版本"，升级清理旧版时永不误卸自己。
+         安装（per-machine，提权）写 HKLM，卸载时随组件删除。 -->
+    <Component Id="CurrentProductCodeReg" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKLM"
+                     Key="Software\dsh-launcher"
+                     Name="CurrentProductCode"
+                     Value="[ProductCode]"
+                     Type="string"
+                     KeyPath="yes" />
+    </Component>
 
     <!-- per-user autostart: HKCU Run -> wscript start-dsh.vbs (silent service start at logon) -->
     <Component Id="AutoStartEntry" Directory="INSTALLFOLDER" Guid="*">
