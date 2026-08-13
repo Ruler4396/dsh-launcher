@@ -29,7 +29,8 @@
 
 ## 安全说明 / Security
 
-- **per-user 安装，无需管理员权限**：MSI 安装到 `%LOCALAPPDATA%\dsh-launcher`，不写 Program Files，不注册服务、不创建计划任务；卸载零残留
+- **per-user 安装，无需管理员权限**：MSI 默认安装到 `%LOCALAPPDATA%\dsh-launcher`，向导中可自定义安装目录；不写 Program Files，不注册服务、不创建计划任务
+- **卸载只删自己的文件**：MSI 卸载仅移除本应用安装的文件；目录只会在"空"时才被删除，预先存在的文件（如与 DeepSeek Harness 共用目录）绝不会被误删（已实测验证）
 - **自启仅当前用户**：`HKCU\...\Run` 一个注册表值，卸载/`uninstall-autostart.cmd` 时自动删除
 - **下载校验**：每次 Release 附带 `SHA256SUMS.txt`
 - **代码签名**：安装包当前未签名，SmartScreen 可能提示"未知发布者"（正常）；正式分发建议购买代码签名证书
@@ -120,3 +121,6 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 **Q：MSI 和 ZIP 有什么区别？**
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
+
+**Q：能自定义安装目录吗？卸载会不会误删同目录的其他文件？**
+MSI 向导中有"选择安装目录"一步（可手动输入或浏览选择，默认 `%LOCALAPPDATA%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
