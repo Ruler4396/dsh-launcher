@@ -70,12 +70,12 @@ if (-not $wix) {
     $wix = Get-Command wix -ErrorAction SilentlyContinue
 }
 if (-not $wix) { throw "WiX tool not available; run: dotnet tool install --global wix --version 5.0.2" }
-# the UI extension (install wizard) is not bundled with WiX v5; ensure it is installed
-$exts = & $wix.Source extension list -g 2>$null
-if ($exts -notmatch 'WixToolset.UI\.wixext') {
-    & $wix.Source extension add -g WixToolset.UI.wixext/5.0.2
-    if ($LASTEXITCODE -ne 0) { throw "failed to install WixToolset.UI.wixext" }
-}
+# the UI extension (install wizard) is not bundled with WiX v5; ensure it is
+# installed. `add` is idempotent (exit 0 when already present). Do NOT gate it
+# on `extension list`: an empty list comes back as an empty array in
+# PowerShell, making `-notmatch` falsy and skipping the install.
+& $wix.Source extension add -g WixToolset.UI.wixext/5.0.2 *> $null
+if ($LASTEXITCODE -ne 0) { throw "failed to install WixToolset.UI.wixext" }
 & $wix.Source build (Join-Path $root "installer\product.wxs") -arch x64 `
     -ext WixToolset.UI.wixext -culture zh-CN `
     -d "ProductVersion=$Version" -d "SourceDir=$distDir" -o $msiPath
