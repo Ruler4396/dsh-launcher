@@ -4,14 +4,17 @@ Builds the dsh-launcher Windows release package.
 
 .DESCRIPTION
 Publishes the WebView2 shell app as a single-file executable, assembles the
-deployable files (exe + native loader + all runtime scripts) and creates
-dsh-launcher-windows.zip under the output directory.
+deployable files (exe + native loader + all runtime scripts), creates
+dsh-launcher-windows.zip, builds a per-user MSI installer (WiX v5) and writes
+SHA256 checksums for both artifacts.
 
 .EXAMPLE
-./scripts/build-release.ps1 -OutputDir dist
+./scripts/build-release.ps1 -OutputDir dist                 # version from latest git tag
+./scripts/build-release.ps1 -OutputDir dist -Version 0.1.2  # explicit version
 #>
 param(
-    [string]$OutputDir = "dist"
+    [string]$OutputDir = "dist",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +22,15 @@ $root = Split-Path -Parent $PSScriptRoot
 $publishDir = Join-Path $root ".publish-tmp"
 $distDir = Join-Path $root "$OutputDir\dsh-launcher-windows"
 $zipPath = Join-Path $root "$OutputDir\dsh-launcher-windows.zip"
+
+# version: explicit argument, or derived from the latest git tag (strip leading 'v')
+if (-not $Version) {
+    $tag = git -C $root describe --tags --abbrev=0 2>$null
+    $Version = if ($tag) { $tag.TrimStart('v') } else { "0.0.0" }
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be x.y.z, got: $Version" }
+$msiPath = Join-Path $root "$OutputDir\dsh-launcher-$Version.msi"
+$sumsPath = Join-Path $root "$OutputDir\SHA256SUMS.txt"
 
 # 1. publish single-file exe
 Write-Host ">> publishing shell app..."
@@ -44,7 +56,29 @@ foreach ($script in "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-
 Write-Host ">> packaging zip..."
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $distDir "*") -DestinationPath $zipPath -Force
+
+# 4. per-user MSI installer (WiX v5; no admin, no services; see installer/product.wxs)
+Write-Host ">> building MSI installer..."
+$wix = Get-Command wix -ErrorAction SilentlyContinue
+if (-not $wix) {
+    dotnet tool install --global wix --version "5.0.2" | Out-Null
+    $wix = Get-Command wix -ErrorAction SilentlyContinue
+}
+if (-not $wix) { throw "WiX tool not available; run: dotnet tool install --global wix --version 5.0.2" }
+& $wix.Source build (Join-Path $root "installer\product.wxs") -arch x64 `
+    -d "ProductVersion=$Version" -d "SourceDir=$distDir" -o $msiPath
+if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+
+# 5. checksums (integrity verification for downloads)
+Write-Host ">> writing checksums..."
+Get-FileHash $zipPath, $msiPath -Algorithm SHA256 | ForEach-Object {
+    "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
+} | Set-Content $sumsPath -Encoding ascii
+
 Remove-Item $distDir -Recurse -Force
 Remove-Item $publishDir -Recurse -Force
 
-Write-Host ">> done: $zipPath"
+Write-Host ">> done:"
+Write-Host "    $zipPath"
+Write-Host "    $msiPath"
+Write-Host "    $sumsPath"

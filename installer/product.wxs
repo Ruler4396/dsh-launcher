@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  dsh-launcher per-user MSI installer (WiX Toolset v5, schema v4).
+
+  Design (security-first):
+  - Scope="perUser": installs under %LOCALAPPDATA%\dsh-launcher, NO admin/UAC, no
+    machine-wide changes, no services, no scheduled tasks.
+  - Autostart is a plain HKCU\...\Run value (removed on uninstall).
+  - Desktop + Start Menu shortcuts are created per-user and removed on uninstall.
+  - UpgradeCode is fixed so future versions upgrade in place via MajorUpgrade.
+
+  Build (see scripts/build-release.ps1):
+    wix build installer\product.wxs -arch x64 -d ProductVersion=<x.y.z> -d SourceDir=<assemble dir> -o dist\dsh-launcher-<version>.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="dsh-launcher"
+           Manufacturer="dsh-launcher contributors"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="3B29D055-E142-43BD-ADA8-C5377D11BD7E"
+           Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of dsh-launcher is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="dsh-launcher">
+        <Directory Id="RuntimesDir" Name="runtimes">
+          <Directory Id="WinX64Dir" Name="win-x64">
+            <Directory Id="NativeDir" Name="native" />
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ProgramMenuDir" Name="dsh-launcher" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="dsh-launcher" Description="dsh-launcher application files" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+    </Feature>
+    <Feature Id="AutoStart" Title="Start dsh service at logon" Description="Registers a per-user Run entry that silently starts the dsh service at logon." Level="1">
+      <ComponentRef Id="AutoStartEntry" />
+    </Feature>
+    <Feature Id="Shortcuts" Title="Desktop and Start Menu shortcuts" Description="Creates a desktop icon and a Start Menu entry." Level="1">
+      <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="ProgramMenuShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles">
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\DshWeb.exe" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\WebView2Loader.dll" />
+      </Component>
+      <Component Directory="NativeDir" Guid="*">
+        <File Source="$(var.SourceDir)\runtimes\win-x64\native\WebView2Loader.dll" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\start-dsh.vbs" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\start-dsh.cmd" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\dsh-web.cmd" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\uninstall-autostart.cmd" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- per-user autostart: HKCU Run -> wscript start-dsh.vbs (silent service start at logon) -->
+    <Component Id="AutoStartEntry" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKCU"
+                     Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                     Name="dsh-launcher"
+                     Value='wscript.exe "[INSTALLFOLDER]start-dsh.vbs"'
+                     Type="string"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="*">
+      <Shortcut Id="DesktopShortcutLnk"
+                Name="dsh-launcher"
+                Description="DeepSeek Harness Windows launcher"
+                Target="[INSTALLFOLDER]DshWeb.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\dsh-launcher\Shortcuts"
+                     Name="desktop"
+                     Value="1"
+                     Type="integer"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="ProgramMenuShortcut" Directory="ProgramMenuDir" Guid="*">
+      <Shortcut Id="ProgramMenuShortcutLnk"
+                Name="DeepSeek Harness"
+                Description="DeepSeek Harness Windows launcher"
+                Target="[INSTALLFOLDER]DshWeb.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\dsh-launcher\Shortcuts"
+                     Name="startmenu"
+                     Value="1"
+                     Type="integer"
+                     KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

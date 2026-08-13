@@ -30,6 +30,7 @@
 - 🔌 **自动拉起**：壳应用启动时探测 3080 端口，服务未运行则自动拉起并等待就绪（优先全局 `dsh`，未全局安装时自动回退 `npx -y @deepseek-ai/dsh`，无需先手动起服务）
 - 📋 **日志落盘**：服务输出写入 `%USERPROFILE%\.dsh-web.log`，便于排查
 - 🧹 **可完全卸载**：`uninstall-autostart.cmd` 删除自启项与桌面快捷方式
+- 📦 **MSI 安装包**：per-user 免管理员安装，自动创建快捷方式与开机自启，可在“设置 → 应用”中卸载
 
 ### 内存对比
 
@@ -51,7 +52,16 @@
 
 ### 快速开始
 
-#### 方式一：直接使用编译产物（推荐）
+#### 方式一：MSI 安装包（推荐新手）
+
+从 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 下载 `dsh-launcher-<版本>.msi`，双击安装（**无需管理员权限**）：
+
+- 安装到 `%LOCALAPPDATA%\dsh-launcher`，自动创建桌面快捷方式与开始菜单项
+- 默认开启开机自启（dsh 服务随登录静默启动，仅当前用户）
+- 卸载：设置 → 应用 → dsh-launcher → 卸载；或运行安装目录下的 `uninstall-autostart.cmd` 单独移除自启与快捷方式
+- 若启动提示缺少 .NET Desktop Runtime，先执行 `winget install Microsoft.DotNet.DesktopRuntime.10`（见 FAQ）
+
+#### 方式二：便携版 ZIP
 
 从 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 下载 `dsh-launcher-windows.zip`，解压后（内含 `DshWeb.exe`、`WebView2Loader.dll`、`runtimes\` 及全部部署脚本）：
 
@@ -71,12 +81,12 @@
 
 5. （卸载）运行 `uninstall-autostart.cmd` 删除自启项与桌面快捷方式
 
-#### 方式二：从源码构建
+#### 方式三：从源码构建
 
 ```powershell
 git clone https://github.com/Ruler4396/dsh-launcher.git
 cd dsh-launcher
-./scripts/build-release.ps1    # 一键打包，产出 dist\dsh-launcher-windows.zip（含全部脚本）
+./scripts/build-release.ps1    # 一键打包：zip + MSI 安装包 + SHA256 校验和
 ```
 
 或手动 publish（记得把 scripts 下的部署脚本一并放入产物目录）：
@@ -87,7 +97,7 @@ dotnet publish src/DshShell -c Release -r win-x64 --self-contained false `
 copy scripts\start-dsh.vbs, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd dist\
 ```
 
-构建产物为 `dist\DshWeb.exe`（框架依赖单文件，约 1MB，运行需要 .NET Desktop Runtime 10），其余步骤同方式一。
+构建产物为 `dist\DshWeb.exe`（框架依赖单文件，约 1MB，运行需要 .NET Desktop Runtime 10）、`dist\dsh-launcher-<版本>.msi` 与 `dist\SHA256SUMS.txt`；其余步骤同方式二。
 
 ### 目录结构
 
@@ -101,6 +111,8 @@ dsh-launcher/
 │   ├── dsh-web.cmd          # 一键入口：检查端口 → 拉起服务 → 打开壳
 │   ├── uninstall-autostart.cmd  # 删除自启项与桌面快捷方式
 │   └── build-release.ps1    # 打包脚本（仅开发用，不随发布包分发）
+├── installer/
+│   └── product.wxs          # WiX v5 源文件：per-user MSI 安装包（免管理员、无服务）
 └── src/
     └── DshShell/            # 轻量壳应用源码（C# WinForms + WebView2）
         ├── DshShell.csproj
@@ -132,6 +144,20 @@ CI 每次 push/PR 也会自动跑 `dotnet test`。
 | 单实例 | 重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
 | 端口 | 默认 `3080`，与 dsh 默认一致；如需修改，同步改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 三处 |
 
+### 安全说明
+
+- **per-user 安装，无需管理员权限**：MSI 安装到 `%LOCALAPPDATA%\dsh-launcher`，不写 Program Files，不注册服务、不创建计划任务；卸载不残留
+- **自启仅当前用户**：开机自启是 `HKCU\...\Run` 下的一个注册表值，卸载/`uninstall-autostart.cmd` 时自动删除
+- **下载校验**：每次 Release 附带 `SHA256SUMS.txt`，可对比文件校验和确认完整性
+- **代码签名**：安装包当前未签名，SmartScreen 可能提示“未知发布者”（属正常现象）；正式分发建议购买代码签名证书后签名
+- **数据本地化**：WebView2 数据在 `%LOCALAPPDATA%\DshWeb`，日志在 `%USERPROFILE%\.dsh-web.log`，无任何遥测
+
+### 发版策略
+
+- **严重问题/安全修补** → 立即打补丁版本 tag（`vX.Y.Z+1`）发版，CHANGELOG 同步更新
+- **新功能** → 升次版本号发版
+- 每次 tag 推送，CI 自动：跑单测 → 构建 zip + MSI + SHA256 校验和 → 从 CHANGELOG 生成 Release 说明并发布
+
 ### 版本兼容性
 
 - **依赖面小**：本工具只调用 `dsh web` 的 CLI 接口（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，因此 dsh 升级一般无需重新编译壳应用
@@ -154,7 +180,10 @@ CI 每次 push/PR 也会自动跑 `dotnet test`。
 壳应用是框架依赖发布，运行需要 .NET Desktop Runtime 10。安装：`winget install Microsoft.DotNet.DesktopRuntime.10`，或从 [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0) 下载安装后重试。
 
 **Q：如何彻底卸载？**
-运行部署目录下的 `uninstall-autostart.cmd`（自动删除自启项与桌面快捷方式），最后删除整个部署目录即可。
+运行部署目录下的 `uninstall-autostart.cmd`（自动删除自启项与桌面快捷方式），最后删除整个部署目录即可。MSI 安装版在“设置 → 应用 → dsh-launcher → 卸载”。
+
+**Q：MSI 和 ZIP 有什么区别？**
+ZIP 是便携版：解压即用，适合绿色软件爱好者；MSI 是安装版：自动创建快捷方式、默认开机自启、可在“设置 → 应用”中卸载，适合新手。两者文件内容相同。
 
 **Q：为什么不用 Electron / Tauri？**
 Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri 底层同样是 WebView2 但需要 Rust 工具链。本工具直接用 WebView2 封装，产物更小、构建更简单。
@@ -192,6 +221,7 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 - 🔌 **Auto-launch** — the shell probes port 3080 on startup and starts the service if it is down, waiting until it is ready (prefers the global `dsh`; falls back to `npx -y @deepseek-ai/dsh` when dsh is not installed globally, so no manual service start is needed)
 - 📋 **File logging** — service output goes to `%USERPROFILE%\.dsh-web.log` for troubleshooting
 - 🧹 **Fully removable** — `uninstall-autostart.cmd` removes the autostart entry and desktop shortcuts
+- 📦 **MSI installer** — per-user install without admin rights; shortcuts and autostart set up automatically; uninstallable from Settings → Apps
 
 ### Memory comparison
 
@@ -213,7 +243,16 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 ### Quick start
 
-#### Option 1: prebuilt release (recommended)
+#### Option 1: MSI installer (recommended for new users)
+
+Download `dsh-launcher-<version>.msi` from the [Releases](https://github.com/Ruler4396/dsh-launcher/releases) page and double-click it (**no admin rights required**):
+
+- Installs to `%LOCALAPPDATA%\dsh-launcher` with desktop and Start Menu shortcuts
+- Autostart is enabled by default (dsh service starts silently at logon, current user only)
+- Uninstall: Settings → Apps → dsh-launcher → Uninstall; or run `uninstall-autostart.cmd` in the install folder to remove autostart/shortcuts only
+- If it prompts for .NET Desktop Runtime, run `winget install Microsoft.DotNet.DesktopRuntime.10` first (see FAQ)
+
+#### Option 2: portable ZIP
 
 Download `dsh-launcher-windows.zip` from the [Releases](https://github.com/Ruler4396/dsh-launcher/releases) page and extract it (it contains `DshWeb.exe`, `WebView2Loader.dll`, `runtimes\` and all deployment scripts):
 
@@ -233,12 +272,12 @@ Download `dsh-launcher-windows.zip` from the [Releases](https://github.com/Ruler
 
 5. (Uninstall) run `uninstall-autostart.cmd` to remove the autostart entry and desktop shortcuts
 
-#### Option 2: build from source
+#### Option 3: build from source
 
 ```powershell
 git clone https://github.com/Ruler4396/dsh-launcher.git
 cd dsh-launcher
-./scripts/build-release.ps1    # one-shot packaging, produces dist\dsh-launcher-windows.zip (all scripts included)
+./scripts/build-release.ps1    # one-shot packaging: zip + MSI installer + SHA256 checksums
 ```
 
 Or publish manually (remember to copy the deployment scripts into the output directory):
@@ -249,7 +288,7 @@ dotnet publish src/DshShell -c Release -r win-x64 --self-contained false `
 copy scripts\start-dsh.vbs, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd dist\
 ```
 
-The build produces `dist\DshWeb.exe` (framework-dependent single file, ~1MB, needs .NET Desktop Runtime 10); the rest is the same as Option 1.
+The build produces `dist\DshWeb.exe` (framework-dependent single file, ~1MB, needs .NET Desktop Runtime 10), `dist\dsh-launcher-<version>.msi` and `dist\SHA256SUMS.txt`; the rest is the same as Option 2.
 
 ### Directory layout
 
@@ -263,6 +302,8 @@ dsh-launcher/
 │   ├── dsh-web.cmd          # one-click entry: check port → start service → open shell
 │   ├── uninstall-autostart.cmd  # remove autostart entry and desktop shortcuts
 │   └── build-release.ps1    # packaging script (development only, not shipped)
+├── installer/
+│   └── product.wxs          # WiX v5 source: per-user MSI installer (no admin, no services)
 └── src/
     └── DshShell/            # shell app source (C# WinForms + WebView2)
         ├── DshShell.csproj
@@ -294,6 +335,20 @@ CI also runs `dotnet test` on every push/PR.
 | Single instance | a second launch just focuses the existing window instead of spawning another WebView2 process |
 | Port | `3080` by default, matching dsh; to change it, update `start-dsh.vbs`, `dsh-web.cmd` and `Program.cs` together |
 
+### Security
+
+- **Per-user install, no admin rights** — the MSI installs to `%LOCALAPPDATA%\dsh-launcher`, never touches Program Files, registers no services and no scheduled tasks; uninstall leaves nothing behind
+- **Autostart is per-user only** — a single `HKCU\...\Run` value, removed on uninstall or by `uninstall-autostart.cmd`
+- **Download verification** — every release ships `SHA256SUMS.txt` so you can verify file integrity
+- **Code signing** — packages are currently unsigned, so SmartScreen may show an "unknown publisher" warning (expected); for production distribution, sign with a code-signing certificate
+- **Local data only** — WebView2 data in `%LOCALAPPDATA%\DshWeb`, logs in `%USERPROFILE%\.dsh-web.log`; no telemetry
+
+### Release policy
+
+- **Serious bugs / security fixes** → release a patch version (`vX.Y.Z+1`) immediately, keep the CHANGELOG in sync
+- **New features** → bump the minor version
+- Every tag push: CI runs tests → builds zip + MSI + SHA256 checksums → generates release notes from the CHANGELOG and publishes
+
 ### Version compatibility
 
 - **Small dependency surface** — only uses the `dsh web` CLI (`--host` / `--port`), the default port `3080`, and the Web UI over HTTP; no dependence on dsh internals, so dsh upgrades usually do not require rebuilding the shell
@@ -316,7 +371,10 @@ Change the port in `start-dsh.vbs`, `dsh-web.cmd` and `Program.cs`, then rebuild
 The shell app is framework-dependent and needs .NET Desktop Runtime 10. Install it with `winget install Microsoft.DotNet.DesktopRuntime.10`, or download it from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0), then retry.
 
 **Q: How do I uninstall completely?**
-Run `uninstall-autostart.cmd` from the deploy folder (it removes the autostart entry and desktop shortcuts), then delete the whole deploy folder.
+Run `uninstall-autostart.cmd` from the deploy folder (it removes the autostart entry and desktop shortcuts), then delete the whole deploy folder. For the MSI install, use Settings → Apps → dsh-launcher → Uninstall.
+
+**Q: What is the difference between the MSI and the ZIP?**
+The ZIP is the portable version: extract and run, no install. The MSI is the installer version: it sets up shortcuts and autostart automatically and can be uninstalled from Settings → Apps; recommended for new users. Both contain the same files.
 
 **Q: Why not Electron / Tauri?**
 Electron bundles a full Chromium (same memory cost as a browser); Tauri also uses WebView2 underneath but needs a Rust toolchain. This project wraps WebView2 directly, which keeps the artifact smaller and the build simpler.
