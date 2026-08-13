@@ -10,7 +10,7 @@
 
 ## 安装
 
-**方式一：MSI 安装包（推荐）** — 下载 `dsh-launcher-<版本>.msi` 双击安装，向导里可勾选是否开机自启；卸载：设置 → 应用 → dsh-launcher → 卸载。
+**方式一：MSI 安装包（推荐）** — 下载 `dsh-launcher-<版本>.msi` 双击安装，向导里可勾选是否开机自启；安装和卸载会弹一次 UAC 管理员确认（系统级安装，装到 `%ProgramFiles%\dsh-launcher`，也可自定义目录）。卸载：设置 → 应用 → dsh-launcher → 卸载。
 
 **方式二：便携版 ZIP** — 下载 `dsh-launcher-windows.zip`，解压后双击 `DshWeb.exe`；删文件夹即卸载（自启/快捷方式用 `uninstall-autostart.cmd` 清理）。
 
@@ -55,7 +55,7 @@
 
 ### Install
 
-**Option 1: MSI installer (recommended)** — download `dsh-launcher-<version>.msi` and double-click it; the wizard lets you choose autostart. Uninstall: Settings → Apps → dsh-launcher.
+**Option 1: MSI installer (recommended)** — download `dsh-launcher-<version>.msi` and double-click it; the wizard lets you choose autostart. Install and uninstall prompt once for UAC elevation (per-machine install to `%ProgramFiles%\dsh-launcher`, custom folder supported). Uninstall: Settings → Apps → dsh-launcher.
 
 **Option 2: portable ZIP** — download `dsh-launcher-windows.zip`, extract and run `DshWeb.exe`; delete the folder to uninstall (use `uninstall-autostart.cmd` to remove autostart/shortcuts).
 

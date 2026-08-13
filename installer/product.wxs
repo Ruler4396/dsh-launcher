@@ -1,18 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  dsh-launcher per-user MSI installer (WiX Toolset v5, schema v4).
+  dsh-launcher per-machine MSI installer (WiX Toolset v5, schema v4).
 
   Design (security-first):
-  - Scope="perUser": installs under %LOCALAPPDATA%\dsh-launcher, NO admin/UAC, no
-    machine-wide changes, no services, no scheduled tasks.
+  - Scope="perMachine" + elevated: install/repair/remove run with admin (UAC
+    prompt) and register in HKLM. Elevation is REQUIRED for a correct uninstall
+    on disks whose root Config.Msi ACL (created by the MSI service as SYSTEM
+    only) blocks the non-elevated client from setting security on rollback
+    files (.rbf), which otherwise surfaces as error 1926 / error 5 during
+    uninstall (see docs/DETAILS.md FAQ). Elevated transactions match the
+    BUILTIN\Administrators ACE on Config.Msi, so uninstall is clean.
+  - Default folder: %ProgramFiles%\dsh-launcher; the wizard still allows a
+    custom folder (WIXUI_INSTALLDIR), e.g. an existing E:\ directory.
   - Autostart is a plain HKCU\...\Run value (removed on uninstall).
-  - Desktop / Start Menu shortcuts are created per-user and removed on uninstall.
-  - Uninstall shortcut is always installed (it is the uninstall entry point).
+  - Desktop / Start Menu shortcuts and uninstall shortcut are created for the
+    installing user (public folders) and removed on uninstall.
   - UpgradeCode is fixed so future versions upgrade in place via MajorUpgrade.
+    NOTE: per-user installs of 0.1.5 and earlier are in HKCU; a per-machine
+    upgrade cannot see them (MSI searches only the same context), so upgrading
+    from a per-user build requires uninstalling the old version first.
 
   UI: a simple wizard (Welcome → License → Options → Ready → Install → Finish)
   with exactly three checkboxes (autostart / desktop shortcut / start menu
-  shortcut), no feature tree, no install-location picker.
+  shortcut), no feature tree, with a modern install-folder page.
 
   Build (see scripts/build-release.ps1):
     wix build installer\product.wxs -arch x64 -d ProductVersion=<x.y.z> -d SourceDir=<assemble dir> -o dist\dsh-launcher-<version>.msi
@@ -24,11 +34,11 @@
            Manufacturer="dsh-launcher contributors"
            Version="$(var.ProductVersion)"
            UpgradeCode="3B29D055-E142-43BD-ADA8-C5377D11BD7E"
-           Scope="perUser">
+           Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of dsh-launcher is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <StandardDirectory Id="LocalAppDataFolder">
+    <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="dsh-launcher">
         <Directory Id="RuntimesDir" Name="runtimes">
           <Directory Id="WinX64Dir" Name="win-x64">
@@ -67,9 +77,9 @@
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
 
-    <!-- 禁用回滚：安装盘根目录 Config.Msi 的 ACL 在某些自定义根权限的磁盘（如本机 E:\）
-         上由 MSI 服务（SYSTEM）创建后交互用户无法写入，导致"装→卸"报错 1926/错误5。
-         本包仅 7 个小文件，禁用回滚的代价可接受，换取消该异常。 -->
+    <!-- 安装期禁用回滚的额外保险（本包仅 7 个小文件，代价可接受）。
+         卸载期的 1926/错误5 由 per-machine 提权解决：提权事务匹配 Config.Msi 上
+         BUILTIN\Administrators 的 ACL，回滚文件（.rbf）的安全设置不会失败。 -->
     <Property Id="DISABLEROLLBACK" Value="1" Secure="yes" />
 
     <UI>
@@ -257,7 +267,7 @@
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="FolderLabel" Type="Text" X="20" Y="78" Width="330" Height="15" Text="{\DshUIFont}安装到：" />
         <Control Id="Folder" Type="PathEdit" X="20" Y="95" Width="330" Height="19" Property="WIXUI_INSTALLDIR" Indirect="yes" />
-        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %LOCALAPPDATA%\dsh-launcher。可在此直接输入或粘贴其他路径。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
+        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %ProgramFiles%\dsh-launcher（需管理员确认）。可在此直接输入或粘贴其他路径，如已有的 E:\ 目录。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
           <Publish Event="NewDialog" Value="OptionsDlg" Condition="1" />
         </Control>

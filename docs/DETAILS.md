@@ -25,11 +25,11 @@
 | 弹窗 | 外部 http(s) → 系统默认浏览器；同源弹窗新建轻量窗口（保留会话）；blob:/data: 保持默认 |
 | 崩溃自愈 | 渲染进程崩溃/无响应自动重载（10 秒节流） |
 | 单实例 | 按目标端口隔离的互斥锁：重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
-| 安装包 | WiX v5 per-user MSI：无管理员、无服务、无计划任务，可卸载 |
+| 安装包 | WiX v5 per-machine MSI（安装/卸载需 UAC 提权）：默认 `%ProgramFiles%\dsh-launcher` 可自定义，无服务、无计划任务，可卸载 |
 
 ## 安全说明 / Security
 
-- **per-user 安装，无需管理员权限**：MSI 默认安装到 `%LOCALAPPDATA%\dsh-launcher`，向导中可自定义安装目录；不写 Program Files，不注册服务、不创建计划任务
+- **系统级安装（per-machine，提权）**：安装/卸载会弹一次 UAC 管理员确认，默认安装到 `%ProgramFiles%\dsh-launcher`，向导中可自定义安装目录；不注册服务、不创建计划任务。提权同时是卸载零报错的保证：Windows Installer 在卸载期对安装盘根 `Config.Msi` 里的回滚文件（.rbf）以用户身份设置安全，而该目录 ACL 硬编码为仅 SYSTEM/管理员，非提权在 ACL 异常的磁盘（如 E:\）必报 1926（详见 FAQ）
 - **卸载只删自己的文件**：MSI 卸载仅移除本应用安装的文件；目录只会在"空"时才被删除，预先存在的文件（如与 DeepSeek Harness 共用目录）绝不会被误删（已实测验证）
 - **自启仅当前用户**：`HKCU\...\Run` 一个注册表值，卸载/`uninstall-autostart.cmd` 时自动删除
 - **下载校验**：每次 Release 附带 `SHA256SUMS.txt`
@@ -86,7 +86,7 @@ dsh-launcher/
 ├── LICENSE
 ├── assets/                # README 截图
 ├── installer/
-│   ├── product.wxs        # WiX v5 源文件：per-user MSI（向导选择开机自启）
+│   ├── product.wxs        # WiX v5 源文件：per-machine MSI（向导选择开机自启/快捷方式/目录）
 │   └── License.rtf        # 安装向导许可页
 ├── scripts/               # 部署脚本（发布包内含全部脚本，与 DshWeb.exe 同目录）
 │   ├── start-dsh.vbs      # 无窗口静默启动服务（自启/壳拉起共用）
@@ -123,12 +123,12 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
 
 **Q：能自定义安装目录吗？卸载会不会误删同目录的其他文件？**
-MSI 向导中有"选择安装目录"一步（Segoe UI 现代风格，可直接输入/粘贴路径，默认 `%LOCALAPPDATA%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
+MSI 向导中有"选择安装目录"一步（Segoe UI 现代风格，可直接输入/粘贴路径，默认 `%ProgramFiles%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
 
 **Q：安装/卸载报"无法设置文件…Config.Msi…的安全权限，错误: 5"或"错误 1926"？或一直提示"另一个安装正在进行中"(1618)？**
-这是 **Windows Installer 的系统级问题**：某次安装被中断（常见于强杀 msiexec 或断电）后，安装盘根目录的 `Config.Msi` 回滚目录权限损坏，会挡住该盘上所有后续安装/卸载事务。修复：
+这是 **Windows Installer 的系统级行为**：安装/卸载事务会在目标盘的根目录创建 `Config.Msi`，用于保存回滚脚本与回滚文件（.rbf）。该目录的 ACL 由 MSI 服务（SYSTEM）创建时硬编码为**仅 SYSTEM 和管理员**（不继承盘根 ACL，任何盘根/目录 ACL 都无法绕过）。非提权用户（包括 UAC 过滤后的管理员）在**卸载**时需要对 .rbf 执行"设置安全"，在 `Config.Msi` ACL 异常或用户权限受限的磁盘上（如本机自定义 ACL 的 E:\）必然报 1926/错误 5。
 
-> **本安装包已内置预防措施**：从 0.1.6 起安装包设置 `DISABLEROLLBACK=1`（禁用回滚文件创建）。在本机这种盘根 ACL 异常的磁盘上，即使 MSI 服务创建的回滚目录交互用户不可写，安装→卸载也能完整成功（/qn 与向导模式均已实测，事件日志零 1926）。代价：MSI 无回滚能力（本包仅 7 个文件，可接受）。其他 MSI 包在该盘仍可能报错，根治需修复盘根 ACL（见下文）。
+> **本安装包已根治**：0.1.6 起改为**系统级安装（per-machine）**，安装/卸载都以管理员身份运行，事务能匹配 `Config.Msi` 上的 Administrators ACL，卸载不再报 1926（默认目录 C:\ 与非提权路径本无此问题；E:\ 自定义目录装→卸已实测零错误）。另保留安装期 `DISABLEROLLBACK=1` 作额外保险（本包仅 7 个文件，放弃安装期回滚代价可接受）。其他 MSI 包在同类磁盘上仍可能报错，可用下面的手动步骤修复：
 1. 关闭所有安装程序，确认任务管理器里没有 msiexec.exe 在运行
 2. 管理员运行 CMD，对安装盘根目录（按报错路径，如 `E:\`）执行：
    ```cmd
