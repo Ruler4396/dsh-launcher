@@ -124,3 +124,17 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 **Q：能自定义安装目录吗？卸载会不会误删同目录的其他文件？**
 MSI 向导中有"选择安装目录"一步（可手动输入或浏览选择，默认 `%LOCALAPPDATA%\dsh-launcher`）。卸载只会删除本应用的 7 个文件；目录仅当"空"时才会被移除——如果你把 dsh-launcher 装进已有的目录（如 DeepSeek Harness 目录），卸载后该目录和里面的其他文件都会原样保留（已实测验证）。
+
+**Q：安装/卸载报"无法设置文件…Config.Msi…的安全权限，错误: 5"或"错误 1926"？或一直提示"另一个安装正在进行中"(1618)？**
+这是 **Windows Installer 的系统级问题，与本安装包无关**：某次安装被中断（常见于强杀 msiexec 或断电）后，安装盘根目录的 `Config.Msi` 回滚目录权限损坏，会挡住该盘上所有后续安装/卸载事务。修复：
+1. 关闭所有安装程序，确认任务管理器里没有 msiexec.exe 在运行
+2. 管理员运行 CMD，对安装盘根目录（按报错路径，如 `E:\`）执行：
+   ```cmd
+   takeown /f E:\Config.Msi /r /d y
+   icacls E:\Config.Msi /reset /t /c
+   rmdir /s /q E:\Config.Msi
+   ```
+3. 若还提示 1618，重启 Windows Installer 服务：`sc stop msiserver` 后 `sc start msiserver`
+4. 重新安装/卸载即可；正常事务结束后 `Config.Msi` 会自动清理
+
+> 预防：**不要在安装进行中强杀 msiexec 进程**，这是 `Config.Msi` 损坏的最常见原因。
