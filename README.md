@@ -21,6 +21,8 @@
 - **一键启动**：桌面图标双击即开，服务未运行时自动拉起
 - **低内存**：使用 WebView2 嵌入式内核的独立窗口替代完整浏览器（作者环境实测约 50–150MB，关窗即释放；Edge/Chrome 常驻通常 500MB+）
 
+![dsh-launcher 界面预览](assets/dsh-launcher-screenshot.png)
+
 ### 特性
 
 - 🚀 **静默自启**：VBS 无窗口启动器 + Windows 启动文件夹，无需管理员权限即可注册开机自启
@@ -180,6 +182,8 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 - **Autostart** — the dsh service starts silently after logon, no windows shown
 - **One-click launch** — double-click a desktop icon; the service is started automatically if it is not running
 - **Low memory** — a standalone WebView2 window replaces the full browser (roughly 50–150MB in the author's environment, freed when the window closes; Edge/Chrome usually idle at 500MB+)
+
+![dsh-launcher UI preview](assets/dsh-launcher-screenshot.png)
 
 ### Features
 
