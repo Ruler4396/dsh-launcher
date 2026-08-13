@@ -25,7 +25,7 @@
 
 - 🚀 **静默自启**：VBS 无窗口启动器 + Windows 启动文件夹，无需管理员权限即可注册开机自启
 - 🪟 **轻量壳窗口**：C# WinForms + WebView2 单文件发布（约 1MB），无地址栏、无扩展、无后台常驻
-- 🔌 **自动拉起**：壳应用启动时探测 3080 端口，服务未运行则自动拉起并等待就绪
+- 🔌 **自动拉起**：壳应用启动时探测 3080 端口，服务未运行则自动拉起并等待就绪（优先全局 `dsh`，未全局安装时自动回退 `npx -y @deepseek-ai/dsh`，无需先手动起服务）
 - 📋 **日志落盘**：服务输出写入 `%USERPROFILE%\.dsh-web.log`，便于排查
 - 🧹 **可完全卸载**：`uninstall-autostart.cmd` 删除自启项与桌面快捷方式
 
@@ -53,11 +53,13 @@
 
 从 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 下载 `dsh-launcher-windows.zip`，解压后（内含 `DshWeb.exe`、`WebView2Loader.dll`、`runtimes\` 及全部部署脚本）：
 
-1. 安装 dsh：
+1. （可选，但推荐）全局安装 dsh：
 
    ```powershell
    npm install -g @deepseek-ai/dsh
    ```
+
+   > 未全局安装也能用：启动器检测到 `dsh` 不在 PATH 时会自动改用 `npx -y @deepseek-ai/dsh` 拉起服务（仅首次稍慢，npx 需下载）。
 
 2. 运行 `DshWeb.exe`，首次启动会自动拉起 dsh 服务并打开界面。若提示缺少 .NET Desktop Runtime，先执行 `winget install Microsoft.DotNet.DesktopRuntime.10`（见 FAQ）
 
@@ -103,6 +105,16 @@ dsh-launcher/
         └── Program.cs
 ```
 
+### 测试
+
+```powershell
+dotnet test tests/DshShell.Tests    # 单元测试（ShellLogic：弹窗分类/权限策略/文件名）
+./scripts/test.ps1                  # 集成检查（脚本回归断言 + uninstall 行为）
+./scripts/test.ps1 -Smoke           # 追加冒烟测试（需 dsh 服务在运行且已构建 dist）
+```
+
+CI 每次 push/PR 也会自动跑 `dotnet test`。
+
 ### 技术实现
 
 | 模块 | 方案 |
@@ -129,6 +141,9 @@ dsh-launcher/
 
 **Q：启动后页面打不开？**
 查看 `%USERPROFILE%\.dsh-web.log`，确认 dsh 是否安装（`dsh --version`）以及端口是否被占用。
+
+**Q：双击 `DshWeb.exe` 没有窗口，只有先在终端跑 `npx @deepseek-ai/dsh web` 窗口才会弹出来？**
+这是旧版（≤0.1.1）静默启动只认全局 `dsh` 命令导致的：如果你从未执行 `npm install -g @deepseek-ai/dsh`，自动拉起会失败（日志里出现 "'dsh' 不是内部或外部命令"），窗口要等服务已在运行时才出得来。新版已修复：启动脚本检测到 `dsh` 不在 PATH 时自动改用 `npx -y @deepseek-ai/dsh web` 静默拉起（`-y` 跳过 npx 的交互确认），无需全局安装；实际使用哪种方式会写在 `%USERPROFILE%\.dsh-web.log` 首行。仍建议全局安装，启动更快、不依赖 npx 下载：`npm install -g @deepseek-ai/dsh`。
 
 **Q：端口 3080 被占用怎么办？**
 修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 中的端口号后重新构建/部署。
@@ -170,7 +185,7 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 - 🚀 **Silent autostart** — a windowless VBS launcher in the Startup folder, no admin rights required
 - 🪟 **Lightweight shell window** — C# WinForms + WebView2 published as a single ~1MB file; no address bar, no extensions, no resident background process
-- 🔌 **Auto-launch** — the shell probes port 3080 on startup and starts the service if it is down, waiting until it is ready
+- 🔌 **Auto-launch** — the shell probes port 3080 on startup and starts the service if it is down, waiting until it is ready (prefers the global `dsh`; falls back to `npx -y @deepseek-ai/dsh` when dsh is not installed globally, so no manual service start is needed)
 - 📋 **File logging** — service output goes to `%USERPROFILE%\.dsh-web.log` for troubleshooting
 - 🧹 **Fully removable** — `uninstall-autostart.cmd` removes the autostart entry and desktop shortcuts
 
@@ -198,11 +213,13 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 Download `dsh-launcher-windows.zip` from the [Releases](https://github.com/Ruler4396/dsh-launcher/releases) page and extract it (it contains `DshWeb.exe`, `WebView2Loader.dll`, `runtimes\` and all deployment scripts):
 
-1. Install dsh:
+1. (Optional but recommended) Install dsh globally:
 
    ```powershell
    npm install -g @deepseek-ai/dsh
    ```
+
+   > A global install is not required: when the launcher detects that `dsh` is not on PATH it falls back to `npx -y @deepseek-ai/dsh` to start the service (only the first run is slower while npx downloads it).
 
 2. Run `DshWeb.exe`. On first launch it starts the dsh service automatically and opens the UI. If it prompts for .NET Desktop Runtime, run `winget install Microsoft.DotNet.DesktopRuntime.10` first (see FAQ)
 
@@ -248,6 +265,16 @@ dsh-launcher/
         └── Program.cs
 ```
 
+### Testing
+
+```powershell
+dotnet test tests/DshShell.Tests    # unit tests (ShellLogic: popup classification / permission policy / file naming)
+./scripts/test.ps1                  # integration checks (script regression assertions + uninstall behavior)
+./scripts/test.ps1 -Smoke           # adds a live smoke test (requires a running dsh service and a built dist)
+```
+
+CI also runs `dotnet test` on every push/PR.
+
 ### How it works
 
 | Module | Approach |
@@ -274,6 +301,9 @@ dsh-launcher/
 
 **Q: The page does not open after startup?**
 Check `%USERPROFILE%\.dsh-web.log`, confirm dsh is installed (`dsh --version`), and verify that port 3080 is not occupied.
+
+**Q: Double-clicking `DshWeb.exe` shows no window; it only appears after I run `npx @deepseek-ai/dsh web` in a terminal first?**
+This is caused by the old (≤0.1.1) silent launcher only recognizing the global `dsh` command. If you never ran `npm install -g @deepseek-ai/dsh`, the auto-launch failed (the log shows "'dsh' is not recognized as an internal or external command"), so the window only appeared once the service was already running. Fixed in the new release: the launcher checks whether `dsh` is on PATH and falls back to `npx -y @deepseek-ai/dsh web` (the `-y` skips npx's interactive confirm prompt), so no global install is required; the first line of `%USERPROFILE%\.dsh-web.log` records which method was used. A global install is still recommended for faster startup: `npm install -g @deepseek-ai/dsh`.
 
 **Q: What if port 3080 is already in use?**
 Change the port in `start-dsh.vbs`, `dsh-web.cmd` and `Program.cs`, then rebuild/redeploy.
