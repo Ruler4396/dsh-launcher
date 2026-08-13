@@ -111,7 +111,10 @@ dsh-launcher/
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志 |
 | 端口探测 | `TcpClient.Connect("127.0.0.1", 3080)`，壳启动时探测、未就绪则轮询等待（最长 90s） |
 | 开机自启 | 启动文件夹放置 `start-dsh.vbs`，登录时由 `wscript` 无窗口执行，无需管理员权限 |
-| 通知权限 | WebView2 `PermissionRequested` 自动授权桌面通知（配合 dsh-notification 等通知插件） |
+| 通知权限 | WebView2 `PermissionRequested` 自动授权桌面通知与剪贴板（配合 dsh-notification 等插件），麦克风/摄像头保持默认拒绝 |
+| 下载 | 文件自动保存到系统“下载”文件夹（避开同名），完成后用默认程序打开 |
+| 外链 | `window.open()` 的外部链接交给系统默认浏览器，内部弹窗留在壳内 |
+| 崩溃自愈 | 渲染进程崩溃/无响应时自动重载页面（10 秒节流，避免死循环） |
 | 单实例 | 重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
 | 端口 | 默认 `3080`，与 dsh 默认一致；如需修改，同步改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 三处 |
 
@@ -253,7 +256,10 @@ dsh-launcher/
 | Silent start | VBS runs `dsh web --host 127.0.0.1 --port 3080` in the background via `wscript`, output redirected to the log |
 | Port probe | `TcpClient.Connect("127.0.0.1", 3080)` on shell startup; polls until ready (up to 90s) |
 | Autostart | `start-dsh.vbs` placed in the Startup folder, executed windowless by `wscript` at logon, no admin rights |
-| Notification permission | WebView2 `PermissionRequested` auto-grants desktop notifications (for dsh-notification and similar plugins) |
+| Notification permission | WebView2 `PermissionRequested` auto-grants notifications and clipboard (for dsh-notification and similar plugins); microphone/camera stay denied by default |
+| Downloads | files are saved to the system Downloads folder (collision-free names) and opened with the default handler on completion |
+| External links | `window.open()` targets outside the app open in the system browser; internal popups stay in the shell |
+| Crash recovery | a crashed/unresponsive render process is auto-reloaded (10s throttle to avoid loops) |
 | Single instance | a second launch just focuses the existing window instead of spawning another WebView2 process |
 | Port | `3080` by default, matching dsh; to change it, update `start-dsh.vbs`, `dsh-web.cmd` and `Program.cs` together |
 
