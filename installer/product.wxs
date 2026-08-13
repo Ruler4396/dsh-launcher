@@ -58,6 +58,7 @@
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="UninstallShortcut" />
       <ComponentRef Id="CurrentProductCodeReg" />
+      <ComponentRef Id="DisplayIconReg" />
     </Feature>
     <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（HKCU Run，卸载时移除）" Level="1">
       <Level Value="0" Condition="NOT AUTO_START_OPTION" />
@@ -77,6 +78,11 @@
     <Property Id="DESKTOP_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
+
+    <!-- 应用图标（小鲸鱼）：显示在快捷方式与"设置 → 应用"卸载条目上。
+         exe 本身也编译了该图标（ApplicationIcon），这里显式引用保证一致。 -->
+    <Icon Id="AppIcon" SourceFile="$(sys.SOURCEFILEDIR)..\src\DshShell\app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <!-- 安装期禁用回滚的额外保险（本包仅 7 个小文件，代价可接受）。
          卸载期的 1926/错误5 由 per-machine 提权解决：提权事务匹配 Config.Msi 上
@@ -127,6 +133,17 @@
                      KeyPath="yes" />
     </Component>
 
+    <!-- 卸载条目图标（设置 → 应用 显示）：MSI 的 ARPPRODUCTICON 只影响旧控制面板，
+         新"设置 → 应用"读注册表 DisplayIcon 值，这里显式指向 exe（其自带小鲸鱼图标）。 -->
+    <Component Id="DisplayIconReg" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKLM"
+                     Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]"
+                     Name="DisplayIcon"
+                     Value="[INSTALLFOLDER]DshWeb.exe"
+                     Type="string"
+                     KeyPath="yes" />
+    </Component>
+
     <!-- per-user autostart: HKCU Run -> wscript start-dsh.vbs (silent service start at logon) -->
     <Component Id="AutoStartEntry" Directory="INSTALLFOLDER" Guid="*">
       <RegistryValue Root="HKCU"
@@ -142,7 +159,8 @@
                 Name="dsh-launcher"
                 Description="DeepSeek Harness Windows launcher"
                 Target="[INSTALLFOLDER]DshWeb.exe"
-                WorkingDirectory="INSTALLFOLDER" />
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon" />
       <RegistryValue Root="HKCU"
                      Key="Software\dsh-launcher\Shortcuts"
                      Name="desktop"
@@ -156,7 +174,8 @@
                 Name="DeepSeek Harness"
                 Description="DeepSeek Harness Windows launcher"
                 Target="[INSTALLFOLDER]DshWeb.exe"
-                WorkingDirectory="INSTALLFOLDER" />
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon" />
       <RemoveFolder Id="RemoveProgramMenuDir" Directory="ProgramMenuDir" On="uninstall" />
       <RegistryValue Root="HKCU"
                      Key="Software\dsh-launcher\Shortcuts"
@@ -172,7 +191,8 @@
                 Name="卸载 dsh-launcher"
                 Description="Uninstall dsh-launcher"
                 Target="[System64Folder]msiexec.exe"
-                Arguments="/x [ProductCode]" />
+                Arguments="/x [ProductCode]"
+                Icon="AppIcon" />
       <RegistryValue Root="HKCU"
                      Key="Software\dsh-launcher\Shortcuts"
                      Name="uninstall"
