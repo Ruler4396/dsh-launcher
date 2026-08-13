@@ -12,13 +12,36 @@ internal static class Program
 {
     private const string Url = "http://127.0.0.1:3080";
     private const int Port = 3080;
+    private const int SW_RESTORE = 9;
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool DestroyIcon(IntPtr handle);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     [STAThread]
     private static void Main()
     {
+        // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存
+        using var mutex = new Mutex(true, @"Local\DshWeb.SingleInstance", out var firstInstance);
+        if (!firstInstance)
+        {
+            var existing = FindWindow(null, "DeepSeek Harness");
+            if (existing != IntPtr.Zero)
+            {
+                ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(existing);
+            }
+            return;
+        }
+
         // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）
         if (!PortOpen())
         {
@@ -77,8 +100,20 @@ internal static class Program
                 "DshWeb", "WebView2");
             web.CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = userDataFolder };
             await web.EnsureCoreWebView2Async();
-            web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
-            web.CoreWebView2.Settings.AreDevToolsEnabled = true;
+
+            var settings = web.CoreWebView2.Settings;
+            settings.AreDefaultContextMenusEnabled = true;   // 保留右键菜单（复制/粘贴等）
+            settings.AreDevToolsEnabled = false;             // 生产壳关闭 F12，省内存
+            settings.IsGeneralAutofillEnabled = false;       // 关闭表单自动填充，减少后台开销
+            settings.IsPasswordAutosaveEnabled = false;      // 不保存密码
+
+            // 自动授权桌面通知（dsh-notification 等通知插件依赖），其余权限保持默认拒绝
+            web.CoreWebView2.PermissionRequested += (_, e) =>
+            {
+                if (e.PermissionKind == CoreWebView2PermissionKind.Notifications)
+                    e.State = CoreWebView2PermissionState.Allow;
+            };
+
             web.CoreWebView2.Navigate(Url);
         };
 
