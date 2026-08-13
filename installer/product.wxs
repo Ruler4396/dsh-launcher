@@ -12,7 +12,9 @@
   Build (see scripts/build-release.ps1):
     wix build installer\product.wxs -arch x64 -d ProductVersion=<x.y.z> -d SourceDir=<assemble dir> -o dist\dsh-launcher-<version>.msi
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
   <Package Name="dsh-launcher"
            Manufacturer="dsh-launcher contributors"
            Version="$(var.ProductVersion)"
@@ -38,16 +40,25 @@
     <Feature Id="Main" Title="dsh-launcher" Description="dsh-launcher application files" Level="1">
       <ComponentGroupRef Id="AppFiles" />
     </Feature>
-    <Feature Id="AutoStart" Title="Start dsh service at logon" Description="Registers a per-user Run entry that silently starts the dsh service at logon." Level="1">
+    <Feature Id="AutoStart" Title="开机自启（登录时静默启动 dsh 服务）" Description="在当前用户的启动项中注册 dsh 服务开机自启，卸载时自动移除。取消勾选则安装后不自动启动服务。" Level="1">
       <ComponentRef Id="AutoStartEntry" />
     </Feature>
-    <Feature Id="Shortcuts" Title="Desktop and Start Menu shortcuts" Description="Creates a desktop icon and a Start Menu entry." Level="1">
+    <Feature Id="Shortcuts" Title="桌面与开始菜单快捷方式" Description="创建桌面快捷方式、开始菜单项与卸载快捷方式。" Level="1">
       <ComponentRef Id="DesktopShortcut" />
       <ComponentRef Id="ProgramMenuShortcut" />
+      <ComponentRef Id="UninstallShortcut" />
     </Feature>
+
+    <!-- install wizard: lets the user choose (uncheck) autostart and shortcuts -->
+    <UI>
+      <ui:WixUI Id="WixUI_FeatureTree" />
+    </UI>
   </Package>
 
   <Fragment>
+    <!-- license page shown by the WixUI wizard (resolved relative to this file) -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />
+
     <ComponentGroup Id="AppFiles">
       <Component Directory="INSTALLFOLDER" Guid="*">
         <File Source="$(var.SourceDir)\DshWeb.exe" />
@@ -106,6 +117,21 @@
       <RegistryValue Root="HKCU"
                      Key="Software\dsh-launcher\Shortcuts"
                      Name="startmenu"
+                     Value="1"
+                     Type="integer"
+                     KeyPath="yes" />
+    </Component>
+
+    <!-- one-click uninstall from the Start Menu -->
+    <Component Id="UninstallShortcut" Directory="ProgramMenuDir" Guid="*">
+      <Shortcut Id="UninstallShortcutLnk"
+                Name="卸载 dsh-launcher"
+                Description="Uninstall dsh-launcher"
+                Target="[System64Folder]msiexec.exe"
+                Arguments="/x [ProductCode]" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\dsh-launcher\Shortcuts"
+                     Name="uninstall"
                      Value="1"
                      Type="integer"
                      KeyPath="yes" />

@@ -2,7 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.1.3] - 2026-08-13
+
+### 新增
+
+- MSI 安装向导（WixUI，中文界面）：安装时可勾选是否开机自启；开始菜单新增"卸载 dsh-launcher"快捷方式
+- Release 说明自动附带"安装与卸载"段落（MSI vs ZIP 区别移至 Releases 页说明）
+
+### 变更
+
+- README 精简为新手向短文档，详细内容移至 `docs/DETAILS.md`
+- 打包脚本健壮性：发布产物完整性校验、自动安装 WiX UI 扩展
 
 ## [0.1.2] - 2026-08-13
 
