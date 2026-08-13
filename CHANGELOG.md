@@ -8,6 +8,7 @@
 
 - MSI 改为**系统级安装（per-machine）**：安装/卸载会弹一次 UAC 管理员确认，默认装到 `%ProgramFiles%\dsh-launcher`（向导仍支持自定义目录，如已有的 E:\ 目录）；注册表、快捷方式改为 HKLM / 公共桌面 / 公共开始菜单，卸载自动清理
 - **旧版本自动清理**：壳程序启动时检测机器上是否还有其他版本的 dsh-launcher（per-user 的 0.1.0–0.1.5 等），检测到则提示用户一键提权卸载旧版（提权卸载不会触发 Config.Msi 1926），避免多版本共存；当前运行的版本通过安装时写入的 `HKLM\Software\dsh-launcher\CurrentProductCode` 识别，永远不会被误卸
+- **应用图标（小鲸鱼）**：壳 exe 编译自带图标资源（此前 exe 无图标，快捷方式与"设置 → 应用"都显示系统默认图标）；MSI 安装的快捷方式与卸载条目现在都显示小鲸鱼图标（`ARPPRODUCTICON` + 显式 `DisplayIcon` 注册表值）
 
 ### 修复
 
