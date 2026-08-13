@@ -6,8 +6,13 @@
   - Scope="perUser": installs under %LOCALAPPDATA%\dsh-launcher, NO admin/UAC, no
     machine-wide changes, no services, no scheduled tasks.
   - Autostart is a plain HKCU\...\Run value (removed on uninstall).
-  - Desktop + Start Menu shortcuts are created per-user and removed on uninstall.
+  - Desktop / Start Menu shortcuts are created per-user and removed on uninstall.
+  - Uninstall shortcut is always installed (it is the uninstall entry point).
   - UpgradeCode is fixed so future versions upgrade in place via MajorUpgrade.
+
+  UI: a simple wizard (Welcome → License → Options → Ready → Install → Finish)
+  with exactly three checkboxes (autostart / desktop shortcut / start menu
+  shortcut), no feature tree, no install-location picker.
 
   Build (see scripts/build-release.ps1):
     wix build installer\product.wxs -arch x64 -d ProductVersion=<x.y.z> -d SourceDir=<assemble dir> -o dist\dsh-launcher-<version>.msi
@@ -37,21 +42,32 @@
       <Directory Id="ProgramMenuDir" Name="dsh-launcher" />
     </StandardDirectory>
 
+    <!-- Main is always installed; the three optional features map to the wizard checkboxes
+         (Level elements turn the feature off when the matching checkbox is unchecked). -->
     <Feature Id="Main" Title="dsh-launcher" Description="dsh-launcher application files" Level="1">
       <ComponentGroupRef Id="AppFiles" />
-    </Feature>
-    <Feature Id="AutoStart" Title="开机自启（登录时静默启动 dsh 服务）" Description="在当前用户的启动项中注册 dsh 服务开机自启，卸载时自动移除。取消勾选则安装后不自动启动服务。" Level="1">
-      <ComponentRef Id="AutoStartEntry" />
-    </Feature>
-    <Feature Id="Shortcuts" Title="桌面与开始菜单快捷方式" Description="创建桌面快捷方式、开始菜单项与卸载快捷方式。" Level="1">
-      <ComponentRef Id="DesktopShortcut" />
-      <ComponentRef Id="ProgramMenuShortcut" />
       <ComponentRef Id="UninstallShortcut" />
     </Feature>
+    <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（HKCU Run，卸载时移除）" Level="1">
+      <Level Value="0" Condition="NOT AUTO_START_OPTION" />
+      <ComponentRef Id="AutoStartEntry" />
+    </Feature>
+    <Feature Id="DesktopShortcut" Title="桌面快捷方式" Description="在桌面创建 dsh-launcher 快捷方式" Level="1">
+      <Level Value="0" Condition="NOT DESKTOP_SHORTCUT_OPTION" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+    <Feature Id="MenuShortcut" Title="开始菜单快捷方式" Description="在开始菜单创建 dsh-launcher 快捷方式" Level="1">
+      <Level Value="0" Condition="NOT MENU_SHORTCUT_OPTION" />
+      <ComponentRef Id="ProgramMenuShortcut" />
+    </Feature>
 
-    <!-- install wizard: lets the user choose (uncheck) autostart and shortcuts -->
+    <!-- checkbox defaults: all on -->
+    <Property Id="AUTO_START_OPTION" Value="1" Secure="yes" />
+    <Property Id="DESKTOP_SHORTCUT_OPTION" Value="1" Secure="yes" />
+    <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
+
     <UI>
-      <ui:WixUI Id="WixUI_FeatureTree" />
+      <ui:WixUI Id="WixUI_SimpleCheckbox" />
     </UI>
   </Package>
 
@@ -122,7 +138,7 @@
                      KeyPath="yes" />
     </Component>
 
-    <!-- one-click uninstall from the Start Menu -->
+    <!-- one-click uninstall from the Start Menu (always installed) -->
     <Component Id="UninstallShortcut" Directory="ProgramMenuDir" Guid="*">
       <Shortcut Id="UninstallShortcutLnk"
                 Name="卸载 dsh-launcher"
@@ -136,5 +152,82 @@
                      Type="integer"
                      KeyPath="yes" />
     </Component>
+  </Fragment>
+
+  <!-- 简单向导：Welcome → License → Options(三个勾选框) → Ready → Install → Finish；
+       已安装时走 MaintenanceWelcome → MaintenanceType(修复/移除)。
+       Id 带 _X64 后缀（<ui:WixUI> 引用时会按构建架构追加后缀）。 -->
+  <Fragment>
+    <UI Id="WixUI_SimpleCheckbox_X64">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="WelcomeDlg" />
+      <DialogRef Id="LicenseAgreementDlg" />
+      <DialogRef Id="OptionsDlg" />
+      <DialogRef Id="VerifyReadyDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ExitDialog" />
+      <DialogRef Id="MaintenanceWelcomeDlg" />
+      <DialogRef Id="MaintenanceTypeDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Publish Dialog="LicenseAgreementDlg" Control="Print" Event="DoAction" Value="WixUIPrintEula_X64" />
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="LicenseAgreementDlg" Condition="NOT Installed" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="OptionsDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="OptionsDlg" Order="1" Condition="NOT Installed" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2" Condition="Installed AND NOT PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3" Condition="Installed AND PATCH" />
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
+
+  <!-- 安装选项对话框：三个勾选框，无安装位置选择 -->
+  <Fragment>
+    <UI>
+      <Dialog Id="OptionsDlg" Width="370" Height="270" Title="[ProductName] — 安装选项">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" Text="!(loc.InstallDirDlgTitle)" />
+        <Control Id="Description" Type="Text" X="15" Y="23" Width="340" Height="15" Transparent="yes" Text="选择要启用的功能" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg" Condition="1" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Condition="1" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
+          <Publish Event="EndDialog" Value="Return" Condition="1" />
+        </Control>
+        <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="开机自启（登录时静默启动 dsh 服务）" />
+        <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="115" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建桌面快捷方式" />
+        <Control Id="MenuShortcut" Type="CheckBox" X="25" Y="145" Width="320" Height="17" Property="MENU_SHORTCUT_OPTION" CheckBoxValue="1" Text="创建开始菜单快捷方式" />
+        <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="安装目录固定为 %LOCALAPPDATA%\dsh-launcher，无需选择。" />
+      </Dialog>
+    </UI>
   </Fragment>
 </Wix>

@@ -44,6 +44,7 @@ Assert-True ($webCmd -match 'start-dsh\.vbs') "dsh-web.cmd 会调用 start-dsh.v
 $uninstall = Get-Content (Join-Path $root "scripts\uninstall-autostart.cmd") -Raw
 Assert-True ($uninstall -notmatch 'schtasks') "uninstall-autostart.cmd 不再删除计划任务"
 Assert-True ($uninstall -match 'Start Menu\\Programs\\Startup') "uninstall 删除启动文件夹自启项"
+Assert-True ($uninstall -match 'dsh-autostart\.vbs') "uninstall 同时清理旧版 dsh-autostart.vbs"
 Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方式"
 
 $vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
@@ -59,6 +60,7 @@ try {
     $desktop = Join-Path $tmp "Profile\Desktop"
     New-Item -ItemType Directory -Force -Path $startup, $desktop | Out-Null
     Set-Content (Join-Path $startup "start-dsh.vbs") "' fake"
+    Set-Content (Join-Path $startup "dsh-autostart.vbs") "' fake legacy"
     Set-Content (Join-Path $desktop "DshWeb.lnk") "fake"
     Set-Content (Join-Path $desktop "DeepSeek Harness.lnk") "fake"
     Set-Content (Join-Path $desktop "keep.txt") "unrelated"
@@ -70,6 +72,7 @@ try {
     $env:APPDATA = $oldAp; $env:USERPROFILE = $oldUp
 
     Assert-True (-not (Test-Path (Join-Path $startup "start-dsh.vbs"))) "删除启动文件夹自启项"
+    Assert-True (-not (Test-Path (Join-Path $startup "dsh-autostart.vbs"))) "删除旧版 dsh-autostart.vbs"
     Assert-True (-not (Test-Path (Join-Path $desktop "DshWeb.lnk"))) "删除 DshWeb.lnk"
     Assert-True (-not (Test-Path (Join-Path $desktop "DeepSeek Harness.lnk"))) "删除 DeepSeek Harness.lnk"
     Assert-True (Test-Path (Join-Path $desktop "keep.txt")) "不影响无关文件"
