@@ -1,0 +1,131 @@
+<#
+.SYNOPSIS
+dsh-launcher 测试入口：单元测试 + 脚本/打包集成检查 + 可选冒烟测试。
+
+.DESCRIPTION
+默认运行：
+  1. dotnet test（ShellLogic 单元测试）
+  2. 静态回归断言（dsh-web.cmd 路径、uninstall 不再用 schtasks、vbs 命令正确）
+  3. uninstall-autostart.cmd 行为测试（伪造 APPDATA/USERPROFILE，不触碰真实文件）
+
+加 -Smoke 额外运行：
+  4. 冒烟测试（需 dist\DshWeb.exe 存在且 3080 端口开放）：
+     启动壳应用、校验窗口标题、验证单实例保护，然后自动关闭。
+
+.EXAMPLE
+./scripts/test.ps1
+./scripts/test.ps1 -Smoke
+#>
+param(
+    [switch]$Smoke
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+$script:failed = 0
+
+function Assert-True([bool]$Cond, [string]$Msg) {
+    if ($Cond) { Write-Host "[ OK ] $Msg" -ForegroundColor Green }
+    else { Write-Host "[FAIL] $Msg" -ForegroundColor Red; $script:failed++ }
+}
+
+Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
+$testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
+$testCode = $LASTEXITCODE
+$testOut | Select-Object -Last 12
+Assert-True ($testCode -eq 0) "dotnet test 通过"
+
+Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
+$webCmd = Get-Content (Join-Path $root "scripts\dsh-web.cmd") -Raw
+Assert-True ($webCmd -match '%DIR%DshWeb\.exe') "dsh-web.cmd 从脚本同目录启动 DshWeb.exe"
+Assert-True ($webCmd -notmatch 'bin\\') "dsh-web.cmd 不再引用不存在的 bin\ 子目录"
+Assert-True ($webCmd -match 'start-dsh\.vbs') "dsh-web.cmd 会调用 start-dsh.vbs"
+
+$uninstall = Get-Content (Join-Path $root "scripts\uninstall-autostart.cmd") -Raw
+Assert-True ($uninstall -notmatch 'schtasks') "uninstall-autostart.cmd 不再删除计划任务"
+Assert-True ($uninstall -match 'Start Menu\\Programs\\Startup') "uninstall 删除启动文件夹自启项"
+Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方式"
+
+$vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
+Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port 3080') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
+Assert-True ($vbs -match '\.dsh-web\.log') "start-dsh.vbs 日志重定向到 .dsh-web.log"
+Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
+
+Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
+$tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
+try {
+    # 覆盖 APPDATA 后脚本路径为 $tmp\Microsoft\Windows\Start Menu\Programs\Startup
+    $startup = Join-Path $tmp "Microsoft\Windows\Start Menu\Programs\Startup"
+    $desktop = Join-Path $tmp "Profile\Desktop"
+    New-Item -ItemType Directory -Force -Path $startup, $desktop | Out-Null
+    Set-Content (Join-Path $startup "start-dsh.vbs") "' fake"
+    Set-Content (Join-Path $desktop "DshWeb.lnk") "fake"
+    Set-Content (Join-Path $desktop "DeepSeek Harness.lnk") "fake"
+    Set-Content (Join-Path $desktop "keep.txt") "unrelated"
+
+    $oldAp = $env:APPDATA; $oldUp = $env:USERPROFILE
+    $env:APPDATA = $tmp
+    $env:USERPROFILE = (Join-Path $tmp "Profile")
+    cmd /c "`"$(Join-Path $root 'scripts\uninstall-autostart.cmd')`" < nul" | Out-Null
+    $env:APPDATA = $oldAp; $env:USERPROFILE = $oldUp
+
+    Assert-True (-not (Test-Path (Join-Path $startup "start-dsh.vbs"))) "删除启动文件夹自启项"
+    Assert-True (-not (Test-Path (Join-Path $desktop "DshWeb.lnk"))) "删除 DshWeb.lnk"
+    Assert-True (-not (Test-Path (Join-Path $desktop "DeepSeek Harness.lnk"))) "删除 DeepSeek Harness.lnk"
+    Assert-True (Test-Path (Join-Path $desktop "keep.txt")) "不影响无关文件"
+}
+finally {
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($Smoke) {
+    Write-Host "`n== 4. 冒烟测试 ==" -ForegroundColor Cyan
+    $zip = Join-Path $root "dist\dsh-launcher-windows.zip"
+    Assert-True (Test-Path $zip) "dist\dsh-launcher-windows.zip 存在（先运行 ./scripts/build-release.ps1）"
+    if (Test-Path $zip) {
+        $smokeDir = Join-Path $env:TEMP ("dsh-smoke-" + [guid]::NewGuid().ToString("N"))
+        try {
+            Expand-Archive -Path $zip -DestinationPath $smokeDir -Force
+            $exe = Join-Path $smokeDir "DshWeb.exe"
+            Assert-True (Test-Path $exe) "发布包解压后包含 DshWeb.exe"
+            Assert-True (Test-Path (Join-Path $smokeDir "start-dsh.vbs")) "发布包解压后包含 start-dsh.vbs"
+
+            $portOpen = $false
+            try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", 3080); $portOpen = $true; $c.Close() } catch { }
+            if (-not $portOpen) {
+                Write-Host "[SKIP] 3080 端口未开放，跳过冒烟测试（需要 dsh 服务在运行）" -ForegroundColor Yellow
+            }
+            else {
+                $app = Start-Process $exe -PassThru
+                Start-Sleep -Seconds 8
+                $app.Refresh()
+                Assert-True (-not $app.HasExited) "壳应用启动后保持运行"
+                Assert-True ($app.MainWindowTitle -eq "DeepSeek Harness") "主窗口标题为 'DeepSeek Harness'（实际：'$($app.MainWindowTitle)'）"
+
+                $app2 = Start-Process $exe -PassThru
+                Start-Sleep -Seconds 3
+                $app2.Refresh()
+                Assert-True ($app2.HasExited) "第二次启动立即退出（单实例保护）"
+
+                # 清理：结束壳应用及其 WebView2 子进程
+                Get-CimInstance Win32_Process -Filter "ParentProcessId = $($app.Id)" -ErrorAction SilentlyContinue |
+                    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+                Write-Host "[ OK ] 冒烟测试窗口已关闭" -ForegroundColor Green
+            }
+        }
+        finally {
+            Remove-Item $smokeDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Write-Host ""
+if ($script:failed -eq 0) {
+    Write-Host "全部测试通过" -ForegroundColor Green
+    exit 0
+}
+else {
+    Write-Host "$($script:failed) 项测试失败" -ForegroundColor Red
+    exit 1
+}
