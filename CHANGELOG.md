@@ -7,11 +7,12 @@
 ### 变更
 
 - MSI 改为**系统级安装（per-machine）**：安装/卸载会弹一次 UAC 管理员确认，默认装到 `%ProgramFiles%\dsh-launcher`（向导仍支持自定义目录，如已有的 E:\ 目录）；注册表、快捷方式改为 HKLM / 公共桌面 / 公共开始菜单，卸载自动清理
+- **旧版本自动清理**：壳程序启动时检测机器上是否还有其他版本的 dsh-launcher（per-user 的 0.1.0–0.1.5 等），检测到则提示用户一键提权卸载旧版（提权卸载不会触发 Config.Msi 1926），避免多版本共存；当前运行的版本通过安装时写入的 `HKLM\Software\dsh-launcher\CurrentProductCode` 识别，永远不会被误卸
 
 ### 修复
 
 - **根治装→卸报错 1926/"无法设置文件…Config.Msi…的安全权限，错误: 5"**。根因：Windows Installer 在**卸载**期仍会创建回滚文件（.rbf）到安装盘根目录的 `Config.Msi`，并以用户身份对其设置安全，而该目录 ACL 由 MSI 服务硬编码为仅 SYSTEM/管理员（任何盘根/目录 ACL 都无法绕过，已实测）；非提权用户（含 UAC 过滤的管理员）在自定义 ACL 的磁盘（如本机 E:\）上必然失败。修复：per-machine 提权后，卸载事务以管理员身份匹配 `Config.Msi` 的 Administrators ACL，不再报错；另保留安装期 `DISABLEROLLBACK=1` 作额外保险。默认目录（C:）与非提权路径本无此问题
-- 从 0.1.5（per-user）升级：本机实测可自动升级（RemoveExistingProducts）；如遇旧版本未自动移除（per-user 注册在 HKCU 的机器），请先在"设置 → 应用"卸载旧版本再安装新版
+- 从 0.1.5（per-user）升级：本机实测可自动升级（RemoveExistingProducts）；标准机器上 per-user 旧版注册在 HKCU、per-machine 新版找不到时，新版启动后会自动提示"检测到旧版本"，一键提权卸载旧版（无需手动清理，也不再有 1926 报错）
 
 ## [0.1.5] - 2026-08-14
 

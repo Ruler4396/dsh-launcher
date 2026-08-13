@@ -143,4 +143,86 @@ public class ShellLogicTests
             Assert.All(result, c => Assert.DoesNotContain(c, Path.GetInvalidFileNameChars()));
         }
     }
+
+    [Fact]
+    public void PickOldInstalls_EmptyOrSingle_ReturnsEmpty()
+    {
+        Assert.Empty(ShellLogic.PickOldInstalls(new()));
+        Assert.Empty(ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{A}", new Version(0, 1, 6)),
+        }));
+    }
+
+    [Fact]
+    public void PickOldInstalls_KeepsOnlyNewest()
+    {
+        var olds = ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{A}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{B}", new Version(0, 1, 5)),
+        });
+        Assert.Equal("{B}", Assert.Single(olds).ProductCode);
+    }
+
+    [Fact]
+    public void PickOldInstalls_KeepsOneOfTiedNewest()
+    {
+        var olds = ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{A}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{B}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{C}", new Version(0, 1, 4)),
+        });
+        Assert.Equal(2, olds.Count);
+        Assert.Contains(olds, o => o.ProductCode == "{C}");
+        Assert.DoesNotContain(olds, o => o.ProductCode == "{A}");
+    }
+
+    [Fact]
+    public void PickOldInstalls_ThreeOldVersions_AllReturned()
+    {
+        var olds = ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{A}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{B}", new Version(0, 1, 3)),
+            new ShellLogic.InstalledDsh("{C}", new Version(0, 1, 0)),
+        });
+        Assert.Equal(2, olds.Count);
+        Assert.All(olds, o => Assert.NotEqual("{A}", o.ProductCode));
+    }
+
+    [Fact]
+    public void PickOldInstalls_NeverPicksCurrentCode()
+    {
+        var olds = ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{CUR}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{OLD}", new Version(0, 1, 6)),
+            new ShellLogic.InstalledDsh("{OLD2}", new Version(0, 1, 4)),
+        }, "{CUR}");
+        Assert.Equal(2, olds.Count);
+        Assert.DoesNotContain(olds, o => o.ProductCode == "{CUR}");
+    }
+
+    [Fact]
+    public void PickOldInstalls_OnlyCurrent_ReturnsEmpty()
+    {
+        Assert.Empty(ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{CUR}", new Version(0, 1, 6)),
+        }, "{CUR}"));
+    }
+
+    [Fact]
+    public void PickOldInstalls_CurrentIsOldest_KeepsOtherInstead()
+    {
+        // 当前运行版本之外只有一个其他版本 → 两者都保留（不清理，无法判断该卸哪个）
+        var olds = ShellLogic.PickOldInstalls(new()
+        {
+            new ShellLogic.InstalledDsh("{NEW}", new Version(0, 1, 7)),
+            new ShellLogic.InstalledDsh("{CUR}", new Version(0, 1, 6)),
+        }, "{CUR}");
+        Assert.Empty(olds);
+    }
 }
