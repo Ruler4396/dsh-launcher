@@ -22,18 +22,42 @@ jobs:
         shell: pwsh
         run: dotnet test tests/DshShell.Tests -c Release --nologo
 
-      - name: Build release package
+      - name: Build release package (zip + msi + checksums)
         shell: pwsh
         run: ./scripts/build-release.ps1 -OutputDir dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: dsh-launcher-windows
-          path: dist/dsh-launcher-windows.zip
+          path: |
+            dist/dsh-launcher-windows.zip
+            dist/*.msi
+            dist/SHA256SUMS.txt
+
+      - name: Prepare release notes from CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart('v')
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($ver))\] - .*?(?=^## |\z)")
+          $body = if ($m.Success) {
+            "## $tag`n`n" + $m.Value.TrimEnd()
+          } else {
+            "## $tag`n`n_No changelog entry for this version yet._"
+          }
+          if (Test-Path "dist\SHA256SUMS.txt") {
+            $body += "`n`n## 校验和 (SHA256)`n``````text`n" + (Get-Content "dist\SHA256SUMS.txt" -Raw).TrimEnd() + "`n``````"
+          }
+          Set-Content -Path body.md -Value $body -Encoding utf8
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/dsh-launcher-windows.zip
+          files: |
+            dist/dsh-launcher-windows.zip
+            dist/*.msi
+          body_path: body.md
           fail_on_unmatched_files: true
