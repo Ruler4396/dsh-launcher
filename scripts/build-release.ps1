@@ -34,9 +34,14 @@ $sumsPath = Join-Path $root "$OutputDir\SHA256SUMS.txt"
 
 # 1. publish single-file exe
 Write-Host ">> publishing shell app..."
+if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 dotnet publish (Join-Path $root "src\DshShell") -c Release -r win-x64 `
-    --self-contained false -p:PublishSingleFile=true -o $publishDir | Out-Null
+    --self-contained false -p:PublishSingleFile=true -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
+if (-not (Test-Path (Join-Path $publishDir "DshWeb.exe")) -or
+    -not (Test-Path (Join-Path $publishDir "WebView2Loader.dll"))) {
+    throw "publish output incomplete: DshWeb.exe / WebView2Loader.dll missing"
+}
 
 # 2. assemble deploy files (exclude pdb / xml docs / runtime user data)
 Write-Host ">> assembling release folder..."
@@ -65,7 +70,14 @@ if (-not $wix) {
     $wix = Get-Command wix -ErrorAction SilentlyContinue
 }
 if (-not $wix) { throw "WiX tool not available; run: dotnet tool install --global wix --version 5.0.2" }
+# the UI extension (install wizard) is not bundled with WiX v5; ensure it is installed
+$exts = & $wix.Source extension list -g 2>$null
+if ($exts -notmatch 'WixToolset.UI\.wixext') {
+    & $wix.Source extension add -g WixToolset.UI.wixext/5.0.2
+    if ($LASTEXITCODE -ne 0) { throw "failed to install WixToolset.UI.wixext" }
+}
 & $wix.Source build (Join-Path $root "installer\product.wxs") -arch x64 `
+    -ext WixToolset.UI.wixext -culture zh-CN `
     -d "ProductVersion=$Version" -d "SourceDir=$distDir" -o $msiPath
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
 
@@ -75,8 +87,8 @@ Get-FileHash $zipPath, $msiPath -Algorithm SHA256 | ForEach-Object {
     "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
 } | Set-Content $sumsPath -Encoding ascii
 
-Remove-Item $distDir -Recurse -Force
-Remove-Item $publishDir -Recurse -Force
+Remove-Item $distDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ">> done:"
 Write-Host "    $zipPath"

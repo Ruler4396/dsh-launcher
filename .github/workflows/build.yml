@@ -50,6 +50,19 @@ jobs:
           if (Test-Path "dist\SHA256SUMS.txt") {
             $body += "`n`n## 校验和 (SHA256)`n``````text`n" + (Get-Content "dist\SHA256SUMS.txt" -Raw).TrimEnd() + "`n``````"
           }
+          $body += @"
+
+---
+
+## 安装与卸载 / Install & Uninstall
+
+**MSI 安装包（推荐新手）**：双击安装，向导里可勾选是否开机自启；自动创建桌面与开始菜单快捷方式（含"卸载 dsh-launcher"）。卸载：设置 → 应用 → dsh-launcher → 卸载。
+
+**便携版 ZIP**：解压即用，双击 ``DshWeb.exe``；删文件夹即卸载（自启/快捷方式用 ``uninstall-autostart.cmd`` 清理）。
+
+> MSI 与 ZIP 内容完全相同；区别只在安装方式：MSI 有标准安装/卸载流程，适合新手；ZIP 免安装，适合便携党。
+> The MSI and ZIP contain the same files; the MSI adds a standard install/uninstall flow for new users, the ZIP is portable and install-free.
+"@
           Set-Content -Path body.md -Value $body -Encoding utf8
 
       - name: Publish GitHub Release
