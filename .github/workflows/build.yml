@@ -18,6 +18,10 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - name: Run unit tests
+        shell: pwsh
+        run: dotnet test tests/DshShell.Tests -c Release --nologo
+
       - name: Build release package
         shell: pwsh
         run: ./scripts/build-release.ps1 -OutputDir dist

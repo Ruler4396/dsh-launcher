@@ -4,6 +4,9 @@ obj/
 dist/
 .publish-tmp/
 
+# Test output
+TestResults/
+
 # IDE
 .vs/
 *.user
