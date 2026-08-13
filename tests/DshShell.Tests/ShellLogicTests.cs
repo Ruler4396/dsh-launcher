@@ -225,4 +225,52 @@ public class ShellLogicTests
         }, "{CUR}");
         Assert.Empty(olds);
     }
+
+    [Fact]
+    public void FilterByUpgradeCode_KeepsOnlyMatching()
+    {
+        var candidates = new List<ShellLogic.InstalledDsh>
+        {
+            new("{A}", new Version(0, 1, 5)),
+            new("{B}", new Version(0, 1, 6)),
+        };
+        // {A} 匹配我们的 UpgradeCode，{B} 是其他软件（不同 UpgradeCode）
+        var result = ShellLogic.FilterByUpgradeCode(candidates, code =>
+            code == "{A}" ? ShellLogic.DshUpgradeCode : "{11111111-2222-3333-4444-555555555555}");
+        Assert.Equal("{A}", Assert.Single(result).ProductCode);
+    }
+
+    [Fact]
+    public void FilterByUpgradeCode_FailedReadIsExcluded()
+    {
+        var candidates = new List<ShellLogic.InstalledDsh>
+        {
+            new("{A}", new Version(0, 1, 5)),
+        };
+        // 读取 UpgradeCode 失败（返回 null）→ 宁可不清理也不误删
+        var result = ShellLogic.FilterByUpgradeCode(candidates, _ => null);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void FilterByUpgradeCode_SameNameOtherSoftware_Excluded()
+    {
+        var candidates = new List<ShellLogic.InstalledDsh>
+        {
+            new("{OTHER}", new Version(9, 9, 9)), // 恰好同名但属于其他软件
+        };
+        var result = ShellLogic.FilterByUpgradeCode(candidates, _ => "{99999999-9999-9999-9999-999999999999}");
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void IsOurShortcutTarget_OnlyDshWebExe()
+    {
+        Assert.True(ShellLogic.IsOurShortcutTarget(@"C:\Program Files\dsh-launcher\DshWeb.exe"));
+        Assert.True(ShellLogic.IsOurShortcutTarget(@"E:\custom\DshWeb.exe"));
+        Assert.False(ShellLogic.IsOurShortcutTarget(@"C:\Windows\notepad.exe"));
+        Assert.False(ShellLogic.IsOurShortcutTarget(@"C:\Windows\System32\msiexec.exe"));
+        Assert.False(ShellLogic.IsOurShortcutTarget(null));
+        Assert.False(ShellLogic.IsOurShortcutTarget(""));
+    }
 }

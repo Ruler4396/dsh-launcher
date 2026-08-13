@@ -145,12 +145,15 @@ public static class ShellLogic
     /// <summary>已安装的 dsh-launcher 产品（ProductCode + 版本）。</summary>
     public sealed record InstalledDsh(string ProductCode, Version Version);
 
+    /// <summary>本项目的固定 UpgradeCode（0.1.0 起所有版本一致），用于精确识别"我们的产品"。</summary>
+    internal const string DshUpgradeCode = "{3B29D055-E142-43BD-ADA8-C5377D11BD7E}";
+
     /// <summary>
-    /// 枚举注册表中已安装的 dsh-launcher 产品（HKLM / HKLM WOW6432 / HKCU / HKCU WOW6432）。
-    /// 供升级场景识别 per-user 旧版本（0.1.0-0.1.5）——MSI 的跨作用域 MajorUpgrade 在标准
-    /// 机器上找不到 HKCU 里的旧版，壳程序据此提示用户提权卸载（提权卸载不触发 Config.Msi 1926）。
+    /// 枚举注册表中 DisplayName 为 "dsh-launcher" 的产品（HKLM / HKLM WOW6432 / HKCU / HKCU WOW6432）。
+    /// 这只是候选列表；是否真的是本产品必须再经 <see cref="FilterByUpgradeCode"/> 用 UpgradeCode 确认，
+    /// 避免其他恰好同名的软件被误清理。
     /// </summary>
-    internal static List<InstalledDsh> ReadInstalledDshProducts()
+    internal static List<InstalledDsh> ReadCandidateProducts()
     {
         var result = new List<InstalledDsh>();
         var roots = new[]
@@ -191,6 +194,27 @@ public static class ShellLogic
         }
         return result;
     }
+
+    /// <summary>
+    /// 用 UpgradeCode 精确过滤候选产品：只有 UpgradeCode 与本项目固定值一致的产品才算
+    /// dsh-launcher。upgradeCodeOf 读取失败或返回 null/不匹配时该产品被排除——
+    /// 宁可不清理，也不误删其他同名软件。
+    /// </summary>
+    internal static List<InstalledDsh> FilterByUpgradeCode(
+        List<InstalledDsh> candidates, Func<string, string?> upgradeCodeOf)
+    {
+        return candidates
+            .Where(c => string.Equals(upgradeCodeOf(c.ProductCode), DshUpgradeCode, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 判断快捷方式目标是否为我们的壳程序（DshWeb.exe）。
+    /// 用于孤儿清理：只有指向 DshWeb.exe 的快捷方式才删除，用户自行创建的同名内容不受影响。
+    /// </summary>
+    internal static bool IsOurShortcutTarget(string? targetPath) =>
+        !string.IsNullOrWhiteSpace(targetPath)
+        && string.Equals(Path.GetFileName(targetPath), "DshWeb.exe", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 从已安装产品中选出"旧版本"：
