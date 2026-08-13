@@ -36,13 +36,14 @@
 | --- | --- | --- |
 | Windows 10/11 | — | 需要内置 WebView2 Runtime（Win11 及新版 Win10 已自带） |
 | Node.js | 18+ | 运行 dsh |
-| .NET SDK | 10.0+ | 仅从源码构建时需要；直接使用编译产物则不需要 |
+| .NET Desktop Runtime | 10.0+ | 运行壳应用 `DshWeb.exe` 所需；未安装时首次启动会提示，见 FAQ |
+| .NET SDK | 10.0+ | 仅从源码构建时需要 |
 
 ## 快速开始
 
 ### 方式一：直接使用编译产物（推荐）
 
-从 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 下载 `dsh-launcher-windows.zip`，解压后：
+从 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 下载 `dsh-launcher-windows.zip`，解压后（内含 `DshWeb.exe`、`WebView2Loader.dll`、`runtimes\` 及全部部署脚本）：
 
 1. 安装 dsh：
 
@@ -50,26 +51,31 @@
    npm install -g @deepseek-ai/dsh
    ```
 
-2. 运行 `DshWeb.exe`，首次启动会自动拉起 dsh 服务并打开界面
+2. 运行 `DshWeb.exe`，首次启动会自动拉起 dsh 服务并打开界面。若提示缺少 .NET Desktop Runtime，先执行 `winget install Microsoft.DotNet.DesktopRuntime.10`（见 FAQ）
 
 3. （可选）开机自启：把 `start-dsh.vbs` 复制到启动文件夹（`Win+R` 输入 `shell:startup` 回车）
 
 4. （可选）桌面快捷方式：右键 `DshWeb.exe` → 发送到 → 桌面快捷方式
 
+5. （卸载）运行 `uninstall-autostart.cmd` 删除自启项与桌面快捷方式
+
 ### 方式二：从源码构建
 
 ```powershell
 git clone https://github.com/Ruler4396/dsh-launcher.git
-cd dsh-launcher/src/DshShell
-
-dotnet publish -c Release -r win-x64 --self-contained false `
-  -p:PublishSingleFile=true -o ..\..\dist
-
-# 将静默启动器一并放入产物目录（壳应用自拉起时需要）
-copy ..\..\scripts\start-dsh.vbs ..\..\dist\
+cd dsh-launcher
+./scripts/build-release.ps1    # 一键打包，产出 dist\dsh-launcher-windows.zip（含全部脚本）
 ```
 
-构建产物为 `dist\DshWeb.exe`（框架依赖单文件，约 1MB），其余步骤同方式一。
+或手动 publish（记得把 scripts 下的部署脚本一并放入产物目录）：
+
+```powershell
+dotnet publish src/DshShell -c Release -r win-x64 --self-contained false `
+  -p:PublishSingleFile=true -o dist
+copy scripts\start-dsh.vbs, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd dist\
+```
+
+构建产物为 `dist\DshWeb.exe`（框架依赖单文件，约 1MB，运行需要 .NET Desktop Runtime 10），其余步骤同方式一。
 
 ## 目录结构
 
@@ -77,11 +83,12 @@ copy ..\..\scripts\start-dsh.vbs ..\..\dist\
 dsh-launcher/
 ├── README.md
 ├── LICENSE
-├── scripts/                 # 部署用的启动/自启脚本
+├── scripts/                 # 部署脚本（发布包内含全部脚本，与 DshWeb.exe 同目录）
 │   ├── start-dsh.vbs        # 无窗口静默启动服务（自启/壳拉起共用）
 │   ├── start-dsh.cmd        # 前台调试启动（带日志窗口）
 │   ├── dsh-web.cmd          # 一键入口：检查端口 → 拉起服务 → 打开壳
-│   └── uninstall-autostart.cmd  # 删除自启与桌面快捷方式
+│   ├── uninstall-autostart.cmd  # 删除自启项与桌面快捷方式
+│   └── build-release.ps1    # 打包脚本（仅开发用，不随发布包分发）
 └── src/
     └── DshShell/            # 轻量壳应用源码（C# WinForms + WebView2）
         ├── DshShell.csproj
@@ -100,7 +107,7 @@ dsh-launcher/
 
 ## 版本兼容性
 
-- **依赖面极小**：本工具只依赖 `dsh web` 的 CLI 接口（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 的任何内部实现，因此对 dsh 内部重构天然免疫
+- **依赖面小**：本工具只调用 `dsh web` 的 CLI 接口（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，因此 dsh 升级一般无需重新编译壳应用
 - **升级方式**：`npm update -g @deepseek-ai/dsh` 后重启服务即可；壳应用无需重新编译
 - **注意事项**：dsh 目前处于开发者预览阶段（官方声明未来可能出现破坏兼容性的变更）。若官方变更启动参数或默认端口，只需同步修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 三处即可
 - 本工具不会修改或锁定 dsh 版本，始终跟随你本地安装的最新版
@@ -113,11 +120,14 @@ dsh-launcher/
 **Q：端口 3080 被占用怎么办？**
 修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 中的端口号后重新构建/部署。
 
+**Q：提示需要安装 .NET Desktop Runtime？**
+壳应用是框架依赖发布，运行需要 .NET Desktop Runtime 10。安装：`winget install Microsoft.DotNet.DesktopRuntime.10`，或从 [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0) 下载安装后重试。
+
 **Q：如何彻底卸载？**
-运行 `scripts\uninstall-autostart.cmd`，删除桌面快捷方式，最后删除整个部署目录即可。
+运行部署目录下的 `uninstall-autostart.cmd`（自动删除自启项与桌面快捷方式），最后删除整个部署目录即可。
 
 **Q：为什么不用 Electron / Tauri？**
-Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri 底层同样是 WebView2 但需要 Rust 工具链。本项目直接用 WebView2 封装，产物最小、构建最简单。
+Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri 底层同样是 WebView2 但需要 Rust 工具链。本项目直接用 WebView2 封装，产物更小、构建更简单。
 
 ## 免责声明
 
@@ -139,6 +149,6 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 - Opens the Web UI in a minimal WebView2 window instead of a full browser (50–150MB vs 500MB+)
 - Single-file ~1MB shell app (C# WinForms), auto-starts the service if it is not running
 
-Requirements: Windows 10/11 with WebView2 Runtime, Node.js 18+, and .NET SDK 10 only when building from source.
+Requirements: Windows 10/11 with WebView2 Runtime, Node.js 18+, and .NET Desktop Runtime 10 to run the shell app (the .NET SDK is only needed to build from source).
 
 This is an unofficial third-party tool, not affiliated with DeepSeek AI.
