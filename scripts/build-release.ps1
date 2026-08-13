@@ -4,7 +4,7 @@ Builds the dsh-launcher Windows release package.
 
 .DESCRIPTION
 Publishes the WebView2 shell app as a single-file executable, assembles the
-deployable files (exe + native loader + silent launcher) and creates
+deployable files (exe + native loader + all runtime scripts) and creates
 dsh-launcher-windows.zip under the output directory.
 
 .EXAMPLE
@@ -35,7 +35,10 @@ Copy-Item (Join-Path $publishDir "WebView2Loader.dll") $distDir
 if (Test-Path (Join-Path $publishDir "runtimes")) {
     Copy-Item (Join-Path $publishDir "runtimes") $distDir -Recurse
 }
-Copy-Item (Join-Path $root "scripts\start-dsh.vbs") $distDir
+# ship all runtime scripts so the deploy folder is self-contained
+foreach ($script in "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-autostart.cmd") {
+    Copy-Item (Join-Path $root "scripts\$script") $distDir
+}
 
 # 3. zip
 Write-Host ">> packaging zip..."
