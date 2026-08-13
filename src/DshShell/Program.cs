@@ -171,7 +171,9 @@ internal static class Program
                 // 读不到按无当前产品处理（便携版等）
             }
 
-            var olds = ShellLogic.PickOldInstalls(ShellLogic.ReadInstalledDshProducts(), currentCode);
+            var olds = ShellLogic.FilterByUpgradeCode(
+                ShellLogic.ReadCandidateProducts(), ReadUpgradeCodeOfProduct);
+            olds = ShellLogic.PickOldInstalls(olds, currentCode);
             if (olds.Count == 0) return;
 
             const string skipKeyName = @"Software\dsh-launcher";
@@ -231,33 +233,84 @@ internal static class Program
     }
 
     /// <summary>
-    /// 清理 per-user 旧版本（0.1.0-0.1.5）残留的用户级快捷方式。
-    /// 旧版被（提权）卸载后，其用户开始菜单/桌面快捷方式可能不被删除（MSI 提权卸载
-    /// 跳过 per-user 上下文组件）；而 per-machine 新版（0.1.6+）只写公共位置，
-    /// 因此用户级位置的 dsh-launcher 快捷方式只可能是旧版残留，直接清理即可。
+    /// 读取产品的 UpgradeCode（经其缓存 MSI 的 Property 表）。用于精确识别"我们的产品"，
+    /// 避免误清理其他恰好同名的软件。任何一步失败返回 null（该产品将被过滤掉）。
     /// </summary>
-    private static void CleanupOrphanShortcuts()
+    private static string? ReadUpgradeCodeOfProduct(string productCode)
     {
         try
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var userMenuDir = Path.Combine(appData, @"Microsoft\Windows\Start Menu\Programs\dsh-launcher");
-            if (Directory.Exists(userMenuDir)) Directory.Delete(userMenuDir, true);
+            dynamic installer = Activator.CreateInstance(
+                Type.GetTypeFromProgID("WindowsInstaller.Installer") ?? throw new InvalidOperationException());
+            var localPackage = (string)installer.ProductInfo(productCode, "LocalPackage");
+            if (string.IsNullOrWhiteSpace(localPackage) || !File.Exists(localPackage))
+                return null;
+            dynamic db = installer.OpenDatabase(localPackage, 0);
+            dynamic view = db.OpenView("SELECT `Value` FROM `Property` WHERE `Property`='UpgradeCode'");
+            view.Execute();
+            dynamic rec = view.Fetch();
+            return rec is null ? null : (string)rec.StringData(1);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 清理 per-user 旧版本（0.1.0-0.1.5）残留的用户级快捷方式。
+    /// 旧版被（提权）卸载后，其用户开始菜单/桌面快捷方式可能不被删除（MSI 提权卸载
+    /// 跳过 per-user 上下文组件）。只删除"目标确实是 DshWeb.exe"的快捷方式，
+    /// 用户自行创建的同名 .lnk（指向其他程序）不受影响；无法读取目标时保守不删。
+    /// </summary>
+    private static void CleanupOrphanShortcuts()
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var userMenuDir = Path.Combine(appData, @"Microsoft\Windows\Start Menu\Programs\dsh-launcher");
+        try
+        {
+            // 目录是 MSI 专用名；只有确认里面有我们的快捷方式（指向 DshWeb.exe）才整体删除
+            if (Directory.Exists(userMenuDir))
+            {
+                var hasOurs = Directory.GetFiles(userMenuDir, "*.lnk")
+                    .Any(lnk => ShellLogic.IsOurShortcutTarget(GetShortcutTarget(lnk)));
+                if (hasOurs) Directory.Delete(userMenuDir, true);
+            }
         }
         catch
         {
             // 忽略无法访问的目录
         }
 
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var userDesktopLnk = Path.Combine(desktop, "dsh-launcher.lnk");
         try
         {
-            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var userDesktopLnk = Path.Combine(desktop, "dsh-launcher.lnk");
-            if (File.Exists(userDesktopLnk)) File.Delete(userDesktopLnk);
+            if (File.Exists(userDesktopLnk)
+                && ShellLogic.IsOurShortcutTarget(GetShortcutTarget(userDesktopLnk)))
+            {
+                File.Delete(userDesktopLnk);
+            }
         }
         catch
         {
             // 忽略
+        }
+    }
+
+    /// <summary>读取 .lnk 的目标路径；失败返回 null（保守不删）。</summary>
+    private static string? GetShortcutTarget(string lnkPath)
+    {
+        try
+        {
+            dynamic shell = Activator.CreateInstance(
+                Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException());
+            dynamic lnk = shell.CreateShortcut(lnkPath);
+            return (string)lnk.TargetPath;
+        }
+        catch
+        {
+            return null;
         }
     }
 
