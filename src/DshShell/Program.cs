@@ -15,11 +15,34 @@ internal static class Program
     private const string DefaultUrl = "http://127.0.0.1:3080";
     private const int SW_RESTORE = 9;
 
-    /// 目标服务地址/端口：默认 3080，可用环境变量 DSH_WEB_URL 覆盖（免重建，见 ShellLogic.ResolveTarget）。
-    private static readonly (string Url, int Port) Target = ShellLogic.ResolveTarget(
-        Environment.GetEnvironmentVariable("DSH_WEB_URL"));
+    /// 目标服务地址/端口：默认 3080。优先级：DSH_WEB_URL（视为外部托管，壳不拉起服务）→
+    /// DSH_WEB_PORT（壳按此端口托管拉起服务，3080 被占用时可用）→ 默认 3080。
+    private static readonly (string Url, int Port) Target = ResolveTarget();
 
-    /// 设置 DSH_WEB_URL 时视为“外部托管服务”，壳不再自动拉起 dsh。
+    /// <summary>解析目标地址/端口；空值/非法值回退默认 3080。</summary>
+    private static (string Url, int Port) ResolveTarget()
+    {
+        var envUrl = Environment.GetEnvironmentVariable("DSH_WEB_URL");
+        if (!string.IsNullOrWhiteSpace(envUrl))
+        {
+            try
+            {
+                var uri = new Uri(envUrl, UriKind.Absolute);
+                if (uri.Scheme is "http" or "https")
+                    return (uri.GetLeftPart(UriPartial.Path).TrimEnd('/'), uri.Port);
+            }
+            catch
+            {
+                // 非法输入回退默认
+            }
+        }
+        var envPort = Environment.GetEnvironmentVariable("DSH_WEB_PORT");
+        if (int.TryParse(envPort, out var port) && port is > 0 and < 65536)
+            return ($"http://127.0.0.1:{port}", port);
+        return ("http://127.0.0.1:3080", 3080);
+    }
+
+    /// 设置 DSH_WEB_URL 时视为“外部托管服务”，壳不再自动拉起 dsh（DSH_WEB_PORT 则相反：壳托管拉起）。
     private static readonly bool ServerManagedExternally =
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"));
 
@@ -34,6 +57,32 @@ internal static class Program
 
     /// 托盘"退出"请求（允许 FormClosing 真正关闭，而不是再次隐藏到托盘）。
     private static bool _trayExitRequested;
+
+    private static readonly object TraceLock = new();
+
+    /// <summary>
+    /// 启动轨迹日志（%LOCALAPPDATA%\dsh-launcher\shell.log）：记录壳的关键决策点
+    /// （单实例、端口探测、服务拉起、就绪判定、窗口显示），用于排查"窗口没出来/要多点一次"
+    /// 等启动问题。写失败静默忽略，不影响启动。
+    /// </summary>
+    private static void Trace(string message)
+    {
+        try
+        {
+            lock (TraceLock)
+            {
+                var dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dsh-launcher");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "shell.log"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} pid={Environment.ProcessId} {message}{Environment.NewLine}");
+            }
+        }
+        catch
+        {
+            // 轨迹日志失败不影响启动
+        }
+    }
 
     /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
     private static CoreWebView2Environment? _sharedEnvironment;
@@ -85,6 +134,16 @@ internal static class Program
         // 可能因先前的 MessageBox 等窗口创建而失效）。
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 
+        // WinForms 全局初始化必须在任何窗口/控件创建之前完成：冷启动流程会先创建
+        // 启动状态窗（IWin32Window），若此时才调用 SetCompatibleTextRenderingDefault
+        // 会抛 InvalidOperationException 导致进程静默崩溃——主窗口不出现，用户只能
+        // 二次点击（服务已在跑、跳过状态流后才轮到正常调用）才开窗。这是"要二次点击"
+        // 的根因，必须放在 Main 最前面。
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+
+        Trace($"start target={Target.Url} external={ServerManagedExternally}");
+
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。
         using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);
@@ -100,11 +159,17 @@ internal static class Program
             }
             if (existing != IntPtr.Zero)
             {
+                Trace($"second instance: found main window 0x{existing.ToInt64():X}, restore+foreground");
                 ShowWindow(existing, SW_RESTORE);
                 SetForegroundWindow(existing);
             }
+            else
+            {
+                Trace("second instance: main window not found within 20s");
+            }
             return;
         }
+        Trace("first instance");
 
         // 升级场景：检测并提示清理旧版本（per-user 0.1.0-0.1.5 等）。
         // MSI 的跨作用域 MajorUpgrade 在标准机器上找不到 HKCU 里的 per-user 旧版，
@@ -115,44 +180,59 @@ internal static class Program
         //（指向已删除的 exe），这里每次启动扫描并清理，避免开始菜单/桌面出现幽灵图标。
         CleanupOrphanShortcuts();
 
-        // 服务未启动时自动拉起（调用同目录下的 start-dsh.vbs 静默启动）。
-        // 设置了 DSH_WEB_URL 时不自动拉起（视为外部托管服务）。
-        if (!ServerManagedExternally && !PortOpen(Target.Port))
+        // 服务未就绪时自动拉起/等待（仅壳托管模式；DSH_WEB_URL 视为外部托管，直接开窗）。
+        // 就绪 = 端口可连 + HTTP 有响应：dsh 前端在端口监听后可能还需数十秒才提供 HTTP，
+        // 若只等 TCP 就提前"成功"，主窗口会加载失败（白屏，用户以为没反应而多点一次）；
+        // 若探测太早判失败，用户要二次点击才能开窗。这里统一在状态窗里等 HTTP 就绪。
+        if (!ServerManagedExternally && !HttpReady())
         {
-            // 依赖预检：启动服务需要 Node.js（dsh 或 npx 都由 node 运行）。
-            // 缺失时立即提示，避免静默等待超时才报"服务不可用"。
-            if (!ShellLogic.HasExecutableOnPath("node.exe", Environment.GetEnvironmentVariable("PATH")))
+            if (!PortOpen(Target.Port))
             {
-                MessageBox.Show(
-                    "未检测到 Node.js，无法启动 dsh 服务。\n\n请先安装 Node.js 18 或更高版本（https://nodejs.org），然后重新打开 dsh-launcher。",
-                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+                // 依赖预检：启动服务需要 Node.js（dsh 或 npx 都由 node 运行）。
+                // 缺失时立即提示，避免静默等待超时才报"服务不可用"。
+                if (!ShellLogic.HasExecutableOnPath("node.exe", Environment.GetEnvironmentVariable("PATH")))
+                {
+                    MessageBox.Show(
+                        "未检测到 Node.js，无法启动 dsh 服务。\n\n请先安装 Node.js 18 或更高版本（https://nodejs.org），然后重新打开 dsh-launcher。",
+                        "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
 
-            var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-            if (!File.Exists(vbs))
+                var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
+                if (!File.Exists(vbs))
+                {
+                    MessageBox.Show($"未找到 start-dsh.vbs，无法启动 dsh 服务（{Target.Url}）。", "DeepSeek Harness",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                // 端口透传给 start-dsh.vbs（进程级环境变量，wscript → cmd → dsh 依次继承）；
+                // 不设时 vbs 默认 3080。DSH_HOME 等环境变量同理自动继承。
+                Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
+                Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
+                _serviceStartedByShell = true;
+                Trace("service start requested via start-dsh.vbs");
+            }
+            else
             {
-                MessageBox.Show($"未找到 start-dsh.vbs，无法启动 dsh 服务（{Target.Url}）。", "DeepSeek Harness",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                // 端口已开但 HTTP 前端尚未就绪（服务可能刚被拉起、正在初始化）：也显示
+                // 状态窗等待，避免直接开窗看到白屏（用户以为没反应而多点一次）。
+                Trace("port open but HTTP not ready; waiting with status window");
             }
-
-            Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
-            _serviceStartedByShell = true;
 
             // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
             // 此期间明确提示而不是静默干等；可随时取消。
-            // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）立即结束等待。
-            // 就绪标准 = 端口（TCP）可连 + HTTP 有响应：dsh 前端在端口监听后可能还需数十秒
-            // 才提供 HTTP，若只等 TCP 就提前"成功"，主窗口会加载失败；若探测太早判失败，
-            // 用户要二次点击才能开窗。这里统一在轮询里等 HTTP 就绪。
-            var logPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh-web.log");
+            // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）
+            // 结束等待（有 15 秒宽限期，避免启动过程中的良性告警误判）。
+            var logPath = ShellLogic.ResolveLogPath(Target.Port,
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
             using var status = CreateStartupStatusForm();
             var cts = new CancellationTokenSource();
             var pollTask = Task.Run(() =>
             {
                 var lastLogCheck = DateTime.MinValue;
+                var logErrorSeen = false;
+                var logErrorSince = DateTime.MinValue;
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
                 for (var i = 0; i < 180; i++)
                 {
@@ -161,13 +241,29 @@ internal static class Program
                     {
                         lastLogCheck = DateTime.Now;
                         var content = SafeReadText(logPath);
-                        if (ShellLogic.LogShowsStartupError(content)) return "logerror";
+                        if (ShellLogic.LogShowsStartupError(content))
+                        {
+                            if (!logErrorSeen)
+                            {
+                                logErrorSeen = true;
+                                logErrorSince = DateTime.Now;
+                                // 日志出现错误标志：不立即判死——启动过程中的良性告警（如网络探测）
+                                // 也会命中，误判会导致用户"要多点一次"。给 15 秒宽限期，期间
+                                // HTTP 就绪仍算成功；只有持续失败才判定启动出错。
+                                Trace("poll: log shows error markers, grace 15s");
+                            }
+                        }
+                        else
+                        {
+                            logErrorSeen = false; // 日志恢复干净，重置记时
+                        }
                     }
                     if (PortOpen(Target.Port))
                     {
                         try
                         {
                             using var resp = http.GetAsync(Target.Url).GetAwaiter().GetResult();
+                            Trace("poll: ready (tcp + http)");
                             return "ready"; // TCP + HTTP 都已就绪
                         }
                         catch
@@ -175,8 +271,14 @@ internal static class Program
                             // HTTP 尚未就绪（前端还在启动），继续等
                         }
                     }
+                    if (logErrorSeen && DateTime.Now - logErrorSince >= TimeSpan.FromSeconds(15))
+                    {
+                        Trace("poll: log error markers persisted 15s, giving up");
+                        return "logerror";
+                    }
                     Thread.Sleep(1000);
                 }
+                Trace("poll: timeout after 180s");
                 return "timeout";
             });
             _ = pollTask.ContinueWith(_ =>
@@ -186,6 +288,7 @@ internal static class Program
 
             status.ShowDialog();
             var waitResult = pollTask.GetAwaiter().GetResult();
+            Trace($"status window closed, waitResult={waitResult}");
 
             if (waitResult != "ready")
             {
@@ -196,7 +299,7 @@ internal static class Program
                     "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
                     "logerror" => "启动过程报错（可能是下载失败、权限或环境问题）。\n\n日志尾部：\n" + tailText,
                     _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
-                        + "\n\n完整日志：%USERPROFILE%\\.dsh-web.log",
+                        + "\n\n完整日志：" + logPath,
                 };
                 MessageBox.Show("dsh 服务未能就绪。\n\n" + body, "DeepSeek Harness",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -208,13 +311,12 @@ internal static class Program
 
         if (!PortOpen(Target.Port))
         {
-            MessageBox.Show($"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看日志：%USERPROFILE%\\.dsh-web.log", "DeepSeek Harness",
+            var logPath = ShellLogic.ResolveLogPath(Target.Port,
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            MessageBox.Show($"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看日志：{logPath}", "DeepSeek Harness",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
 
         var icon = LoadEmbeddedIcon();
         var form = new Form
@@ -232,6 +334,7 @@ internal static class Program
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
         EnsureTrayIcon(form);
+        form.Shown += (_, _) => Trace("main form shown");
 
         form.FormClosing += (_, e) =>
         {
@@ -303,6 +406,7 @@ internal static class Program
         };
 
         Application.Run(form);
+        Trace("main loop exited");
     }
 
     /// <summary>
@@ -498,6 +602,25 @@ internal static class Program
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 服务就绪判定：端口可连 + HTTP 有响应。dsh 前端在端口监听后可能还需数十秒
+    /// 才提供 HTTP，只探测 TCP 会提前"成功"（主窗口白屏）。
+    /// </summary>
+    private static bool HttpReady()
+    {
+        if (!PortOpen(Target.Port)) return false;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            using var resp = http.GetAsync(Target.Url).GetAwaiter().GetResult();
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
