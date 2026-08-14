@@ -25,6 +25,15 @@ internal static class Program
     /// 渲染进程崩溃自动重载的节流时间戳（避免崩溃死循环）。
     private static long _lastReloadTick;
 
+    /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
+    private static bool _serviceStartedByShell;
+
+    /// 托盘图标（仅"托盘驻留"模式创建并保持引用，避免被 GC）。
+    private static NotifyIcon? _trayIcon;
+
+    /// 托盘"退出"请求（允许 FormClosing 真正关闭，而不是再次隐藏到托盘）。
+    private static bool _trayExitRequested;
+
     /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
     private static CoreWebView2Environment? _sharedEnvironment;
 
@@ -108,6 +117,7 @@ internal static class Program
             }
 
             Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
+            _serviceStartedByShell = true;
 
             // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
             // 此期间明确提示而不是静默干等；可随时取消。
@@ -188,7 +198,7 @@ internal static class Program
 
         var web = new WebView2 { Dock = DockStyle.Fill };
         form.Controls.Add(web);
-        form.FormClosing += (_, _) =>
+        form.FormClosing += (_, e) =>
         {
             try { web.Dispose(); } catch { /* ignore */ }
             if (icon is not null)
@@ -196,6 +206,25 @@ internal static class Program
                 try { DestroyIcon(icon.Handle); } catch { /* ignore */ }
                 icon.Dispose();
             }
+
+            // 生命周期模式（由 dsh-launcher-lifetime 插件写入 settings.json，壳执行）：
+            // 常驻(0) / 托盘驻留(1) / 跟随窗口(2)。
+            var mode = ReadLifetimeMode();
+            if (!_trayExitRequested && mode == ShellLogic.ServiceLifetime.Tray)
+            {
+                // 托盘驻留：拦截关闭，隐藏到托盘（服务继续）
+                e.Cancel = true;
+                form.Hide();
+                EnsureTrayIcon(form);
+                return;
+            }
+            if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
+            {
+                // 跟随窗口：关窗即停服务（只停壳本次拉起的）
+                StopShellService();
+            }
+            _trayIcon?.Dispose();
+            _trayIcon = null;
         };
 
         form.Load += async (_, _) =>
@@ -410,6 +439,101 @@ internal static class Program
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>settings.json 路径（dsh-launcher-lifetime 插件写入，壳读取）。</summary>
+    private static string SettingsPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "dsh-launcher", "settings.json");
+
+    /// <summary>读取服务停留模式；缺失/非法回退常驻。</summary>
+    private static ShellLogic.ServiceLifetime ReadLifetimeMode() =>
+        ShellLogic.ParseLifetimeMode(SafeReadText(SettingsPath));
+
+    /// <summary>
+    /// 停止"壳本次会话拉起的"dsh 服务：按端口找监听进程 PID，先温和终止，未停再强制。
+    /// 只应在 <see cref="_serviceStartedByShell"/> 为 true 时调用。
+    /// </summary>
+    private static void StopShellService()
+    {
+        try
+        {
+            var pid = FindPidListeningOn(Target.Port);
+            if (pid <= 0) return;
+            using (var p = Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
+            { UseShellExecute = false, CreateNoWindow = true }))
+                p?.WaitForExit(3000);
+            if (!PortOpen(Target.Port)) return; // 已停止
+            using (var p = Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
+            { UseShellExecute = false, CreateNoWindow = true }))
+                p?.WaitForExit(3000);
+        }
+        catch
+        {
+            // 停服务失败不影响退出
+        }
+    }
+
+    /// <summary>按端口找出监听进程 PID（netstat 解析）；找不到返回 0。</summary>
+    private static int FindPidListeningOn(int port)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("netstat", "-ano -p tcp")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+            using var p = Process.Start(psi);
+            if (p is null) return 0;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            var token = ":" + port + " ";
+            foreach (var line in output.Split('\n'))
+            {
+                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!line.Contains(token)) continue;
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0 && int.TryParse(parts[^1], out var pid)) return pid;
+            }
+        }
+        catch
+        {
+            // 忽略
+        }
+        return 0;
+    }
+
+    /// <summary>创建托盘图标（懒加载，幂等）；左键/双击切换窗口，右键菜单含"退出（停止服务）"。</summary>
+    private static void EnsureTrayIcon(Form form)
+    {
+        if (_trayIcon is not null) return;
+        var tray = new NotifyIcon
+        {
+            Icon = LoadEmbeddedIcon() ?? SystemIcons.Application,
+            Text = "dsh-launcher",
+            Visible = true,
+        };
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("退出（停止服务）", null, (_, _) =>
+        {
+            _trayExitRequested = true;
+            if (_serviceStartedByShell) StopShellService();
+            Application.Exit();
+        });
+        tray.ContextMenuStrip = menu;
+        tray.DoubleClick += (_, _) => ToggleMainWindow(form);
+        _trayIcon = tray;
+    }
+
+    /// <summary>切换主窗口显示/隐藏。</summary>
+    private static void ToggleMainWindow(Form form)
+    {
+        if (form.Visible) form.Hide();
+        else
+        {
+            form.Show();
+            form.Activate();
         }
     }
 
