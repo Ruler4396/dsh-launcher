@@ -425,7 +425,8 @@ internal static class Program
                 return;
             }
 
-            try { web.Dispose(); } catch { /* ignore */ }
+            // 真正退出路径不显式 Dispose WebView2：Dispose 会等待浏览器进程关闭，
+            // 造成关窗卡顿 1-2 秒；进程退出后 WebView2 子进程会自动检测父进程退出并清理。
             // 图标为进程级缓存（GDI 对象随进程退出释放），此处不销毁，
             // 避免托盘驻留/主题切换时复用已销毁的句柄。
 
@@ -701,9 +702,40 @@ internal static class Program
     /// <summary>settings.json 路径（dsh-launcher-lifetime 插件写入，壳读取）：DSH_HOME\dsh-launcher\settings.json。</summary>
     private static string SettingsPath => Path.Combine(DataDir, "settings.json");
 
-    /// <summary>读取服务停留模式；缺失/非法回退常驻。</summary>
-    private static ShellLogic.ServiceLifetime ReadLifetimeMode() =>
-        ShellLogic.ParseLifetimeMode(SafeReadText(SettingsPath));
+    /// <summary>
+    /// 读取服务停留模式；缺失/非法回退跟随窗口。兼容旧版路径（%LOCALAPPDATA%，
+    /// 迁移前旧插件写入的位置）：新位置读不到时回退旧位置，读到后迁移并清理，
+    /// 避免"用户选了常驻/托盘驻留，壳却按默认跟随窗口执行"的路径错位。
+    /// </summary>
+    private static ShellLogic.ServiceLifetime ReadLifetimeMode()
+    {
+        var json = SafeReadText(SettingsPath);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                var legacy = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "dsh-launcher", "settings.json");
+                if (File.Exists(legacy))
+                {
+                    json = SafeReadText(legacy);
+                    if (!string.IsNullOrWhiteSpace(json))
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(DataDir);
+                            File.WriteAllText(SettingsPath, json);
+                            File.Delete(legacy);
+                        }
+                        catch { /* 迁移失败按旧值执行 */ }
+                    }
+                }
+            }
+            catch { /* 旧路径不可读按默认执行 */ }
+        }
+        return ShellLogic.ParseLifetimeMode(json);
+    }
 
     /// <summary>壳托管服务的 PID 记录文件（按端口隔离）：崩溃/异常退出后残留的服务可被下次启动接管管理。</summary>
     private static string ServicePidFile => Path.Combine(DataDir, $"service-pid-{Target.Port}.txt");
@@ -751,8 +783,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// 停止"壳本次会话拉起的"dsh 服务：按端口找监听进程 PID，先温和终止，未停再强制。
-    /// 只应在 <see cref="_serviceStartedByShell"/> 为 true 时调用。停止成功后清除 PID 记录。
+    /// 停止"壳本次会话拉起的"dsh 服务（**异步**，不阻塞关窗/托盘退出——同步等待
+    /// taskkill 是关窗卡顿的来源之一）：立即启动温和终止，后台检查未停再强制。
+    /// taskkill 是独立进程，壳退出不影响其执行。只应在
+    /// <see cref="_serviceStartedByShell"/> 为 true 时调用。停止成功后清除 PID 记录。
     /// </summary>
     private static void StopShellService()
     {
@@ -764,18 +798,28 @@ internal static class Program
                 ClearServicePidFile();
                 return;
             }
-            using (var p = Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
-            { UseShellExecute = false, CreateNoWindow = true }))
-                p?.WaitForExit(3000);
-            if (!PortOpen(Target.Port))
+            Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
+            { UseShellExecute = false, CreateNoWindow = true });
+            Task.Run(() =>
             {
-                ClearServicePidFile(); // 已停止
-                return;
-            }
-            using (var p = Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
-            { UseShellExecute = false, CreateNoWindow = true }))
-                p?.WaitForExit(3000);
-            if (!PortOpen(Target.Port)) ClearServicePidFile();
+                try
+                {
+                    Thread.Sleep(1500);
+                    if (!PortOpen(Target.Port))
+                    {
+                        ClearServicePidFile(); // 已停止
+                        return;
+                    }
+                    Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
+                    { UseShellExecute = false, CreateNoWindow = true });
+                    Thread.Sleep(1500);
+                    if (!PortOpen(Target.Port)) ClearServicePidFile();
+                }
+                catch
+                {
+                    // 停服务失败不影响退出
+                }
+            });
         }
         catch
         {
@@ -1237,19 +1281,32 @@ internal static class Program
         }
     }
 
-    /// <summary>读取 dsh 前端的主题选择（DSH_HOME/settings.yaml 的 ui-theme.preference）。</summary>
+    /// <summary>读取 dsh 前端的主题选择（DSH_HOME/settings.yaml 的 ui-theme.preference）。
+    /// 严格限定在 ui-theme 段内查找，避免误读其他段（如 agent-default-model 等）的 preference 键。</summary>
     private static string? ReadDshThemePreference()
     {
         try
         {
             var yaml = Path.Combine(DshHomeDir, "settings.yaml");
             if (!File.Exists(yaml)) return null;
-            foreach (var line in File.ReadAllLines(yaml))
+            var inUiTheme = false;
+            foreach (var raw in File.ReadAllLines(yaml))
             {
-                var t = line.Trim();
-                if (t.StartsWith("ui-theme:", StringComparison.Ordinal)) continue;
-                if (t.StartsWith("preference:", StringComparison.Ordinal))
-                    return t["preference:".Length..].Trim().Trim('"', '\'').ToLowerInvariant();
+                var t = raw.Trim();
+                if (t.Length == 0 || t.StartsWith('#')) continue;
+                if (t.StartsWith("ui-theme:", StringComparison.Ordinal))
+                {
+                    inUiTheme = true;
+                    continue;
+                }
+                if (inUiTheme)
+                {
+                    if (t.StartsWith("preference:", StringComparison.Ordinal))
+                        return t["preference:".Length..].Trim().Trim('"', '\'').ToLowerInvariant();
+                    // 遇到下一段（无缩进的顶层键）则离开 ui-theme 段
+                    if (!raw.StartsWith(' ') && !raw.StartsWith('\t'))
+                        inUiTheme = false;
+                }
             }
         }
         catch
@@ -1271,11 +1328,11 @@ internal static class Program
         return IsSystemDarkMode();
     }
 
-    /// <summary>按当前主题选择窗口图标（深色 → 白色鲸鱼，浅色 → 深色鲸鱼）。</summary>
+    /// <summary>按当前主题选择窗口/任务栏图标：深色主题 → 白色鲸鱼（深色标题栏上可见），浅色 → 深色鲸鱼。</summary>
     private static Icon? ThemeWindowIcon =>
         ResolveDarkMode()
-            ? (_darkWhaleIcon ??= LoadIconResource("favicon.png"))
-            : (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"));
+            ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
+            : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
 
     /// <summary>白色鲸鱼（托盘/任务栏深色背景固定用，深色鲸鱼看不清）。</summary>
     private static Icon? TrayWhaleIcon => _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
@@ -1303,13 +1360,21 @@ internal static class Program
     }
 
     /// <summary>
-    /// 应用主题：窗口图标 + 标题栏配色（深色 → 白色鲸鱼 + 深色标题栏；浅色 → 深色鲸鱼 + 浅色标题栏），
-    /// 托盘图标固定白色。以用户的选择为主（dsh 前端主题设置），其次跟随系统。
+    /// 应用主题：窗口/任务栏图标 + 标题栏配色（深色 → 白色鲸鱼 + 深色标题栏；
+    /// 浅色 → 深色鲸鱼 + 浅色标题栏），托盘图标固定白色。以用户的选择为主
+    /// （dsh 前端主题设置），其次跟随系统。任务栏图标随 form.Icon 实时刷新，
+    /// 不关窗口也会更新。
     /// </summary>
     private static void ApplyThemeIcon(Form form)
     {
         var dark = ResolveDarkMode();
-        try { form.Icon = (dark ? _darkWhaleIcon : _lightWhaleIcon) ?? ThemeWindowIcon ?? SystemIcons.Application; } catch { }
+        try
+        {
+            form.Icon = dark
+                ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png")) ?? SystemIcons.Application
+                : (_darkWhaleIcon ??= LoadIconResource("favicon.png")) ?? SystemIcons.Application;
+        }
+        catch { /* ignore */ }
         SetTitleBarDark(form, dark);
         if (_trayIcon is not null)
         {
@@ -1318,8 +1383,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// 监听主题变化：系统主题切换（SystemEvents）+ dsh 前端主题设置变化
-    /// （DSH_HOME/settings.yaml 的 ui-theme.preference，用户在 dsh 设置页切换主题时写入）。
+    /// 主题实时刷新：系统主题切换（SystemEvents）+ 轮询 dsh 前端主题设置
+    /// （DSH_HOME/settings.yaml 的 ui-theme.preference）。轮询比 FileSystemWatcher 可靠
+    /// （dsh 可能以原子替换方式写文件，只触发 Renamed 而不触发 Changed），
+    /// 每 2 秒读一次小文件，主题结果变化才应用，窗口/任务栏图标即时刷新。
     /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
@@ -1336,28 +1403,25 @@ internal static class Program
             // 系统主题监听失败不影响启动
         }
 
-        try
+        var timer = new System.Windows.Forms.Timer { Interval = 2000 };
+        var lastDark = ResolveDarkMode();
+        timer.Tick += (_, _) =>
         {
-            var dir = DshHomeDir;
-            if (!Directory.Exists(dir)) return;
-            var watcher = new FileSystemWatcher(dir, "settings.yaml")
+            try
             {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
-                EnableRaisingEvents = true,
-            };
-            var lastApply = DateTime.MinValue;
-            watcher.Changed += (_, _) =>
+                var nowDark = ResolveDarkMode();
+                if (nowDark != lastDark)
+                {
+                    lastDark = nowDark;
+                    ApplyThemeIcon(form);
+                }
+            }
+            catch
             {
-                // 防抖：settings.yaml 可能被连续写多次
-                if (DateTime.Now - lastApply < TimeSpan.FromSeconds(2)) return;
-                lastApply = DateTime.Now;
-                try { form.BeginInvoke(() => ApplyThemeIcon(form)); } catch { }
-            };
-        }
-        catch
-        {
-            // 前端主题监听失败不影响启动（图标按启动时定格）
-        }
+                // 轮询失败下次再试
+            }
+        };
+        timer.Start();
     }
 
     private static bool PortOpen(int port)
