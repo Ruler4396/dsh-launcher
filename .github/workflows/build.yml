@@ -22,7 +22,11 @@ jobs:
         shell: pwsh
         run: |
           dotnet test tests/DshShell.Tests -c Release --nologo 2>&1 | Tee-Object -FilePath test-output.log
-          exit $LASTEXITCODE
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Select-String -Path test-output.log -Pattern '^\s*(Failed|失败) ' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
+            exit $code
+          }
 
       - name: Upload test log on failure
         if: failure()
