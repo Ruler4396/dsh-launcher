@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="favicon.png" />
+    <EmbeddedResource Include="favicon-white.png" />
     <Content Include="app.ico" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
   </ItemGroup>
