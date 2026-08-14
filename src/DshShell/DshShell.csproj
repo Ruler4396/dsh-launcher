@@ -28,4 +28,15 @@
     <InternalsVisibleTo Include="DshShell.Tests" />
   </ItemGroup>
 
+  <!-- 源码构建/发布后自动把部署脚本复制到输出目录：让 dotnet build/publish 出来的
+       DshWeb.exe 可直接使用（启动时需要同目录的 start-dsh.vbs 等），不必再手动复制。 -->
+  <Target Name="CopyDeployScripts" AfterTargets="Build">
+    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyDeployScriptsPublish" AfterTargets="Publish">
+    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
