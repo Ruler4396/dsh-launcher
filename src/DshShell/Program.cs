@@ -68,9 +68,19 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    /// <summary>设置进程 DPI 感知上下文（Per-Monitor V2）。</summary>
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
     [STAThread]
     private static void Main()
     {
+        // 进程级 Per-Monitor V2 DPI 感知：必须在任何窗口/控件创建之前调用，
+        // 否则 150% 等缩放下 Windows 对 WebView2 内容做位图拉伸（字体/图标模糊，issue #2）。
+        // 用 user32 直接调用（WinForms 的 Application.SetHighDpiMode 在部分环境下
+        // 可能因先前的 MessageBox 等窗口创建而失效）。
+        SetProcessDpiAwarenessContext((IntPtr)(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。
         using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);

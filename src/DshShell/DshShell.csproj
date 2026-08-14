@@ -11,8 +11,10 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <!-- Per-Monitor V2 DPI awareness：150% 等缩放下 WebView2 按真实 DPI 渲染，
-         与浏览器一致（否则 Windows 位图拉伸导致字体/图标模糊，issue #2） -->
+    <!-- Per-Monitor V2 DPI awareness（WinForms 运行时配置，150% 缩放下 WebView2 按
+         真实 DPI 渲染，与浏览器一致，否则位图拉伸导致模糊 issue #2）。
+         注意：WinForms 10 会从自定义 manifest 删除 DPI 段（WFO0003），
+         必须用 ApplicationHighDpiMode / Application.SetHighDpiMode 配置。 -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
