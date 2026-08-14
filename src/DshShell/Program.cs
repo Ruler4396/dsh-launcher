@@ -1059,11 +1059,18 @@ internal static class Program
 
     /// <summary>
     /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
-    /// 隐藏着就显示出来；含 WebView2 崩溃/长隐藏恢复。
+    /// 隐藏着就显示出来；**最小化时先还原**（Activate 对最小化窗口无效，
+    /// 此前最小化后单击托盘"点不回来"）；含 WebView2 崩溃/长隐藏恢复。
     /// </summary>
     private static void ShowMainWindow(Form form)
     {
         if (!form.Visible) form.Show();
+        if (form.WindowState == FormWindowState.Minimized)
+        {
+            // 最小化 → 还原（SW_RESTORE），否则 Activate 无效，窗口不会出现
+            ShowWindow(form.Handle, SW_RESTORE);
+            form.WindowState = FormWindowState.Normal;
+        }
         form.Activate();
         // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
         // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 延迟重载页面恢复
@@ -1402,10 +1409,16 @@ internal static class Program
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
     [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int attrValue, int attrSize);
+
+    [DllImport("dwmapi.dll")]
     private static extern int DwmFlush();
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool RedrawWindow(IntPtr hWnd, IntPtr rectUpdate, IntPtr hrgnUpdate, uint flags);
 
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
@@ -1413,13 +1426,18 @@ internal static class Program
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_FRAMECHANGED = 0x0020;
 
+    private const uint RDW_INVALIDATE = 0x0001;
+    private const uint RDW_UPDATENOW = 0x0100;
+    private const uint RDW_FRAME = 0x0400;
+    private const uint RDW_ALLCHILDREN = 0x0080;
+
     private const int WM_NCPAINT = 0x0085;
 
     /// <summary>
     /// 强制标题栏深色/浅色（Win10 1809+ 的沉浸式深色标题栏）：让标题栏与图标/前端主题
     /// 保持一致。DWM 属性设置后标题栏**不会自动重绘**（表现为"切换没反应，点走再点回来
-    /// 才变"），单靠 SetWindowPos(SWP_FRAMECHANGED) 在部分 Win10 上也不触发——
-    /// 用组合拳：SWP_FRAMECHANGED + DwmFlush（等 DWM 批处理）+ WM_NCPAINT（强制重绘非客户区）。
+    /// 才变"），用组合拳强制刷新非客户区：SWP_FRAMECHANGED + RedrawWindow(RDW_FRAME)
+    /// + DwmFlush + WM_NCPAINT，并读回实际属性值写入轨迹日志（排障时可见 DWM 是否真变）。
     /// </summary>
     private static void SetTitleBarDark(Form form, bool dark)
     {
@@ -1434,8 +1452,13 @@ internal static class Program
             }
             if (hr != 0)
                 Trace($"title bar dark set failed hr=0x{hr:X8} dark={dark}");
+            DwmGetWindowAttribute(form.Handle, 20, out var actual, sizeof(int));
+            Trace($"title bar dark: set dark={dark} hr=0x{hr:X8} actual={actual}");
+            // 组合拳强制重绘非客户区（单一手段在部分 Win10 上不触发重绘）
             SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            RedrawWindow(form.Handle, IntPtr.Zero, IntPtr.Zero,
+                RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
             try { DwmFlush(); } catch { }
             SendMessage(form.Handle, WM_NCPAINT, (IntPtr)1, IntPtr.Zero);
         }
