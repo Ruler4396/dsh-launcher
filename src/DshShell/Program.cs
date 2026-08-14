@@ -389,14 +389,19 @@ internal static class Program
             return;
         }
 
-        var form = new Form
+        var form = new DshShellForm
         {
             Text = "DeepSeek Harness",
             ClientSize = new Size(1280, 840),
             StartPosition = FormStartPosition.CenterScreen,
             MinimumSize = new Size(800, 600),
+            // 无边框 + 自绘标题栏：主题切换即时生效，不依赖 DWM 标题栏重绘
+            // （实测本机 DWM 属性切换后标题栏画面不刷新，只有焦点变化才重绘）
+            FormBorderStyle = FormBorderStyle.None,
             Icon = TrayWhaleIcon ?? SystemIcons.Application // 系统任务栏图标固定白色鲸鱼
         };
+        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode());
+        form.Controls.Add(form.TitleBar);
 
         var web = new WebView2 { Dock = DockStyle.Fill };
         form.Controls.Add(web);
@@ -1294,13 +1299,16 @@ internal static class Program
     private static (Form Form, WebView2 Web) CreatePopupForm()
     {
         var popupWeb = new WebView2 { Dock = DockStyle.Fill };
-        var form = new Form
+        var form = new DshShellForm
         {
             Text = "DeepSeek Harness",
             ClientSize = new Size(900, 640),
             StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.None, // 自绘标题栏（与主窗口一致，主题即时切换）
             Icon = SystemIcons.Application
         };
+        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode());
+        form.Controls.Add(form.TitleBar);
         form.Controls.Add(popupWeb);
         form.FormClosing += (_, _) =>
         {
@@ -1494,6 +1502,278 @@ internal static class Program
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr TrackPopupMenu(IntPtr hMenu, uint uFlags, int x, int y, int nReserved, IntPtr hWnd, IntPtr prcRect);
+
+    private const uint TPM_RETURNCMD = 0x0100;
+    private const uint TPM_RIGHTBUTTON = 0x0002;
+    private const int WM_NCLBUTTONDOWN = 0x00A1;
+    private const int HTCAPTION = 0x0002;
+
+    /// <summary>
+    /// 自绘标题栏（无边框窗口用）：背景/文字/按钮颜色完全自绘，主题切换即时生效，
+    /// 不依赖 DWM 标题栏重绘（实测本机 DWM 属性切换后标题栏画面不刷新，只有焦点变化才重绘）。
+    /// 提供：标题 + 主题鲸鱼图标 + 最小化/最大化/关闭按钮 + 拖拽移动 + 双击最大化 + 右键系统菜单。
+    /// </summary>
+    private sealed class CustomTitleBar : Panel
+    {
+        private readonly Form _owner;
+        private bool _dark;
+        private bool _hoverMin, _hoverMax, _hoverClose;
+
+        private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
+        private const int BtnWidth = 46;
+        private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
+        private static readonly Color LightBg = Color.FromArgb(240, 240, 240);
+        private static readonly Color DarkText = Color.White;
+        private static readonly Color LightText = Color.FromArgb(30, 30, 30);
+        private static readonly Color DarkHover = Color.FromArgb(58, 58, 58);
+        private static readonly Color LightHover = Color.FromArgb(229, 229, 229);
+        private static readonly Color CloseHover = Color.FromArgb(232, 17, 35);
+
+        public CustomTitleBar(Form owner, bool dark)
+        {
+            _owner = owner;
+            _dark = dark;
+            Dock = DockStyle.Top;
+            Height = 32;
+            BackColor = _dark ? DarkBg : LightBg;
+            MouseDown += OnMouseDown;
+            MouseUp += OnMouseUp;
+            MouseDoubleClick += OnDoubleClick;
+            MouseMove += OnMouseMove;
+            MouseLeave += (_, _) =>
+            {
+                if (_hoverMin || _hoverMax || _hoverClose)
+                {
+                    _hoverMin = _hoverMax = _hoverClose = false;
+                    Invalidate();
+                }
+            };
+        }
+
+        /// <summary>主题切换：自绘颜色立即更新（无 DWM 重绘问题）。</summary>
+        public void ApplyTheme(bool dark)
+        {
+            _dark = dark;
+            BackColor = _dark ? DarkBg : LightBg;
+            Invalidate();
+        }
+
+        private Rectangle BtnRect(int i) => new(Width - BtnWidth * (3 - i), 0, BtnWidth, Height);
+
+        private int HitButton(int x)
+        {
+            for (var i = 0; i < 3; i++)
+                if (BtnRect(i).Contains(x, Height / 2)) return i;
+            return -1;
+        }
+
+        private void OnMouseDown(object? s, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                ShowSystemMenu(e.Location);
+                return;
+            }
+            if (e.Button != MouseButtons.Left) return;
+            if (HitButton(e.X) >= 0) return; // 按钮点击交给 MouseUp
+            // 拖拽移动窗口（系统级 HTCAPTION 拖拽）
+            ReleaseCapture();
+            SendMessage(_owner.Handle, (uint)WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+        }
+
+        private void OnMouseUp(object? s, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            switch (HitButton(e.X))
+            {
+                case 0: _owner.WindowState = FormWindowState.Minimized; break;
+                case 1:
+                    _owner.WindowState = _owner.WindowState == FormWindowState.Maximized
+                        ? FormWindowState.Normal : FormWindowState.Maximized;
+                    break;
+                case 2: _owner.Close(); break;
+            }
+        }
+
+        private void OnDoubleClick(object? s, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && HitButton(e.X) < 0)
+                _owner.WindowState = _owner.WindowState == FormWindowState.Maximized
+                    ? FormWindowState.Normal : FormWindowState.Maximized;
+        }
+
+        private void OnMouseMove(object? s, MouseEventArgs e)
+        {
+            var btn = HitButton(e.X);
+            var h1 = btn == 0;
+            var h2 = btn == 1;
+            var h3 = btn == 2;
+            if (h1 != _hoverMin || h2 != _hoverMax || h3 != _hoverClose)
+            {
+                _hoverMin = h1;
+                _hoverMax = h2;
+                _hoverClose = h3;
+                Invalidate();
+            }
+        }
+
+        private void ShowSystemMenu(Point p)
+        {
+            try
+            {
+                var hMenu = GetSystemMenu(_owner.Handle, false);
+                if (hMenu == IntPtr.Zero) return;
+                TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                    _owner.Left + p.X, _owner.Top + p.Y, 0, _owner.Handle, IntPtr.Zero);
+            }
+            catch { /* 系统菜单失败忽略 */ }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(_dark ? DarkBg : LightBg);
+            var textColor = _dark ? DarkText : LightText;
+
+            // 标题栏图标（主题对应鲸鱼）
+            var icon = _dark
+                ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
+                : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
+            if (icon is not null)
+            {
+                g.DrawIcon(icon, new Rectangle(10, (Height - 16) / 2, 16, 16));
+            }
+
+            // 标题
+            TextRenderer.DrawText(g, "DeepSeek Harness", TitleFont,
+                new Rectangle(34, 0, Math.Max(0, Width - BtnWidth * 3 - 40), Height),
+                textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+
+            // 窗口按钮（最小化 / 最大化还原 / 关闭）
+            for (var i = 0; i < 3; i++)
+            {
+                var r = BtnRect(i);
+                var hover = (i == 0 && _hoverMin) || (i == 1 && _hoverMax) || (i == 2 && _hoverClose);
+                if (hover)
+                {
+                    using var hb = new SolidBrush(i == 2 ? CloseHover : (_dark ? DarkHover : LightHover));
+                    g.FillRectangle(hb, r);
+                }
+                var penColor = hover && i == 2 && _dark ? Color.White : textColor;
+                using var pen = new Pen(penColor, 1.2f);
+                var cx = r.X + r.Width / 2;
+                var cy = r.Y + r.Height / 2;
+                if (i == 0)
+                {
+                    g.DrawLine(pen, cx - 7, cy, cx + 7, cy);
+                }
+                else if (i == 1)
+                {
+                    var maximized = _owner.WindowState == FormWindowState.Maximized;
+                    const int w = 10;
+                    const int h = 10;
+                    if (maximized)
+                    {
+                        g.DrawRectangle(pen, cx - w + 3, cy - h + 3, w - 4, h - 4);
+                        g.DrawRectangle(pen, cx - w, cy - h, w - 4, h - 4);
+                    }
+                    else
+                    {
+                        g.DrawRectangle(pen, cx - w / 2, cy - h / 2, w, h);
+                    }
+                }
+                else
+                {
+                    g.DrawLine(pen, cx - 6, cy - 6, cx + 6, cy + 6);
+                    g.DrawLine(pen, cx - 6, cy + 6, cx + 6, cy - 6);
+                }
+            }
+
+            // 底部细分隔线
+            using var line = new Pen(_dark ? Color.FromArgb(48, 48, 48) : Color.FromArgb(225, 225, 225));
+            g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+        }
+    }
+
+    /// <summary>
+    /// 无边框主窗口：处理最大化限制在工作区（WM_GETMINMAXINFO）与边缘缩放（WM_NCHITTEST）。
+    /// 标题栏由 <see cref="CustomTitleBar"/> 自绘。
+    /// </summary>
+    private sealed class DshShellForm : Form
+    {
+        internal CustomTitleBar? TitleBar;
+
+        private const int WM_GETMINMAXINFO = 0x0024;
+        private const int WM_NCHITTEST = 0x0084;
+        private const int HTCLIENT = 0x0001;
+        private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+        private const int ResizeEdge = 8;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X, Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            switch (m.Msg)
+            {
+                case WM_GETMINMAXINFO:
+                {
+                    var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
+                    var wa = Screen.FromHandle(Handle).WorkingArea;
+                    mmi.ptMaxSize.X = wa.Width;
+                    mmi.ptMaxSize.Y = wa.Height;
+                    mmi.ptMaxPosition.X = wa.Left;
+                    mmi.ptMaxPosition.Y = wa.Top;
+                    Marshal.StructureToPtr(mmi, m.LParam, false);
+                    m.Result = IntPtr.Zero;
+                    return;
+                }
+                case WM_NCHITTEST:
+                    base.WndProc(ref m);
+                    if (m.Result == (IntPtr)HTCLIENT && WindowState != FormWindowState.Maximized)
+                    {
+                        var pt = new Point(m.LParam.ToInt32() & 0xFFFF, (m.LParam.ToInt32() >> 16) & 0xFFFF);
+                        var r = RectangleToScreen(ClientRectangle);
+                        var left = pt.X < r.Left + ResizeEdge;
+                        var right = pt.X > r.Right - ResizeEdge;
+                        var top = pt.Y < r.Top + ResizeEdge;
+                        var bottom = pt.Y > r.Bottom - ResizeEdge;
+                        if (left && top) m.Result = (IntPtr)HTTOPLEFT;
+                        else if (right && top) m.Result = (IntPtr)HTTOPRIGHT;
+                        else if (left && bottom) m.Result = (IntPtr)HTBOTTOMLEFT;
+                        else if (right && bottom) m.Result = (IntPtr)HTBOTTOMRIGHT;
+                        else if (left) m.Result = (IntPtr)HTLEFT;
+                        else if (right) m.Result = (IntPtr)HTRIGHT;
+                        else if (top) m.Result = (IntPtr)HTTOP;
+                        else if (bottom) m.Result = (IntPtr)HTBOTTOM;
+                    }
+                    return;
+                default:
+                    base.WndProc(ref m);
+                    return;
+            }
+        }
+    }
+
     /// <summary>标题栏小图标消息（WM_SETICON + ICON_SMALL：只换窗口标题栏的图标，
     /// 任务栏大图标仍由 form.Icon 控制，保持白色）。</summary>
     private static void SetTitleBarIcon(Form form, bool dark)
@@ -1525,7 +1805,15 @@ internal static class Program
         var dark = ResolveDarkMode();
         try { form.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
         SetTitleBarIcon(form, dark);
-        SetTitleBarDark(form, dark);
+        // 自绘标题栏主题（主窗口/弹窗）：自绘颜色即时生效，无 DWM 重绘问题
+        if (form is DshShellForm sf && sf.TitleBar is not null)
+        {
+            sf.TitleBar.ApplyTheme(dark);
+        }
+        else
+        {
+            SetTitleBarDark(form, dark); // 兜底：未自绘标题栏的窗口
+        }
         if (_trayIcon is not null)
         {
             try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
