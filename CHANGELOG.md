@@ -6,7 +6,7 @@
 
 ### 变更
 
-- **MSI 安装目录页不再提供"浏览"按钮**：自定义文件夹选择器（DTF/Type-38 exe 自定义 CA）与本环境冲突而移除；v0.1.11 曾改回 WiX 标准 BrowseDlg（内置对话框）恢复浏览按钮，实测本环境仍异常，一并移除——目录页保留**手动输入/粘贴路径**；两套方案代码保留在 git 历史（installer/Picker）供其他环境复用
+- **MSI 安装目录"浏览"按钮恢复并修复**：使用 WiX 标准 BrowseDlg（内置对话框，非自定义 CA）。v0.1.11 点击浏览报 **MSI 错误 2819**（BrowseDlg 内部目录属性 `_BrowseProperty` 未初始化导致目录控件创建失败）——已对齐标准 WixUI_InstallDir：点浏览时先把当前安装目录赋值给 `_BrowseProperty` 再打开对话框，并补齐 BrowseDlg"确定"按钮的 `CheckTargetPath`/`SetTargetPath`/`EndDialog` 事件链；现在既可手动输入路径，也可点"浏览"从目录树选择
 - **预留版本更新检测接口**（`UpdateChecker`，暂未接入 UI/启动流程）：拉取本项目 GitHub Releases 最新版本 + dsh（npm registry）最新版本，与本地版本比较（语义化版本比较，含单测）；上线前注意 GitHub API 匿名限流、失败需静默
 
 ### 修复
