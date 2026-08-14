@@ -277,11 +277,13 @@ public class ShellLogicTests
     [Fact]
     public void HasExecutableOnPath_FindsNode()
     {
+        // 注意：CI runner 可能预装 Node.js（C:\Program Files\nodejs 存在），
+        // 因此"找不到"必须用环境无关的随机文件名，不能假设某个目录不存在。
         var path = @"C:\Windows\System32" + Path.PathSeparator + @"C:\Program Files\nodejs";
         // System32 必有 cmd.exe → 找到
         Assert.True(ShellLogic.HasExecutableOnPath("cmd.exe", path));
-        // node.exe 装在未知位置（如用户目录）时，给定 PATH 不应误报存在
-        Assert.False(ShellLogic.HasExecutableOnPath("node.exe", path));
+        // 任何环境都不存在的文件名 → 找不到
+        Assert.False(ShellLogic.HasExecutableOnPath("dsh-launcher-no-such-exe-xyz.exe", path));
     }
 
     [Fact]
