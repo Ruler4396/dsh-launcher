@@ -11,6 +11,9 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- Per-Monitor V2 DPI awareness：150% 等缩放下 WebView2 按真实 DPI 渲染，
+         与浏览器一致（否则 Windows 位图拉伸导致字体/图标模糊，issue #2） -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
   <ItemGroup>

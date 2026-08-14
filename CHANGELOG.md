@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- **显示缩放下字体/图标模糊（[issue #2](https://github.com/Ruler4396/dsh-launcher/issues/2)）**：壳未声明 DPI 感知，Windows 在 150% 等缩放下对 WebView2 内容做位图拉伸导致模糊。改为 **Per-Monitor V2 DPI-aware**，WebView2 按真实 DPI 渲染（与浏览器一致）；主窗口按初始 DPI 放大，保持逻辑大小不缩水
+
 ## [0.1.7] - 2026-08-14
 
 ### 新增

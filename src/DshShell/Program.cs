@@ -229,6 +229,12 @@ internal static class Program
 
         form.Load += async (_, _) =>
         {
+            // PerMonitorV2：ClientSize 是物理像素。按窗口初始 DPI 放大，保持
+            // 150% 等缩放下窗口的逻辑大小与 100% 一致（否则窗口会显得很小）。
+            var scale = (double)form.DeviceDpi / 96.0;
+            if (Math.Abs(scale - 1.0) > 0.01)
+                form.ClientSize = new Size((int)Math.Round(1280 * scale), (int)Math.Round(840 * scale));
+
             // WebView2 user data goes to %LOCALAPPDATA%\DshWeb to keep the app dir clean
             // (固定目录：避免系统临时目录被清理导致会话/插件登录态丢失)
             var userDataFolder = Path.Combine(
