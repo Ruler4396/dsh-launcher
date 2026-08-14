@@ -294,8 +294,11 @@ public static class ShellLogic
         FollowWindow = 2,
     }
 
-    /// <summary>解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认常驻）。</summary>
-    internal static ServiceLifetime ParseLifetimeMode(string? json, ServiceLifetime fallback = ServiceLifetime.AlwaysOn)
+    /// <summary>
+    /// 解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认"跟随窗口"，
+    /// 省内存：关窗即停 dsh 服务，每次启动重新拉起；想常驻请在插件设置里改）。
+    /// </summary>
+    internal static ServiceLifetime ParseLifetimeMode(string? json, ServiceLifetime fallback = ServiceLifetime.FollowWindow)
     {
         if (string.IsNullOrWhiteSpace(json)) return fallback;
         try

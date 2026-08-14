@@ -341,8 +341,9 @@ public class ShellLogicTests
     [Fact]
     public void ParseLifetimeMode_ReadsModes()
     {
-        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode(null));
-        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode(""));
+        // 默认回退 = 跟随窗口（省内存：关窗即停服务）
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode(null));
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode(""));
         Assert.Equal(ShellLogic.ServiceLifetime.Tray, ShellLogic.ParseLifetimeMode("{\"serviceLifetime\":1}"));
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("{\"serviceLifetime\":2}"));
         Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("{\"serviceLifetime\":0}"));
@@ -351,9 +352,9 @@ public class ShellLogicTests
     [Fact]
     public void ParseLifetimeMode_InvalidFallsBackToDefault()
     {
-        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("not json"));
-        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("{\"serviceLifetime\":99}"));
-        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("{\"other\":1}"));
-        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("{\"other\":1}", ShellLogic.ServiceLifetime.FollowWindow));
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("not json"));
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("{\"serviceLifetime\":99}"));
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("{\"other\":1}"));
+        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("{\"other\":1}", ShellLogic.ServiceLifetime.AlwaysOn));
     }
 }

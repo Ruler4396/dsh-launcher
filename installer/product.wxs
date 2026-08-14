@@ -61,7 +61,9 @@
       <ComponentRef Id="DisplayIconReg" />
     </Feature>
     <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（HKCU Run，卸载时移除）" Level="1">
-      <Level Value="0" Condition="NOT AUTO_START_OPTION" />
+      <!-- 注意：MSI 条件中非空字符串"0"会被当作 true，`NOT AUTO_START_OPTION` 对默认值 "0"
+           不生效；必须用显式数值比较（勾选=1 才安装）。默认不勾选 = 默认不安装自启（省内存）。 -->
+      <Level Value="0" Condition="AUTO_START_OPTION &lt;&gt; 1" />
       <ComponentRef Id="AutoStartEntry" />
     </Feature>
     <Feature Id="DesktopShortcut" Title="桌面快捷方式" Description="在桌面创建 dsh-launcher 快捷方式" Level="1">
@@ -73,8 +75,9 @@
       <ComponentRef Id="ProgramMenuShortcut" />
     </Feature>
 
-    <!-- checkbox defaults: all on; WIXUI_INSTALLDIR points the folder picker at INSTALLFOLDER -->
-    <Property Id="AUTO_START_OPTION" Value="1" Secure="yes" />
+    <!-- checkbox 默认值：开机自启默认【不勾选】（dsh 服务内存占用相对较大，非必要不推荐开启）；
+         快捷方式默认勾选；WIXUI_INSTALLDIR 指向目录选择页 -->
+    <Property Id="AUTO_START_OPTION" Value="0" Secure="yes" />
     <Property Id="DESKTOP_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
@@ -280,7 +283,7 @@
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
           <Publish Event="EndDialog" Value="Return" Condition="1" />
         </Control>
-        <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="{\DshUIFont}开机自启（登录时静默启动 dsh 服务）" />
+        <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="17" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="{\DshUIFont}开机自启（登录时静默启动 dsh 服务；内存占用相对较大，非必要不推荐开启）" />
         <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="115" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="{\DshUIFont}创建桌面快捷方式" />
         <Control Id="MenuShortcut" Type="CheckBox" X="25" Y="145" Width="320" Height="17" Property="MENU_SHORTCUT_OPTION" CheckBoxValue="1" Text="{\DshUIFont}创建开始菜单快捷方式" />
         <Control Id="Note" Type="Text" X="25" Y="180" Width="320" Height="40" Text="{\DshUIFont}卸载只删除本应用的 7 个文件，不会删除目录里的其他内容（与 DeepSeek Harness 共用目录也安全）。" />
