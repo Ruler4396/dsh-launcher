@@ -400,12 +400,26 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.None,
             Icon = TrayWhaleIcon ?? SystemIcons.Application // 系统任务栏图标固定白色鲸鱼
         };
-        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode());
+        var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
+        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
+        {
+            // 手动布局 + Anchor（不依赖 Dock 布局顺序：Dock 下 WebView2 内容会盖住标题栏区域，
+            // 表现为"正常内容被标题栏挡住一部分"）
+            Bounds = new Rectangle(0, 0, form.ClientSize.Width, titleHeight),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
         form.Controls.Add(form.TitleBar);
 
-        var web = new WebView2 { Dock = DockStyle.Fill };
+        var web = new WebView2
+        {
+            Bounds = new Rectangle(0, titleHeight, form.ClientSize.Width, form.ClientSize.Height - titleHeight),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+        };
         form.Controls.Add(web);
         _mainWeb = web;
+
+        // 无边框窗口阴影（DWM NCRENDERING_POLICY）
+        form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
 
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
@@ -1298,7 +1312,7 @@ internal static class Program
     /// 插件内部弹窗用的轻量窗口（与主窗口共享 WebView2 用户数据，保持登录态/会话）。
     private static (Form Form, WebView2 Web) CreatePopupForm()
     {
-        var popupWeb = new WebView2 { Dock = DockStyle.Fill };
+        var popupWeb = new WebView2();
         var form = new DshShellForm
         {
             Text = "DeepSeek Harness",
@@ -1307,8 +1321,16 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.None, // 自绘标题栏（与主窗口一致，主题即时切换）
             Icon = SystemIcons.Application
         };
-        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode());
+        var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
+        form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
+        {
+            Bounds = new Rectangle(0, 0, form.ClientSize.Width, titleHeight),
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+        };
         form.Controls.Add(form.TitleBar);
+        form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
+        popupWeb.Bounds = new Rectangle(0, titleHeight, form.ClientSize.Width, form.ClientSize.Height - titleHeight);
+        popupWeb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         form.Controls.Add(popupWeb);
         form.FormClosing += (_, _) =>
         {
@@ -1516,6 +1538,19 @@ internal static class Program
     private const int WM_NCLBUTTONDOWN = 0x00A1;
     private const int HTCAPTION = 0x0002;
 
+    /// <summary>给无边框窗口加 DWM 阴影（DWMWA_NCRENDERING_POLICY=ENABLED）。</summary>
+    private static void ApplyWindowShadow(IntPtr hwnd)
+    {
+        try
+        {
+            const int DWMWA_NCRENDERING_POLICY = 2;
+            const int DWMNCRP_ENABLED = 2;
+            var policy = DWMNCRP_ENABLED;
+            DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, ref policy, sizeof(int));
+        }
+        catch { /* 阴影失败不影响功能 */ }
+    }
+
     /// <summary>
     /// 自绘标题栏（无边框窗口用）：背景/文字/按钮颜色完全自绘，主题切换即时生效，
     /// 不依赖 DWM 标题栏重绘（实测本机 DWM 属性切换后标题栏画面不刷新，只有焦点变化才重绘）。
@@ -1524,11 +1559,12 @@ internal static class Program
     private sealed class CustomTitleBar : Panel
     {
         private readonly Form _owner;
+        private readonly float _scale;
+        private readonly int _btnWidth;
         private bool _dark;
         private bool _hoverMin, _hoverMax, _hoverClose;
 
         private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
-        private const int BtnWidth = 46;
         private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
         private static readonly Color LightBg = Color.FromArgb(240, 240, 240);
         private static readonly Color DarkText = Color.White;
@@ -1541,8 +1577,9 @@ internal static class Program
         {
             _owner = owner;
             _dark = dark;
-            Dock = DockStyle.Top;
-            Height = 32;
+            // DPI 缩放：150% 缩放下 32px 物理高度会显得又矮又挤（按钮/图标/间距全按逻辑缩放）
+            _scale = owner.DeviceDpi / 96f;
+            _btnWidth = (int)Math.Round(46 * _scale);
             BackColor = _dark ? DarkBg : LightBg;
             MouseDown += OnMouseDown;
             MouseUp += OnMouseUp;
@@ -1566,7 +1603,7 @@ internal static class Program
             Invalidate();
         }
 
-        private Rectangle BtnRect(int i) => new(Width - BtnWidth * (3 - i), 0, BtnWidth, Height);
+        private Rectangle BtnRect(int i) => new(Width - _btnWidth * (3 - i), 0, _btnWidth, Height);
 
         private int HitButton(int x)
         {
@@ -1643,57 +1680,43 @@ internal static class Program
             g.Clear(_dark ? DarkBg : LightBg);
             var textColor = _dark ? DarkText : LightText;
 
-            // 标题栏图标（主题对应鲸鱼）
+            // 标题栏图标（主题对应鲸鱼，按 DPI 缩放）
             var icon = _dark
                 ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
                 : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
+            var iconSize = (int)Math.Round(16 * _scale);
             if (icon is not null)
             {
-                g.DrawIcon(icon, new Rectangle(10, (Height - 16) / 2, 16, 16));
+                g.DrawIcon(icon, new Rectangle((int)Math.Round(10 * _scale), (Height - iconSize) / 2, iconSize, iconSize));
             }
 
             // 标题
+            var titleLeft = (int)Math.Round(34 * _scale);
             TextRenderer.DrawText(g, "DeepSeek Harness", TitleFont,
-                new Rectangle(34, 0, Math.Max(0, Width - BtnWidth * 3 - 40), Height),
+                new Rectangle(titleLeft, 0, Math.Max(0, Width - _btnWidth * 3 - titleLeft - 8), Height),
                 textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
 
-            // 窗口按钮（最小化 / 最大化还原 / 关闭）
-            for (var i = 0; i < 3; i++)
+            // 窗口按钮：用 Segoe MDL2 字形（最小化/最大化/还原/关闭），清晰且与系统图标一致
+            using (var btnFont = new Font("Segoe MDL2 Assets", (float)Math.Round(11 * _scale), FontStyle.Regular, GraphicsUnit.Pixel))
             {
-                var r = BtnRect(i);
-                var hover = (i == 0 && _hoverMin) || (i == 1 && _hoverMax) || (i == 2 && _hoverClose);
-                if (hover)
+                for (var i = 0; i < 3; i++)
                 {
-                    using var hb = new SolidBrush(i == 2 ? CloseHover : (_dark ? DarkHover : LightHover));
-                    g.FillRectangle(hb, r);
-                }
-                var penColor = hover && i == 2 && _dark ? Color.White : textColor;
-                using var pen = new Pen(penColor, 1.2f);
-                var cx = r.X + r.Width / 2;
-                var cy = r.Y + r.Height / 2;
-                if (i == 0)
-                {
-                    g.DrawLine(pen, cx - 7, cy, cx + 7, cy);
-                }
-                else if (i == 1)
-                {
-                    var maximized = _owner.WindowState == FormWindowState.Maximized;
-                    const int w = 10;
-                    const int h = 10;
-                    if (maximized)
+                    var r = BtnRect(i);
+                    var hover = (i == 0 && _hoverMin) || (i == 1 && _hoverMax) || (i == 2 && _hoverClose);
+                    if (hover)
                     {
-                        g.DrawRectangle(pen, cx - w + 3, cy - h + 3, w - 4, h - 4);
-                        g.DrawRectangle(pen, cx - w, cy - h, w - 4, h - 4);
+                        using var hb = new SolidBrush(i == 2 ? CloseHover : (_dark ? DarkHover : LightHover));
+                        g.FillRectangle(hb, r);
                     }
-                    else
+                    var glyph = i switch
                     {
-                        g.DrawRectangle(pen, cx - w / 2, cy - h / 2, w, h);
-                    }
-                }
-                else
-                {
-                    g.DrawLine(pen, cx - 6, cy - 6, cx + 6, cy + 6);
-                    g.DrawLine(pen, cx - 6, cy + 6, cx + 6, cy - 6);
+                        0 => '\uE921', // Minimize
+                        1 => _owner.WindowState == FormWindowState.Maximized ? '\uE923' : '\uE922', // Restore / Maximize
+                        _ => '\uE8BB', // ChromeClose
+                    };
+                    var glyphColor = hover && i == 2 && _dark ? Color.White : textColor;
+                    TextRenderer.DrawText(g, glyph.ToString(), btnFont, r, glyphColor,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
             }
 
