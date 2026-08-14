@@ -49,6 +49,17 @@ internal static class Program
     /// 渲染进程崩溃自动重载的节流时间戳（避免崩溃死循环）。
     private static long _lastReloadTick;
 
+    /// 主窗口的 WebView2 控件（托盘恢复窗口时需要检查/恢复渲染）。
+    private static WebView2? _mainWeb;
+
+    /// WebView2 渲染/GPU 进程崩溃标志：窗口隐藏期间进程崩溃后，恢复窗口时必须重载页面
+    /// 兜底，否则显示出来是白屏（隐藏状态下 Reload 无效，只能在窗口可见后执行）。
+    private static bool _webviewRecoveryNeeded;
+
+    /// 上次隐藏窗口的时间戳：长隐藏（>5 分钟）期间渲染进程可能被系统回收（无崩溃事件），
+    /// 恢复窗口时强制重载页面兜底，避免白屏。
+    private static DateTime _hiddenSince = DateTime.MinValue;
+
     /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
     private static bool _serviceStartedByShell;
 
@@ -330,6 +341,7 @@ internal static class Program
 
         var web = new WebView2 { Dock = DockStyle.Fill };
         form.Controls.Add(web);
+        _mainWeb = web;
 
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
@@ -338,6 +350,21 @@ internal static class Program
 
         form.FormClosing += (_, e) =>
         {
+            // 生命周期模式（由 dsh-launcher-lifetime 插件写入 settings.json，壳执行）：
+            // 常驻(0) / 托盘驻留(1) / 跟随窗口(2)。
+            var mode = ReadLifetimeMode();
+
+            // 托盘驻留：拦截关闭，隐藏到托盘（服务继续）。
+            // 必须先于 WebView2 销毁判断：WebView2 一旦 Dispose，从托盘唤起时
+            // 控件已销毁，窗口只剩空白（历史上 WebView2 销毁在拦截之前 → 必然白屏）。
+            if (!_trayExitRequested && mode == ShellLogic.ServiceLifetime.Tray)
+            {
+                e.Cancel = true;
+                form.Hide();
+                _hiddenSince = DateTime.Now;
+                return;
+            }
+
             try { web.Dispose(); } catch { /* ignore */ }
             if (icon is not null)
             {
@@ -345,16 +372,6 @@ internal static class Program
                 icon.Dispose();
             }
 
-            // 生命周期模式（由 dsh-launcher-lifetime 插件写入 settings.json，壳执行）：
-            // 常驻(0) / 托盘驻留(1) / 跟随窗口(2)。
-            var mode = ReadLifetimeMode();
-            if (!_trayExitRequested && mode == ShellLogic.ServiceLifetime.Tray)
-            {
-                // 托盘驻留：拦截关闭，隐藏到托盘（服务继续）
-                e.Cancel = true;
-                form.Hide();
-                return;
-            }
             if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
             {
                 // 跟随窗口：关窗即停服务（只停壳本次拉起的）
@@ -697,20 +714,9 @@ internal static class Program
                 Text = "dsh-launcher",
                 Visible = true,
             };
-            var menu = new ContextMenuStrip();
-            menu.Items.Add("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form));
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("退出", null, (_, _) =>
-            {
-                _trayExitRequested = true;
-            // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
-            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
-                StopShellService();
-            Application.Exit();
-        });
-        tray.ContextMenuStrip = menu;
-        tray.DoubleClick += (_, _) => ToggleMainWindow(form);
-        _trayIcon = tray;
+            tray.ContextMenuStrip = CreateTrayMenu(form);
+            tray.DoubleClick += (_, _) => ToggleMainWindow(form);
+            _trayIcon = tray;
         }
         catch
         {
@@ -718,14 +724,136 @@ internal static class Program
         }
     }
 
+    /// <summary>托盘菜单字体：微软雅黑（中英文系统均自带），9pt 观感干净。</summary>
+    private static readonly Font TrayMenuFont = new("Microsoft YaHei UI", 9F);
+
+    /// <summary>
+    /// 创建托盘右键菜单：简洁白底、浅灰 hover、深色文字、微软雅黑字体。
+    /// 不用系统默认样式（默认有左侧图标留白、跟随深色主题变黑、hover 用系统主题色，显得老气）。
+    /// </summary>
+    private static ContextMenuStrip CreateTrayMenu(Form form)
+    {
+        var menu = new ContextMenuStrip
+        {
+            Renderer = new LightMenuRenderer(),
+            Font = TrayMenuFont,
+            ShowImageMargin = false,   // 去掉左侧图标留白（老气感的主要来源）
+            ShowCheckMargin = false,
+            Padding = new Padding(4),
+            MinimumSize = new Size(168, 0),
+        };
+        menu.Items.Add(new ToolStripMenuItem("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form))
+        {
+            Padding = new Padding(12, 7, 14, 7),
+        });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem("退出", null, (_, _) =>
+        {
+            _trayExitRequested = true;
+            // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
+            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
+                StopShellService();
+            Application.Exit();
+        })
+        {
+            Padding = new Padding(12, 7, 14, 7),
+        });
+        return menu;
+    }
+
+    /// <summary>
+    /// 托盘菜单浅色渲染器：白底 + 1px 浅灰边框 + 浅灰 hover + 深色文字，
+    /// 不随系统深浅色主题变化，观感干净现代。
+    /// </summary>
+    private sealed class LightMenuRenderer : ToolStripProfessionalRenderer
+    {
+        private static readonly Color MenuBack = Color.White;
+        private static readonly Color MenuBorder = Color.FromArgb(222, 222, 222);
+        private static readonly Color MenuHover = Color.FromArgb(243, 246, 249);
+        private static readonly Color MenuText = Color.FromArgb(30, 30, 30);
+        private static readonly Color MenuSeparator = Color.FromArgb(230, 230, 230);
+
+        public LightMenuRenderer()
+        {
+            RoundedEdges = false; // 圆角交给系统阴影/直角，避免自绘与系统圆角叠加
+        }
+
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using var b = new SolidBrush(MenuBack);
+            e.Graphics.FillRectangle(b, e.AffectedBounds);
+        }
+
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            var r = e.AffectedBounds;
+            using var p = new Pen(MenuBorder);
+            e.Graphics.DrawRectangle(p, r.X, r.Y, r.Width - 1, r.Height - 1);
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected || e.Item is ToolStripSeparator) return;
+            var r = new Rectangle(Point.Empty, e.Item.Size);
+            using var b = new SolidBrush(MenuHover);
+            e.Graphics.FillRectangle(b, r);
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = MenuText;
+            base.OnRenderItemText(e);
+        }
+
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            var y = e.Item.Height / 2;
+            using var p = new Pen(MenuSeparator);
+            e.Graphics.DrawLine(p, 12, y, e.Item.Width - 12, y);
+        }
+    }
+
     /// <summary>切换主窗口显示/隐藏。</summary>
     private static void ToggleMainWindow(Form form)
     {
-        if (form.Visible) form.Hide();
+        if (form.Visible)
+        {
+            form.Hide();
+            _hiddenSince = DateTime.Now;
+        }
         else
         {
             form.Show();
             form.Activate();
+            // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
+            // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 重载页面恢复
+            // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
+            // 隐藏状态下 Reload 无效，必须在窗口可见后执行。
+            var longHidden = _hiddenSince != DateTime.MinValue
+                && DateTime.Now - _hiddenSince >= TimeSpan.FromMinutes(5);
+            if (_webviewRecoveryNeeded || longHidden)
+            {
+                _webviewRecoveryNeeded = false;
+                _hiddenSince = DateTime.MinValue;
+                TryReloadWebView();
+            }
+        }
+    }
+
+    /// <summary>重载主窗口 WebView2 页面（隐藏/显示后的崩溃恢复）；失败静默。</summary>
+    private static void TryReloadWebView()
+    {
+        try
+        {
+            if (_mainWeb is { IsDisposed: false } && _mainWeb.CoreWebView2 is not null)
+            {
+                Trace("tray restore: reloading webview after process failure");
+                _mainWeb.CoreWebView2.Reload();
+            }
+        }
+        catch
+        {
+            // 重载失败静默（页面可能已自行恢复）
         }
     }
 
@@ -867,17 +995,25 @@ internal static class Program
             }
         };
 
-        // 渲染进程崩溃/无响应：自动重载避免白屏（每 10 秒最多一次，防止崩溃死循环）
+        // 渲染进程/GPU 进程崩溃或无响应：记下崩溃痕迹，窗口可见时自动重载避免白屏
+        //（每 10 秒最多一次，防止崩溃死循环）。窗口隐藏期间的崩溃不立即 Reload——
+        // 隐藏状态下 Reload 无效，等托盘恢复窗口时由 ToggleMainWindow 兜底重载。
         web.CoreWebView2.ProcessFailed += (_, e) =>
         {
+            Trace($"webview process failed: {e.ProcessFailedKind}");
             if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited
-                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive)
+                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                or CoreWebView2ProcessFailedKind.GpuProcessExited)
             {
-                var now = Environment.TickCount64;
-                if (now - _lastReloadTick > 10_000)
+                _webviewRecoveryNeeded = true;
+                if (_mainWeb is { Visible: true, IsDisposed: false })
                 {
-                    _lastReloadTick = now;
-                    try { web.CoreWebView2.Reload(); } catch { }
+                    var now = Environment.TickCount64;
+                    if (now - _lastReloadTick > 10_000)
+                    {
+                        _lastReloadTick = now;
+                        try { web.CoreWebView2.Reload(); } catch { }
+                    }
                 }
             }
         };
