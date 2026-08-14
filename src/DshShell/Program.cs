@@ -90,7 +90,7 @@ internal static class Program
         if (!ServerManagedExternally && !PortOpen(Target.Port))
         {
             // 依赖预检：启动服务需要 Node.js（dsh 或 npx 都由 node 运行）。
-            // 缺失时立即提示，避免静默等待 90 秒超时才报"服务不可用"。
+            // 缺失时立即提示，避免静默等待超时才报"服务不可用"。
             if (!ShellLogic.HasExecutableOnPath("node.exe", Environment.GetEnvironmentVariable("PATH")))
             {
                 MessageBox.Show(
@@ -100,15 +100,42 @@ internal static class Program
             }
 
             var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-            if (File.Exists(vbs))
-            {
-                Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
-                for (var i = 0; i < 90 && !PortOpen(Target.Port); i++)
-                    Thread.Sleep(1000);
-            }
-            else
+            if (!File.Exists(vbs))
             {
                 MessageBox.Show($"未找到 start-dsh.vbs，无法启动 dsh 服务（{Target.Url}）。", "DeepSeek Harness",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
+
+            // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
+            // 此期间明确提示而不是静默干等；可随时取消。
+            using var status = CreateStartupStatusForm();
+            var cts = new CancellationTokenSource();
+            var pollTask = Task.Run(() =>
+            {
+                for (var i = 0; i < 180 && !PortOpen(Target.Port); i++)
+                {
+                    if (cts.IsCancellationRequested) return false;
+                    Thread.Sleep(1000);
+                }
+                return PortOpen(Target.Port);
+            });
+            _ = pollTask.ContinueWith(_ =>
+            {
+                try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
+            status.ShowDialog();
+            var ready = pollTask.GetAwaiter().GetResult();
+
+            if (!ready)
+            {
+                var hint = cts.IsCancellationRequested
+                    ? "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。"
+                    : "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n详细日志：%USERPROFILE%\\.dsh-web.log";
+                MessageBox.Show("dsh 服务未能就绪。\n\n" + hint, "DeepSeek Harness",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -334,6 +361,53 @@ internal static class Program
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// 服务启动状态窗：显示"正在启动 dsh 服务"（含首次下载提示），可取消。
+    /// 由外部轮询端口，就绪后调用 Close() 自动关闭；取消按钮设 DialogResult.Cancel 并关闭。
+    /// </summary>
+    private static Form CreateStartupStatusForm()
+    {
+        var f = new Form
+        {
+            Text = "DeepSeek Harness",
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen,
+            ClientSize = new Size(440, 150),
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ShowInTaskbar = false,
+            ControlBox = false,
+        };
+        var label = new Label
+        {
+            Text = "正在启动 dsh 服务…\n首次运行需要下载 dsh 组件，可能需要几分钟。",
+            Location = new Point(20, 18),
+            AutoSize = true,
+        };
+        var bar = new ProgressBar
+        {
+            Style = ProgressBarStyle.Marquee,
+            MarqueeAnimationSpeed = 30,
+            Location = new Point(20, 78),
+            Size = new Size(400, 16),
+        };
+        var cancel = new Button
+        {
+            Text = "取消",
+            Location = new Point(350, 110),
+            Size = new Size(70, 26),
+        };
+        cancel.Click += (_, _) =>
+        {
+            f.DialogResult = DialogResult.Cancel;
+            f.Close();
+        };
+        f.Controls.Add(label);
+        f.Controls.Add(bar);
+        f.Controls.Add(cancel);
+        return f;
     }
 
     /// <summary>
