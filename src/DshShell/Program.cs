@@ -318,7 +318,11 @@ internal static class Program
             }
 
             // 就绪判定（TCP + HTTP）已在轮询内完成；此处无需再探测。
+            RecordServicePid(); // 记录本次拉起的服务 PID（供下次启动接管残留服务）
         }
+
+        if (!ServerManagedExternally)
+            TryAdoptOrphanService(); // 端口已开：接管上次崩溃/退出残留的壳托管服务
 
         if (!PortOpen(Target.Port))
         {
@@ -329,14 +333,13 @@ internal static class Program
             return;
         }
 
-        var icon = LoadEmbeddedIcon();
         var form = new Form
         {
             Text = "DeepSeek Harness",
             ClientSize = new Size(1280, 840),
             StartPosition = FormStartPosition.CenterScreen,
             MinimumSize = new Size(800, 600),
-            Icon = icon ?? SystemIcons.Application
+            Icon = ThemeWindowIcon ?? SystemIcons.Application
         };
 
         var web = new WebView2 { Dock = DockStyle.Fill };
@@ -346,6 +349,9 @@ internal static class Program
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
         EnsureTrayIcon(form);
+        // 窗口图标跟随系统深色模式（深色 → 白色鲸鱼），主题切换时实时更新。
+        ApplyThemeIcon(form);
+        RegisterThemeWatcher(form);
         form.Shown += (_, _) => Trace("main form shown");
 
         form.FormClosing += (_, e) =>
@@ -366,11 +372,8 @@ internal static class Program
             }
 
             try { web.Dispose(); } catch { /* ignore */ }
-            if (icon is not null)
-            {
-                try { DestroyIcon(icon.Handle); } catch { /* ignore */ }
-                icon.Dispose();
-            }
+            // 图标为进程级缓存（GDI 对象随进程退出释放），此处不销毁，
+            // 避免托盘驻留/主题切换时复用已销毁的句柄。
 
             if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
             {
@@ -650,23 +653,79 @@ internal static class Program
     private static ShellLogic.ServiceLifetime ReadLifetimeMode() =>
         ShellLogic.ParseLifetimeMode(SafeReadText(SettingsPath));
 
+    /// <summary>壳托管服务的 PID 记录文件（按端口隔离）：崩溃/异常退出后残留的服务可被下次启动接管管理。</summary>
+    private static string ServicePidFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "dsh-launcher", $"service-pid-{Target.Port}.txt");
+
+    /// <summary>记录本次壳拉起的服务 PID（服务就绪后调用），供下次启动接管残留服务。</summary>
+    private static void RecordServicePid()
+    {
+        try
+        {
+            var pid = FindPidListeningOn(Target.Port);
+            if (pid > 0) File.WriteAllText(ServicePidFile, pid.ToString());
+        }
+        catch
+        {
+            // 记录失败不影响启动
+        }
+    }
+
+    /// <summary>
+    /// 端口已开但本实例没拉起服务时调用：若监听进程正是壳上次拉起的残留服务
+    /// （PID 记录在 ServicePidFile），则接管管理（跟随窗口关窗时停掉），
+    /// 避免崩溃/异常退出后服务永久残留。
+    /// </summary>
+    private static void TryAdoptOrphanService()
+    {
+        try
+        {
+            if (!File.Exists(ServicePidFile)) return;
+            if (!int.TryParse(File.ReadAllText(ServicePidFile).Trim(), out var pid) || pid <= 0) return;
+            if (FindPidListeningOn(Target.Port) == pid)
+            {
+                _serviceStartedByShell = true;
+                Trace($"adopted orphan service pid={pid}");
+            }
+        }
+        catch
+        {
+            // 接管失败不影响启动
+        }
+    }
+
+    private static void ClearServicePidFile()
+    {
+        try { if (File.Exists(ServicePidFile)) File.Delete(ServicePidFile); } catch { }
+    }
+
     /// <summary>
     /// 停止"壳本次会话拉起的"dsh 服务：按端口找监听进程 PID，先温和终止，未停再强制。
-    /// 只应在 <see cref="_serviceStartedByShell"/> 为 true 时调用。
+    /// 只应在 <see cref="_serviceStartedByShell"/> 为 true 时调用。停止成功后清除 PID 记录。
     /// </summary>
     private static void StopShellService()
     {
         try
         {
             var pid = FindPidListeningOn(Target.Port);
-            if (pid <= 0) return;
+            if (pid <= 0)
+            {
+                ClearServicePidFile();
+                return;
+            }
             using (var p = Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
             { UseShellExecute = false, CreateNoWindow = true }))
                 p?.WaitForExit(3000);
-            if (!PortOpen(Target.Port)) return; // 已停止
+            if (!PortOpen(Target.Port))
+            {
+                ClearServicePidFile(); // 已停止
+                return;
+            }
             using (var p = Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
             { UseShellExecute = false, CreateNoWindow = true }))
                 p?.WaitForExit(3000);
+            if (!PortOpen(Target.Port)) ClearServicePidFile();
         }
         catch
         {
@@ -710,7 +769,8 @@ internal static class Program
         {
             var tray = new NotifyIcon
             {
-                Icon = LoadEmbeddedIcon() ?? SystemIcons.Application,
+                // 托盘背景多为深色，固定用白色鲸鱼（深色鲸鱼看不清）
+                Icon = TrayWhaleIcon ?? SystemIcons.Application,
                 Text = "dsh-launcher",
                 Visible = true,
             };
@@ -826,28 +886,39 @@ internal static class Program
             form.Show();
             form.Activate();
             // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
-            // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 重载页面恢复
+            // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 延迟重载页面恢复
             // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
-            // 隐藏状态下 Reload 无效，必须在窗口可见后执行。
+            // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
+            // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
             var longHidden = _hiddenSince != DateTime.MinValue
                 && DateTime.Now - _hiddenSince >= TimeSpan.FromMinutes(5);
             if (_webviewRecoveryNeeded || longHidden)
             {
                 _webviewRecoveryNeeded = false;
                 _hiddenSince = DateTime.MinValue;
-                TryReloadWebView();
+                TryReloadWebViewDeferred(form);
             }
         }
     }
 
-    /// <summary>重载主窗口 WebView2 页面（隐藏/显示后的崩溃恢复）；失败静默。</summary>
-    private static void TryReloadWebView()
+    /// <summary>
+    /// 延迟重载主窗口 WebView2 页面（隐藏/显示后的崩溃恢复）。延迟 500ms 等窗口
+    /// 可见性处理完成；期间窗口若再次隐藏/关闭则放弃本次重载并留待下次恢复（标志复位）。
+    /// </summary>
+    private static async void TryReloadWebViewDeferred(Form form)
     {
         try
         {
-            if (_mainWeb is { IsDisposed: false } && _mainWeb.CoreWebView2 is not null)
+            await Task.Delay(500);
+            if (form.IsDisposed || !form.Visible || _mainWeb is { IsDisposed: true })
             {
-                Trace("tray restore: reloading webview after process failure");
+                // 窗口又隐藏/关闭了：下次恢复窗口时再处理
+                _webviewRecoveryNeeded = true;
+                return;
+            }
+            if (_mainWeb?.CoreWebView2 is not null)
+            {
+                Trace("tray restore: reloading webview after process failure (deferred)");
                 _mainWeb.CoreWebView2.Reload();
             }
         }
@@ -1038,12 +1109,13 @@ internal static class Program
         return (form, popupWeb);
     }
 
-    private static Icon? LoadEmbeddedIcon()
+    /// <summary>从嵌入资源按资源名后缀加载图标（favicon.png 深色鲸鱼 / favicon-white.png 白色鲸鱼）。</summary>
+    private static Icon? LoadIconResource(string resourceSuffix)
     {
         try
         {
             var name = Assembly.GetExecutingAssembly().GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith("favicon.png", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(n => n.EndsWith(resourceSuffix, StringComparison.OrdinalIgnoreCase));
             if (name is null) return null;
             using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name);
             if (stream is null) return null;
@@ -1053,6 +1125,65 @@ internal static class Program
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>深色鲸鱼图标（窗口浅色主题/任务栏浅色时用）。</summary>
+    private static Icon? _darkWhaleIcon;
+
+    /// <summary>白色鲸鱼图标（窗口深色主题/托盘深色背景时用）。</summary>
+    private static Icon? _lightWhaleIcon;
+
+    /// <summary>检测系统应用深色模式（注册表 AppsUseLightTheme=0）。</summary>
+    private static bool IsDarkMode()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>按当前系统主题选择窗口图标（深色模式 → 白色鲸鱼，浅色 → 深色鲸鱼）。</summary>
+    private static Icon? ThemeWindowIcon =>
+        IsDarkMode()
+            ? (_darkWhaleIcon ??= LoadIconResource("favicon.png"))
+            : (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"));
+
+    /// <summary>白色鲸鱼（托盘/任务栏深色背景固定用，深色鲸鱼看不清）。</summary>
+    private static Icon? TrayWhaleIcon => _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
+
+    /// <summary>
+    /// 按系统主题刷新窗口图标（深色模式 → 白色鲸鱼；浅色 → 深色鲸鱼），
+    /// 并监听主题切换实时更新。托盘图标固定白色。
+    /// </summary>
+    private static void ApplyThemeIcon(Form form)
+    {
+        try { form.Icon = ThemeWindowIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+        if (_trayIcon is not null)
+        {
+            try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+        }
+    }
+
+    private static void RegisterThemeWatcher(Form form)
+    {
+        try
+        {
+            SystemEvents.UserPreferenceChanged += (_, e) =>
+            {
+                if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
+                    ApplyThemeIcon(form);
+            };
+        }
+        catch
+        {
+            // 主题监听失败不影响启动（图标按启动时的主题定格）
         }
     }
 

@@ -42,6 +42,18 @@
 - 🎛️ **服务停留模式**：托盘菜单可切换"常驻 / 托盘驻留 / 跟随窗口"（dsh 服务的内存管理）
 - 📋 **日志**：`%USERPROFILE%\.dsh-web.log`
 
+## 与 dsh 插件联动
+
+dsh 设置页里有一个配套插件 **dsh-launcher-lifetime**（[GitHub](https://github.com/Ruler4396/dsh-launcher-lifetime) · [npm](https://www.npmjs.com/package/dsh-launcher-lifetime)），提供 **"Node 服务驻留"** 设置页：三个单选切换服务模式（跟随窗口 / 常驻 / 托盘驻留），**立即生效、不用重启**。
+
+```powershell
+dsh plugin add dsh-launcher-lifetime
+```
+
+- 模式保存在 `%LOCALAPPDATA%\dsh-launcher\settings.json`，启动器在关窗/托盘退出时读取执行
+- 托盘图标右键菜单保持精简（显示/隐藏 + 退出），服务模式切换统一在插件的设置页里做
+- 没装插件时启动器按默认"跟随窗口"模式工作，插件只是提供图形化切换入口
+
 ## 启动不了？按现象排查
 
 > 大多数"没反应"都出在**环境依赖**上。先对照上方"环境要求"确认 Node.js 和 .NET 都装了，再按现象查。
