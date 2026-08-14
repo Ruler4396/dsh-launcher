@@ -404,22 +404,32 @@ internal static class Program
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
         {
             // 手动布局 + Anchor（不依赖 Dock 布局顺序：Dock 下 WebView2 内容会盖住标题栏区域，
-            // 表现为"正常内容被标题栏挡住一部分"）
-            Bounds = new Rectangle(0, 0, form.ClientSize.Width, titleHeight),
+            // 表现为"正常内容被标题栏挡住一部分"）。四周留 1px 作为窗口边框（Form.BackColor=边框色）
+            Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, titleHeight),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         form.Controls.Add(form.TitleBar);
 
         var web = new WebView2
         {
-            Bounds = new Rectangle(0, titleHeight, form.ClientSize.Width, form.ClientSize.Height - titleHeight),
+            Bounds = new Rectangle(1, 1 + titleHeight, form.ClientSize.Width - 2, form.ClientSize.Height - titleHeight - 2),
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
         };
         form.Controls.Add(web);
         _mainWeb = web;
 
-        // 无边框窗口阴影（DWM NCRENDERING_POLICY）
+        // 无边框窗口阴影（DWM NCRENDERING_POLICY；带 WebView2 时系统阴影实际不呈现，边框替代质感）
         form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
+
+        // DPI 变化（跨缩放显示器移动窗口）：重算标题栏尺寸并重新布局内容区
+        form.DpiChanged += (_, _) =>
+        {
+            var scale = form.DeviceDpi / 96f;
+            var h = (int)Math.Round(32 * scale);
+            form.TitleBar.Rescale(scale);
+            form.TitleBar.Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, h);
+            web.Bounds = new Rectangle(1, 1 + h, form.ClientSize.Width - 2, form.ClientSize.Height - h - 2);
+        };
 
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
@@ -1324,13 +1334,22 @@ internal static class Program
         var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
         {
-            Bounds = new Rectangle(0, 0, form.ClientSize.Width, titleHeight),
+            // 四周 1px 窗口边框（Form.BackColor=边框色）
+            Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, titleHeight),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         form.Controls.Add(form.TitleBar);
         form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
-        popupWeb.Bounds = new Rectangle(0, titleHeight, form.ClientSize.Width, form.ClientSize.Height - titleHeight);
+        popupWeb.Bounds = new Rectangle(1, 1 + titleHeight, form.ClientSize.Width - 2, form.ClientSize.Height - titleHeight - 2);
         popupWeb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        form.DpiChanged += (_, _) =>
+        {
+            var scale = form.DeviceDpi / 96f;
+            var h = (int)Math.Round(32 * scale);
+            form.TitleBar.Rescale(scale);
+            form.TitleBar.Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, h);
+            popupWeb.Bounds = new Rectangle(1, 1 + h, form.ClientSize.Width - 2, form.ClientSize.Height - h - 2);
+        };
         form.Controls.Add(popupWeb);
         form.FormClosing += (_, _) =>
         {
@@ -1559,8 +1578,8 @@ internal static class Program
     private sealed class CustomTitleBar : Panel
     {
         private readonly Form _owner;
-        private readonly float _scale;
-        private readonly int _btnWidth;
+        private float _scale;
+        private int _btnWidth;
         private bool _dark;
         private bool _hoverMin, _hoverMax, _hoverClose;
 
@@ -1600,6 +1619,14 @@ internal static class Program
         {
             _dark = dark;
             BackColor = _dark ? DarkBg : LightBg;
+            Invalidate();
+        }
+
+        /// <summary>DPI 变化时重算缩放比例与按钮宽度。</summary>
+        public void Rescale(float scale)
+        {
+            _scale = scale;
+            _btnWidth = (int)Math.Round(46 * _scale);
             Invalidate();
         }
 
@@ -1832,6 +1859,8 @@ internal static class Program
         if (form is DshShellForm sf && sf.TitleBar is not null)
         {
             sf.TitleBar.ApplyTheme(dark);
+            // 窗口 1px 边框色（替代阴影的质感）：深色比标题栏亮一档、浅色比标题栏深一档
+            try { form.BackColor = dark ? Color.FromArgb(58, 58, 58) : Color.FromArgb(208, 208, 208); } catch { }
         }
         else
         {
