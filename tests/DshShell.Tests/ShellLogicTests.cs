@@ -273,4 +273,31 @@ public class ShellLogicTests
         Assert.False(ShellLogic.IsOurShortcutTarget(null));
         Assert.False(ShellLogic.IsOurShortcutTarget(""));
     }
+
+    [Fact]
+    public void HasExecutableOnPath_FindsNode()
+    {
+        var path = @"C:\Windows\System32" + Path.PathSeparator + @"C:\Program Files\nodejs";
+        // System32 必有 cmd.exe → 找到
+        Assert.True(ShellLogic.HasExecutableOnPath("cmd.exe", path));
+        // node.exe 装在未知位置（如用户目录）时，给定 PATH 不应误报存在
+        Assert.False(ShellLogic.HasExecutableOnPath("node.exe", path));
+    }
+
+    [Fact]
+    public void HasExecutableOnPath_EmptyOrNullPath_ReturnsFalse()
+    {
+        Assert.False(ShellLogic.HasExecutableOnPath("node.exe", null));
+        Assert.False(ShellLogic.HasExecutableOnPath("node.exe", ""));
+        Assert.False(ShellLogic.HasExecutableOnPath("", @"C:\Windows"));
+    }
+
+    [Fact]
+    public void HasExecutableOnPath_IgnoresBadEntries()
+    {
+        // 包含不可访问/不存在的目录条目不应抛异常
+        var path = @"Z:\does-not-exist" + Path.PathSeparator + @"C:\Windows\System32";
+        Assert.True(ShellLogic.HasExecutableOnPath("cmd.exe", path));
+        Assert.False(ShellLogic.HasExecutableOnPath("node.exe", path));
+    }
 }

@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+
+- **启动依赖预检**：壳在需要自动拉起 dsh 服务前快速检测 Node.js，缺失时立即弹窗提示安装（不再静默等待 90 秒超时才报"服务不可用"）；WebView2 初始化失败也有明确提示（此前会静默无窗口）
+
 ## [0.1.6] - 2026-08-14
 
 ### 变更
