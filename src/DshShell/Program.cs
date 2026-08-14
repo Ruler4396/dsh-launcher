@@ -451,6 +451,21 @@ internal static class Program
     private static ShellLogic.ServiceLifetime ReadLifetimeMode() =>
         ShellLogic.ParseLifetimeMode(SafeReadText(SettingsPath));
 
+    /// <summary>把服务停留模式写入 settings.json（托盘菜单即时修改，壳事件时读取生效）。</summary>
+    private static void WriteLifetimeMode(ShellLogic.ServiceLifetime mode)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(SettingsPath);
+            if (dir is not null) Directory.CreateDirectory(dir);
+            File.WriteAllText(SettingsPath, System.Text.Json.JsonSerializer.Serialize(new { serviceLifetime = (int)mode }));
+        }
+        catch
+        {
+            // 写失败不影响托盘操作（下次仍按旧模式）
+        }
+    }
+
     /// <summary>
     /// 停止"壳本次会话拉起的"dsh 服务：按端口找监听进程 PID，先温和终止，未停再强制。
     /// 只应在 <see cref="_serviceStartedByShell"/> 为 true 时调用。
@@ -514,6 +529,29 @@ internal static class Program
         };
         var menu = new ContextMenuStrip();
         menu.Items.Add("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form));
+
+        // 服务模式子菜单：直接写 settings.json（与 dsh-launcher-lifetime 插件共用同一文件）
+        var modeMenu = new ToolStripMenuItem("服务模式");
+        var modes = new (ShellLogic.ServiceLifetime Value, string Label)[]
+        {
+            (ShellLogic.ServiceLifetime.AlwaysOn, "常驻（服务一直运行）"),
+            (ShellLogic.ServiceLifetime.Tray, "托盘驻留（关窗最小化到托盘）"),
+            (ShellLogic.ServiceLifetime.FollowWindow, "跟随窗口（关窗即停服务）"),
+        };
+        foreach (var (value, label) in modes)
+        {
+            var item = new ToolStripMenuItem(label) { Tag = value };
+            item.Click += (_, _) => WriteLifetimeMode((ShellLogic.ServiceLifetime)((ToolStripMenuItem)item).Tag);
+            modeMenu.DropDownItems.Add(item);
+        }
+        modeMenu.DropDownOpening += (_, _) =>
+        {
+            var current = ReadLifetimeMode();
+            foreach (ToolStripMenuItem it in modeMenu.DropDownItems)
+                it.Checked = (ShellLogic.ServiceLifetime)it.Tag == current;
+        };
+        menu.Items.Add(modeMenu);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出（停止服务）", null, (_, _) =>
         {
