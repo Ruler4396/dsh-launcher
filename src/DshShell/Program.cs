@@ -63,6 +63,9 @@ internal static class Program
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? cls, string? title);
+
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -87,7 +90,14 @@ internal static class Program
         using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);
         if (!firstInstance)
         {
-            var existing = FindWindow(null, "DeepSeek Harness");
+            // 首次实例可能仍在启动（状态窗/服务拉起中，主窗口还没创建）。
+            // 等待其主窗口出现再聚焦，避免"点了没反应"（用户以为要再点一次）。
+            var existing = FindWindowEx(IntPtr.Zero, IntPtr.Zero, null, "DeepSeek Harness");
+            for (var i = 0; existing == IntPtr.Zero && i < 40; i++)
+            {
+                Thread.Sleep(500);
+                existing = FindWindowEx(IntPtr.Zero, IntPtr.Zero, null, "DeepSeek Harness");
+            }
             if (existing != IntPtr.Zero)
             {
                 ShowWindow(existing, SW_RESTORE);
