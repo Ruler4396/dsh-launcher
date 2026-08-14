@@ -50,7 +50,7 @@ dsh 设置页里有一个配套插件 **dsh-launcher-lifetime**（[GitHub](https
 dsh plugin add dsh-launcher-lifetime
 ```
 
-- 模式保存在 `%LOCALAPPDATA%\dsh-launcher\settings.json`，启动器在关窗/托盘退出时读取执行
+- 模式保存在 `DSH_HOME\dsh-launcher\settings.json`（默认 `~/.dsh\dsh-launcher\settings.json`，与 dsh 生态一致），启动器在关窗/托盘退出时读取执行
 - 托盘图标右键菜单保持精简（显示/隐藏 + 退出），服务模式切换统一在插件的设置页里做
 - 没装插件时启动器按默认"跟随窗口"模式工作，插件只是提供图形化切换入口
 
