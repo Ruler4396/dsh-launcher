@@ -132,6 +132,9 @@ internal static class Program
             // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
             // 此期间明确提示而不是静默干等；可随时取消。
             // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）立即结束等待。
+            // 就绪标准 = 端口（TCP）可连 + HTTP 有响应：dsh 前端在端口监听后可能还需数十秒
+            // 才提供 HTTP，若只等 TCP 就提前"成功"，主窗口会加载失败；若探测太早判失败，
+            // 用户要二次点击才能开窗。这里统一在轮询里等 HTTP 就绪。
             var logPath = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh-web.log");
             using var status = CreateStartupStatusForm();
@@ -139,7 +142,8 @@ internal static class Program
             var pollTask = Task.Run(() =>
             {
                 var lastLogCheck = DateTime.MinValue;
-                for (var i = 0; i < 180 && !PortOpen(Target.Port); i++)
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                for (var i = 0; i < 180; i++)
                 {
                     if (cts.IsCancellationRequested) return "canceled";
                     if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
@@ -148,9 +152,21 @@ internal static class Program
                         var content = SafeReadText(logPath);
                         if (ShellLogic.LogShowsStartupError(content)) return "logerror";
                     }
+                    if (PortOpen(Target.Port))
+                    {
+                        try
+                        {
+                            using var resp = http.GetAsync(Target.Url).GetAwaiter().GetResult();
+                            return "ready"; // TCP + HTTP 都已就绪
+                        }
+                        catch
+                        {
+                            // HTTP 尚未就绪（前端还在启动），继续等
+                        }
+                    }
                     Thread.Sleep(1000);
                 }
-                return PortOpen(Target.Port) ? "ready" : "timeout";
+                return "timeout";
             });
             _ = pollTask.ContinueWith(_ =>
             {
@@ -176,14 +192,7 @@ internal static class Program
                 return;
             }
 
-            // 端口已开，但需确认响应的确实是 dsh 服务（端口可能被其他程序占用）。
-            if (!ProbeService(Target.Url))
-            {
-                MessageBox.Show(
-                    $"端口 {Target.Port} 已有程序监听，但响应不像 dsh 服务。\n\n可能被其他程序占用，请关闭占用该端口的程序后重试。",
-                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+            // 就绪判定（TCP + HTTP）已在轮询内完成；此处无需再探测。
         }
 
         if (!PortOpen(Target.Port))
@@ -602,28 +611,6 @@ internal static class Program
             form.Show();
             form.Activate();
         }
-    }
-
-    /// <summary>
-    /// 探测目标 URL 是否真的返回 HTTP 响应（确认端口上是 dsh 服务而非其他程序）。
-    /// 短超时 + 有限重试（服务可能刚监听但 HTTP 尚未就绪）。失败返回 false。
-    /// </summary>
-    private static bool ProbeService(string url)
-    {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        for (var i = 0; i < 3; i++)
-        {
-            try
-            {
-                using var resp = client.GetAsync(url).GetAwaiter().GetResult();
-                return true; // 有 HTTP 响应（任何状态码）即认为服务在
-            }
-            catch
-            {
-                Thread.Sleep(1000);
-            }
-        }
-        return false;
     }
 
     /// <summary>
