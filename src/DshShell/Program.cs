@@ -614,7 +614,9 @@ internal static class Program
     {
         var f = new Form
         {
-            Text = "DeepSeek Harness",
+            // 标题不用主窗口的"DeepSeek Harness"：单实例逻辑按标题找主窗口，
+            // 避免第二次点击把状态窗误当成主窗口聚焦（表现为"点了两次没反应"）。
+            Text = "dsh-launcher 启动中",
             FormBorderStyle = FormBorderStyle.FixedDialog,
             StartPosition = FormStartPosition.CenterScreen,
             ClientSize = new Size(440, 150),
@@ -625,7 +627,7 @@ internal static class Program
         };
         var label = new Label
         {
-            Text = "正在启动 dsh 服务…\n首次运行需要下载 dsh 组件，可能需要几分钟。",
+            Text = "正在启动 dsh 服务…\n首次运行需要下载 dsh 组件，可能需要几分钟。\n完成后会自动打开窗口，请稍候。",
             Location = new Point(20, 18),
             AutoSize = true,
         };
