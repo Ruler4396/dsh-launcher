@@ -7,6 +7,24 @@ namespace DshShell.Tests;
 /// <summary>ShellLogic 纯逻辑单元测试。</summary>
 public class ShellLogicTests
 {
+    // ---------- 版本更新检测（UpdateChecker） ----------
+
+    [Theory]
+    [InlineData("0.1.10", "0.1.9", 1)]
+    [InlineData("0.1.10", "0.1.10", 0)]
+    [InlineData("0.1.9", "0.1.10", -1)]
+    [InlineData("0.1.10", "0.2.0", -1)]
+    [InlineData("0.1.10", null, 1)]          // 最新版本缺失 → 当前更大（不误报）
+    [InlineData(null, "0.1.10", -1)]
+    [InlineData(null, null, 0)]
+    [InlineData("garbage", "0.1.10", -1)]    // 非法版本按 0.0.0
+    [InlineData("v0.1.10", "0.1.10", 0)]     // 去 v 前缀后比较
+    [InlineData("0.1.10-alpha", "0.1.10", -1)] // 预发布按缺失段处理
+    public void CompareVersions_ReturnsExpected(string? a, string? b, int expected)
+    {
+        var result = UpdateChecker.CompareVersions(a?.TrimStart('v'), b);
+        Assert.Equal(Math.Sign(expected), Math.Sign(result));
+    }
     // ---------- 目标地址解析（DSH_WEB_URL） ----------
 
     [Theory]
