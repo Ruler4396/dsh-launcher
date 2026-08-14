@@ -1420,6 +1420,12 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool RedrawWindow(IntPtr hWnd, IntPtr rectUpdate, IntPtr hrgnUpdate, uint flags);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOZORDER = 0x0004;
@@ -1432,12 +1438,17 @@ internal static class Program
     private const uint RDW_ALLCHILDREN = 0x0080;
 
     private const int WM_NCPAINT = 0x0085;
+    private const int WM_NCACTIVATE = 0x0086;
+    private const int WM_SETTINGCHANGE = 0x001A;
+    private const int SPI_SETNONCLIENTMETRICS = 0x002A;
+    private const int GWL_STYLE = -16;
 
     /// <summary>
     /// 强制标题栏深色/浅色（Win10 1809+ 的沉浸式深色标题栏）：让标题栏与图标/前端主题
     /// 保持一致。DWM 属性设置后标题栏**不会自动重绘**（表现为"切换没反应，点走再点回来
-    /// 才变"），用组合拳强制刷新非客户区：SWP_FRAMECHANGED + RedrawWindow(RDW_FRAME)
-    /// + DwmFlush + WM_NCPAINT，并读回实际属性值写入轨迹日志（排障时可见 DWM 是否真变）。
+    /// 才变"；实测本机 SWP_FRAMECHANGED/RedrawWindow/DwmFlush/WM_NCPAINT 均不触发）。
+    /// 追加两记重手段：①同值重设窗口样式（SetWindowLongPtr 强制系统重算窗口帧）；
+    /// ②广播 WM_SETTINGCHANGE(SPI_SETNONCLIENTMETRICS)（系统级非客户区设置变更通知）。
     /// </summary>
     private static void SetTitleBarDark(Form form, bool dark)
     {
@@ -1454,13 +1465,25 @@ internal static class Program
                 Trace($"title bar dark set failed hr=0x{hr:X8} dark={dark}");
             DwmGetWindowAttribute(form.Handle, 20, out var actual, sizeof(int));
             Trace($"title bar dark: set dark={dark} hr=0x{hr:X8} actual={actual}");
-            // 组合拳强制重绘非客户区（单一手段在部分 Win10 上不触发重绘）
+            // 组合拳：窗口帧重算 + 非客户区重绘 + 系统设置变更广播
             SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             RedrawWindow(form.Handle, IntPtr.Zero, IntPtr.Zero,
                 RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
             try { DwmFlush(); } catch { }
             SendMessage(form.Handle, WM_NCPAINT, (IntPtr)1, IntPtr.Zero);
+            // 同值重设窗口样式：强制系统重算窗口帧（SWP_FRAMECHANGED 在本机无效）
+            try
+            {
+                var style = GetWindowLongPtr(form.Handle, GWL_STYLE);
+                if (style != IntPtr.Zero)
+                    SetWindowLongPtr(form.Handle, GWL_STYLE, style);
+            }
+            catch { }
+            SendMessage(form.Handle, WM_SETTINGCHANGE, (IntPtr)SPI_SETNONCLIENTMETRICS, IntPtr.Zero);
+            // 模拟"点走再点回来"：焦点变化时系统正是发 WM_NCACTIVATE 触发非客户区重绘，
+            // 手动发一条（wParam=1 激活态）让标题栏按当前 DWM 属性立即重绘，不改变真实焦点。
+            SendMessage(form.Handle, WM_NCACTIVATE, (IntPtr)1, IntPtr.Zero);
         }
         catch
         {
