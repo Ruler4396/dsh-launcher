@@ -72,7 +72,60 @@ internal static class Program
     private static readonly object TraceLock = new();
 
     /// <summary>
-    /// 启动轨迹日志（%LOCALAPPDATA%\dsh-launcher\shell.log）：记录壳的关键决策点
+    /// dsh 主目录（与 dsh 生态一致，向其他插件学习：配置不散落在 %LOCALAPPDATA%，
+    /// 跟着 dsh 走，卸载/迁移时一并处理）：DSH_HOME 环境变量，未设置时 ~/.dsh。
+    /// </summary>
+    private static string DshHomeDir
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("DSH_HOME");
+            if (!string.IsNullOrWhiteSpace(env)) return env;
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
+        }
+    }
+
+    /// <summary>壳的数据目录（settings.json / shell.log / service-pid 等）：DSH_HOME\dsh-launcher。</summary>
+    private static string DataDir => Path.Combine(DshHomeDir, "dsh-launcher");
+
+    /// <summary>
+    /// 启动时迁移旧版数据（%LOCALAPPDATA%\dsh-launcher → DSH_HOME\dsh-launcher）：
+    /// settings.json 保留用户的选择；旧文件迁移后删除，避免卸载后残留。
+    /// 旧版曾把 WebView2 用户数据放 %LOCALAPPDATA%\DshWeb（标准位置，保持不动）。
+    /// </summary>
+    private static void MigrateLegacyData()
+    {
+        try
+        {
+            var legacyDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dsh-launcher");
+            var newDir = DataDir;
+            if (!Directory.Exists(legacyDir) || string.Equals(legacyDir, newDir, StringComparison.OrdinalIgnoreCase))
+                return;
+            Directory.CreateDirectory(newDir);
+
+            var legacySettings = Path.Combine(legacyDir, "settings.json");
+            var newSettings = Path.Combine(newDir, "settings.json");
+            if (File.Exists(legacySettings) && !File.Exists(newSettings))
+            {
+                try { File.Copy(legacySettings, newSettings); } catch { /* 复制失败保留旧文件 */ }
+            }
+
+            // 清理旧目录（shell.log / service-pid 等历史文件一并删除，无残留）
+            foreach (var file in Directory.GetFiles(legacyDir))
+            {
+                try { File.Delete(file); } catch { /* 被占用则跳过 */ }
+            }
+            try { if (Directory.GetFiles(legacyDir).Length == 0) Directory.Delete(legacyDir); } catch { }
+        }
+        catch
+        {
+            // 迁移失败不影响启动
+        }
+    }
+
+    /// <summary>
+    /// 启动轨迹日志（DSH_HOME\dsh-launcher\shell.log）：记录壳的关键决策点
     /// （单实例、端口探测、服务拉起、就绪判定、窗口显示），用于排查"窗口没出来/要多点一次"
     /// 等启动问题。写失败静默忽略，不影响启动。
     /// </summary>
@@ -82,10 +135,8 @@ internal static class Program
         {
             lock (TraceLock)
             {
-                var dir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dsh-launcher");
-                Directory.CreateDirectory(dir);
-                File.AppendAllText(Path.Combine(dir, "shell.log"),
+                Directory.CreateDirectory(DataDir);
+                File.AppendAllText(Path.Combine(DataDir, "shell.log"),
                     $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} pid={Environment.ProcessId} {message}{Environment.NewLine}");
             }
         }
@@ -154,6 +205,7 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
 
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
+        MigrateLegacyData(); // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME（settings.json 保留、旧目录清理）
 
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。
@@ -350,8 +402,9 @@ internal static class Program
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
         EnsureTrayIcon(form);
-        // 窗口图标跟随系统深色模式（深色 → 白色鲸鱼），主题切换时实时更新。
+        // 窗口图标跟随主题（深色 → 白色鲸鱼 + 深色标题栏），主题切换时实时更新。
         ApplyThemeIcon(form);
+        form.HandleCreated += (_, _) => ApplyThemeIcon(form); // 句柄创建后应用标题栏配色
         RegisterThemeWatcher(form);
         form.Shown += (_, _) => Trace("main form shown");
 
@@ -645,19 +698,15 @@ internal static class Program
         }
     }
 
-    /// <summary>settings.json 路径（dsh-launcher-lifetime 插件写入，壳读取）。</summary>
-    private static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "dsh-launcher", "settings.json");
+    /// <summary>settings.json 路径（dsh-launcher-lifetime 插件写入，壳读取）：DSH_HOME\dsh-launcher\settings.json。</summary>
+    private static string SettingsPath => Path.Combine(DataDir, "settings.json");
 
     /// <summary>读取服务停留模式；缺失/非法回退常驻。</summary>
     private static ShellLogic.ServiceLifetime ReadLifetimeMode() =>
         ShellLogic.ParseLifetimeMode(SafeReadText(SettingsPath));
 
     /// <summary>壳托管服务的 PID 记录文件（按端口隔离）：崩溃/异常退出后残留的服务可被下次启动接管管理。</summary>
-    private static string ServicePidFile => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "dsh-launcher", $"service-pid-{Target.Port}.txt");
+    private static string ServicePidFile => Path.Combine(DataDir, $"service-pid-{Target.Port}.txt");
 
     /// <summary>记录本次壳拉起的服务 PID（服务就绪后调用），供下次启动接管残留服务。</summary>
     private static void RecordServicePid()
@@ -776,7 +825,12 @@ internal static class Program
                 Visible = true,
             };
             tray.ContextMenuStrip = CreateTrayMenu(form);
-            tray.DoubleClick += (_, _) => ToggleMainWindow(form);
+            // 左键单击：窗口置顶显示（开着就提到最上层，不会误关窗口）；
+            // 右键：只弹菜单（NotifyIcon 默认行为，不动窗口）。
+            tray.MouseClick += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Left) ShowMainWindow(form);
+            };
             _trayIcon = tray;
         }
         catch
@@ -788,9 +842,30 @@ internal static class Program
     /// <summary>托盘菜单字体：微软雅黑（中英文系统均自带），9pt 观感干净。</summary>
     private static readonly Font TrayMenuFont = new("Microsoft YaHei UI", 9F);
 
+    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标（Windows 10+ 自带该字体）。</summary>
+    private static Image? RenderMdl2Icon(char glyph, Color color)
+    {
+        try
+        {
+            using var font = new Font("Segoe MDL2 Assets", 15F, FontStyle.Regular, GraphicsUnit.Pixel);
+            var bmp = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                using var brush = new SolidBrush(color);
+                g.DrawString(glyph.ToString(), font, brush, -2F, -3F); // 字形基线微调，视觉居中
+            }
+            return bmp;
+        }
+        catch
+        {
+            return null; // 字体缺失等：回退无图标
+        }
+    }
+
     /// <summary>
-    /// 创建托盘右键菜单：简洁白底、浅灰 hover、深色文字、微软雅黑字体。
-    /// 不用系统默认样式（默认有左侧图标留白、跟随深色主题变黑、hover 用系统主题色，显得老气）。
+    /// 创建托盘右键菜单：白底、浅灰 hover、深色文字、微软雅黑，带图标（眼睛=显示/隐藏、
+    /// 电源=退出），内容自适应宽度。不用系统默认样式（跟随深色主题变黑、hover 用系统主题色）。
     /// </summary>
     private static ContextMenuStrip CreateTrayMenu(Form form)
     {
@@ -798,26 +873,29 @@ internal static class Program
         {
             Renderer = new LightMenuRenderer(),
             Font = TrayMenuFont,
-            ShowImageMargin = false,   // 去掉左侧图标留白（老气感的主要来源）
+            ShowImageMargin = true,   // 有图标，保留左侧图标区
             ShowCheckMargin = false,
             Padding = new Padding(4),
-            MinimumSize = new Size(168, 0),
         };
-        menu.Items.Add(new ToolStripMenuItem("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form))
+        menu.Items.Add(new ToolStripMenuItem("显示 / 隐藏窗口",
+            RenderMdl2Icon('\uE8F1', Color.FromArgb(60, 60, 60)), // MDL2: RedEye
+            (_, _) => ToggleMainWindow(form))
         {
-            Padding = new Padding(12, 7, 14, 7),
+            Padding = new Padding(8, 6, 12, 6),
         });
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("退出", null, (_, _) =>
+        menu.Items.Add(new ToolStripMenuItem("退出",
+            RenderMdl2Icon('\uE7E8', Color.FromArgb(60, 60, 60)), // MDL2: PowerButton
+            (_, _) =>
+            {
+                _trayExitRequested = true;
+                // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
+                if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
+                    StopShellService();
+                Application.Exit();
+            })
         {
-            _trayExitRequested = true;
-            // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
-            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
-                StopShellService();
-            Application.Exit();
-        })
-        {
-            Padding = new Padding(12, 7, 14, 7),
+            Padding = new Padding(8, 6, 12, 6),
         });
         return menu;
     }
@@ -874,7 +952,30 @@ internal static class Program
         }
     }
 
-    /// <summary>切换主窗口显示/隐藏。</summary>
+    /// <summary>
+    /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
+    /// 隐藏着就显示出来；含 WebView2 崩溃/长隐藏恢复。
+    /// </summary>
+    private static void ShowMainWindow(Form form)
+    {
+        if (!form.Visible) form.Show();
+        form.Activate();
+        // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
+        // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 延迟重载页面恢复
+        // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
+        // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
+        // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
+        var longHidden = _hiddenSince != DateTime.MinValue
+            && DateTime.Now - _hiddenSince >= TimeSpan.FromMinutes(5);
+        if (_webviewRecoveryNeeded || longHidden)
+        {
+            _webviewRecoveryNeeded = false;
+            _hiddenSince = DateTime.MinValue;
+            TryReloadWebViewDeferred(form);
+        }
+    }
+
+    /// <summary>切换主窗口显示/隐藏（托盘菜单项用）。</summary>
     private static void ToggleMainWindow(Form form)
     {
         if (form.Visible)
@@ -884,21 +985,7 @@ internal static class Program
         }
         else
         {
-            form.Show();
-            form.Activate();
-            // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
-            // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 延迟重载页面恢复
-            // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
-            // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
-            // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
-            var longHidden = _hiddenSince != DateTime.MinValue
-                && DateTime.Now - _hiddenSince >= TimeSpan.FromMinutes(5);
-            if (_webviewRecoveryNeeded || longHidden)
-            {
-                _webviewRecoveryNeeded = false;
-                _hiddenSince = DateTime.MinValue;
-                TryReloadWebViewDeferred(form);
-            }
+            ShowMainWindow(form);
         }
     }
 
@@ -1136,7 +1223,7 @@ internal static class Program
     private static Icon? _lightWhaleIcon;
 
     /// <summary>检测系统应用深色模式（注册表 AppsUseLightTheme=0）。</summary>
-    private static bool IsDarkMode()
+    private static bool IsSystemDarkMode()
     {
         try
         {
@@ -1150,28 +1237,90 @@ internal static class Program
         }
     }
 
-    /// <summary>按当前系统主题选择窗口图标（深色模式 → 白色鲸鱼，浅色 → 深色鲸鱼）。</summary>
+    /// <summary>读取 dsh 前端的主题选择（DSH_HOME/settings.yaml 的 ui-theme.preference）。</summary>
+    private static string? ReadDshThemePreference()
+    {
+        try
+        {
+            var yaml = Path.Combine(DshHomeDir, "settings.yaml");
+            if (!File.Exists(yaml)) return null;
+            foreach (var line in File.ReadAllLines(yaml))
+            {
+                var t = line.Trim();
+                if (t.StartsWith("ui-theme:", StringComparison.Ordinal)) continue;
+                if (t.StartsWith("preference:", StringComparison.Ordinal))
+                    return t["preference:".Length..].Trim().Trim('"', '\'').ToLowerInvariant();
+            }
+        }
+        catch
+        {
+            // 读取失败回退系统主题
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 解析壳的主题：以用户的选择为主——dsh 前端设置页里的主题选择
+    /// （ui-theme.preference: dark / light / system）优先；system 或未设置时跟随系统深色模式。
+    /// </summary>
+    private static bool ResolveDarkMode()
+    {
+        var pref = ReadDshThemePreference();
+        if (pref == "dark") return true;
+        if (pref == "light") return false;
+        return IsSystemDarkMode();
+    }
+
+    /// <summary>按当前主题选择窗口图标（深色 → 白色鲸鱼，浅色 → 深色鲸鱼）。</summary>
     private static Icon? ThemeWindowIcon =>
-        IsDarkMode()
+        ResolveDarkMode()
             ? (_darkWhaleIcon ??= LoadIconResource("favicon.png"))
             : (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"));
 
     /// <summary>白色鲸鱼（托盘/任务栏深色背景固定用，深色鲸鱼看不清）。</summary>
     private static Icon? TrayWhaleIcon => _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
     /// <summary>
-    /// 按系统主题刷新窗口图标（深色模式 → 白色鲸鱼；浅色 → 深色鲸鱼），
-    /// 并监听主题切换实时更新。托盘图标固定白色。
+    /// 强制标题栏深色/浅色（Win10 1809+ 的沉浸式深色标题栏）：让标题栏与图标/前端主题
+    /// 保持一致——之前只换图标、标题栏仍是浅色时，白色鲸鱼在浅色标题栏上看不见。
+    /// </summary>
+    private static void SetTitleBarDark(Form form, bool dark)
+    {
+        try
+        {
+            if (form.Handle == IntPtr.Zero) return;
+            var value = dark ? 1 : 0;
+            if (DwmSetWindowAttribute(form.Handle, 20, ref value, sizeof(int)) != 0)
+                DwmSetWindowAttribute(form.Handle, 19, ref value, sizeof(int)); // Win10 1809 用 19
+        }
+        catch
+        {
+            // 标题栏配色失败不影响功能
+        }
+    }
+
+    /// <summary>
+    /// 应用主题：窗口图标 + 标题栏配色（深色 → 白色鲸鱼 + 深色标题栏；浅色 → 深色鲸鱼 + 浅色标题栏），
+    /// 托盘图标固定白色。以用户的选择为主（dsh 前端主题设置），其次跟随系统。
     /// </summary>
     private static void ApplyThemeIcon(Form form)
     {
-        try { form.Icon = ThemeWindowIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+        var dark = ResolveDarkMode();
+        try { form.Icon = (dark ? _darkWhaleIcon : _lightWhaleIcon) ?? ThemeWindowIcon ?? SystemIcons.Application; } catch { }
+        SetTitleBarDark(form, dark);
         if (_trayIcon is not null)
         {
             try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
         }
     }
 
+    /// <summary>
+    /// 监听主题变化：系统主题切换（SystemEvents）+ dsh 前端主题设置变化
+    /// （DSH_HOME/settings.yaml 的 ui-theme.preference，用户在 dsh 设置页切换主题时写入）。
+    /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
         try
@@ -1184,7 +1333,30 @@ internal static class Program
         }
         catch
         {
-            // 主题监听失败不影响启动（图标按启动时的主题定格）
+            // 系统主题监听失败不影响启动
+        }
+
+        try
+        {
+            var dir = DshHomeDir;
+            if (!Directory.Exists(dir)) return;
+            var watcher = new FileSystemWatcher(dir, "settings.yaml")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                EnableRaisingEvents = true,
+            };
+            var lastApply = DateTime.MinValue;
+            watcher.Changed += (_, _) =>
+            {
+                // 防抖：settings.yaml 可能被连续写多次
+                if (DateTime.Now - lastApply < TimeSpan.FromSeconds(2)) return;
+                lastApply = DateTime.Now;
+                try { form.BeginInvoke(() => ApplyThemeIcon(form)); } catch { }
+            };
+        }
+        catch
+        {
+            // 前端主题监听失败不影响启动（图标按启动时定格）
         }
     }
 
