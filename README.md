@@ -82,7 +82,13 @@ npm config set registry https://registry.npmmirror.com
 
 **现象 5：端口 3080 被其他程序占用**
 
-设置环境变量 `DSH_WEB_URL` 换端口后重启（同时也要让 dsh 服务监听同一端口，细节见 [docs/DETAILS.md](docs/DETAILS.md)）：
+设置环境变量 `DSH_WEB_PORT` 换端口后重启，壳会自动按新端口拉起 dsh 服务（最简单，推荐）：
+
+```powershell
+$env:DSH_WEB_PORT = "3090"
+```
+
+如果服务是你自己手动起的，也可以用 `DSH_WEB_URL` 指向它（壳不再自动拉起服务，细节见 [docs/DETAILS.md](docs/DETAILS.md)）：
 
 ```powershell
 $env:DSH_WEB_URL = "http://127.0.0.1:3090"

@@ -82,7 +82,13 @@ Open the log and check the last lines: `%USERPROFILE%\.dsh-web.log`
 
 **Symptom 5: port 3080 is used by another program**
 
-Set `DSH_WEB_URL` to another port and restart (the dsh service must listen on the same port — see [docs/DETAILS.md](docs/DETAILS.md)):
+Set `DSH_WEB_PORT` to another port and restart — the shell starts the dsh service on that port automatically (simplest, recommended):
+
+```powershell
+$env:DSH_WEB_PORT = "3090"
+```
+
+If you manage the service yourself, point `DSH_WEB_URL` at it instead (the shell will not auto-start the service — see [docs/DETAILS.md](docs/DETAILS.md)):
 
 ```powershell
 $env:DSH_WEB_URL = "http://127.0.0.1:3090"
