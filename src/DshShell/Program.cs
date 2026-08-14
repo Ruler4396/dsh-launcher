@@ -208,6 +208,11 @@ internal static class Program
 
         var web = new WebView2 { Dock = DockStyle.Fill };
         form.Controls.Add(web);
+
+        // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
+        // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
+        EnsureTrayIcon(form);
+
         form.FormClosing += (_, e) =>
         {
             try { web.Dispose(); } catch { /* ignore */ }
@@ -225,7 +230,6 @@ internal static class Program
                 // 托盘驻留：拦截关闭，隐藏到托盘（服务继续）
                 e.Cancel = true;
                 form.Hide();
-                EnsureTrayIcon(form);
                 return;
             }
             if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
@@ -533,18 +537,20 @@ internal static class Program
         return 0;
     }
 
-    /// <summary>创建托盘图标（懒加载，幂等）；左键/双击切换窗口，右键菜单含"退出（停止服务）"。</summary>
+    /// <summary>创建托盘图标（懒加载，幂等）；左键/双击切换窗口，右键菜单含服务模式与退出。</summary>
     private static void EnsureTrayIcon(Form form)
     {
         if (_trayIcon is not null) return;
-        var tray = new NotifyIcon
+        try
         {
-            Icon = LoadEmbeddedIcon() ?? SystemIcons.Application,
-            Text = "dsh-launcher",
-            Visible = true,
-        };
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form));
+            var tray = new NotifyIcon
+            {
+                Icon = LoadEmbeddedIcon() ?? SystemIcons.Application,
+                Text = "dsh-launcher",
+                Visible = true,
+            };
+            var menu = new ContextMenuStrip();
+            menu.Items.Add("显示 / 隐藏窗口", null, (_, _) => ToggleMainWindow(form));
 
         // 服务模式子菜单：直接写 settings.json（与 dsh-launcher-lifetime 插件共用同一文件）
         var modeMenu = new ToolStripMenuItem("服务模式");
@@ -569,15 +575,22 @@ internal static class Program
         menu.Items.Add(modeMenu);
 
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("退出（停止服务）", null, (_, _) =>
+        menu.Items.Add("退出", null, (_, _) =>
         {
             _trayExitRequested = true;
-            if (_serviceStartedByShell) StopShellService();
+            // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
+            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
+                StopShellService();
             Application.Exit();
         });
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => ToggleMainWindow(form);
         _trayIcon = tray;
+        }
+        catch
+        {
+            // 托盘创建失败不影响壳主流程
+        }
     }
 
     /// <summary>切换主窗口显示/隐藏。</summary>
