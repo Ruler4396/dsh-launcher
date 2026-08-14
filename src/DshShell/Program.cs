@@ -1350,8 +1350,13 @@ internal static class Program
         {
             if (form.Handle == IntPtr.Zero) return;
             var value = dark ? 1 : 0;
-            if (DwmSetWindowAttribute(form.Handle, 20, ref value, sizeof(int)) != 0)
-                DwmSetWindowAttribute(form.Handle, 19, ref value, sizeof(int)); // Win10 1809 用 19
+            var hr = DwmSetWindowAttribute(form.Handle, 20, ref value, sizeof(int));
+            if (hr != 0)
+            {
+                hr = DwmSetWindowAttribute(form.Handle, 19, ref value, sizeof(int)); // Win10 1809 用 19
+            }
+            if (hr != 0)
+                Trace($"title bar dark set failed hr=0x{hr:X8} dark={dark}");
         }
         catch
         {
@@ -1386,26 +1391,13 @@ internal static class Program
     /// 主题实时刷新：系统主题切换（SystemEvents）+ 轮询 dsh 前端主题设置
     /// （DSH_HOME/settings.yaml 的 ui-theme.preference）。轮询比 FileSystemWatcher 可靠
     /// （dsh 可能以原子替换方式写文件，只触发 Renamed 而不触发 Changed），
-    /// 每 2 秒读一次小文件，主题结果变化才应用，窗口/任务栏图标即时刷新。
+    /// 每 2 秒读一次小文件。**两路共用同一去抖状态**：主题结果变化才应用
+    /// （换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
     /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
-        try
-        {
-            SystemEvents.UserPreferenceChanged += (_, e) =>
-            {
-                if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
-                    ApplyThemeIcon(form);
-            };
-        }
-        catch
-        {
-            // 系统主题监听失败不影响启动
-        }
-
-        var timer = new System.Windows.Forms.Timer { Interval = 2000 };
         var lastDark = ResolveDarkMode();
-        timer.Tick += (_, _) =>
+        void ApplyIfThemeChanged()
         {
             try
             {
@@ -1414,13 +1406,30 @@ internal static class Program
                 {
                     lastDark = nowDark;
                     ApplyThemeIcon(form);
+                    Trace($"theme changed: {(nowDark ? "dark" : "light")}");
                 }
             }
             catch
             {
                 // 轮询失败下次再试
             }
-        };
+        }
+
+        try
+        {
+            SystemEvents.UserPreferenceChanged += (_, e) =>
+            {
+                if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
+                    ApplyIfThemeChanged();
+            };
+        }
+        catch
+        {
+            // 系统主题监听失败不影响启动
+        }
+
+        var timer = new System.Windows.Forms.Timer { Interval = 2000 };
+        timer.Tick += (_, _) => ApplyIfThemeChanged();
         timer.Start();
     }
 
