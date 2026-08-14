@@ -63,6 +63,9 @@ internal static class Program
     /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
     private static bool _serviceStartedByShell;
 
+    /// 本次会话壳托管服务的监听 PID（内存缓存，关窗时直接使用，避免再跑 netstat 造成卡顿）。
+    private static int _servicePid;
+
     /// 托盘图标（仅"托盘驻留"模式创建并保持引用，避免被 GC）。
     private static NotifyIcon? _trayIcon;
 
@@ -392,7 +395,7 @@ internal static class Program
             ClientSize = new Size(1280, 840),
             StartPosition = FormStartPosition.CenterScreen,
             MinimumSize = new Size(800, 600),
-            Icon = ThemeWindowIcon ?? SystemIcons.Application
+            Icon = TrayWhaleIcon ?? SystemIcons.Application // 系统任务栏图标固定白色鲸鱼
         };
 
         var web = new WebView2 { Dock = DockStyle.Fill };
@@ -746,7 +749,11 @@ internal static class Program
         try
         {
             var pid = FindPidListeningOn(Target.Port);
-            if (pid > 0) File.WriteAllText(ServicePidFile, pid.ToString());
+            if (pid > 0)
+            {
+                _servicePid = pid;
+                File.WriteAllText(ServicePidFile, pid.ToString());
+            }
         }
         catch
         {
@@ -768,6 +775,7 @@ internal static class Program
             if (FindPidListeningOn(Target.Port) == pid)
             {
                 _serviceStartedByShell = true;
+                _servicePid = pid;
                 Trace($"adopted orphan service pid={pid}");
             }
         }
@@ -784,15 +792,16 @@ internal static class Program
 
     /// <summary>
     /// 停止"壳本次会话拉起的"dsh 服务（**异步**，不阻塞关窗/托盘退出——同步等待
-    /// taskkill 是关窗卡顿的来源之一）：立即启动温和终止，后台检查未停再强制。
-    /// taskkill 是独立进程，壳退出不影响其执行。只应在
-    /// <see cref="_serviceStartedByShell"/> 为 true 时调用。停止成功后清除 PID 记录。
+    /// taskkill 是关窗卡顿的来源之一）：优先用内存缓存的 PID（就绪时已记录，
+    /// 关窗路径不再跑 netstat），立即启动温和终止，后台检查未停再强制。
+    /// taskkill 是独立进程，壳退出不影响其执行。停止成功后清除 PID 记录。
     /// </summary>
     private static void StopShellService()
     {
         try
         {
-            var pid = FindPidListeningOn(Target.Port);
+            var pid = _servicePid;
+            if (pid <= 0) pid = FindPidListeningOn(Target.Port); // 兜底：内存没有时再查
             if (pid <= 0)
             {
                 ClearServicePidFile();
@@ -886,18 +895,30 @@ internal static class Program
     /// <summary>托盘菜单字体：微软雅黑（中英文系统均自带），9pt 观感干净。</summary>
     private static readonly Font TrayMenuFont = new("Microsoft YaHei UI", 9F);
 
-    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标（Windows 10+ 自带该字体）。</summary>
+    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标（32px 大图高质量缩放到 16px，边缘更清晰）。</summary>
     private static Image? RenderMdl2Icon(char glyph, Color color)
     {
         try
         {
-            using var font = new Font("Segoe MDL2 Assets", 15F, FontStyle.Regular, GraphicsUnit.Pixel);
+            using var font = new Font("Segoe MDL2 Assets", 30F, FontStyle.Regular, GraphicsUnit.Pixel);
+            using var large = new Bitmap(32, 32);
+            using (var g = Graphics.FromImage(large))
+            {
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                using var brush = new SolidBrush(color);
+                using var sf = new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center,
+                };
+                // MDL2 字形基线偏下，绘制区上移 2px 视觉居中
+                g.DrawString(glyph.ToString(), font, brush, new RectangleF(0, 2, 32, 30), sf);
+            }
             var bmp = new Bitmap(16, 16);
             using (var g = Graphics.FromImage(bmp))
             {
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-                using var brush = new SolidBrush(color);
-                g.DrawString(glyph.ToString(), font, brush, -2F, -3F); // 字形基线微调，视觉居中
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(large, new Rectangle(0, 0, 16, 16));
             }
             return bmp;
         }
@@ -908,8 +929,9 @@ internal static class Program
     }
 
     /// <summary>
-    /// 创建托盘右键菜单：白底、浅灰 hover、深色文字、微软雅黑，带图标（眼睛=显示/隐藏、
-    /// 电源=退出），内容自适应宽度。不用系统默认样式（跟随深色主题变黑、hover 用系统主题色）。
+    /// 创建托盘右键菜单（Win11 现代风格）：白色圆角浮层、浅灰圆角 hover、深色文字、
+    /// 微软雅黑，图标（眼睛=显示/隐藏、电源=退出），内容自适应宽度。
+    /// 不用系统默认样式（跟随深色主题变黑、hover 用系统主题色、直角边框）。
     /// </summary>
     private static ContextMenuStrip CreateTrayMenu(Form form)
     {
@@ -921,11 +943,22 @@ internal static class Program
             ShowCheckMargin = false,
             Padding = new Padding(4),
         };
+        // 圆角浮层：弹出时给窗口设置圆角 Region（现代菜单观感；系统阴影被 Region 裁剪，接受）
+        menu.Opened += (s, _) =>
+        {
+            try
+            {
+                using var path = LightMenuRenderer.RoundedRect(
+                    new Rectangle(Point.Empty, menu.Size), LightMenuRenderer.CornerRadius);
+                menu.Region = new Region(path);
+            }
+            catch { /* 圆角失败回退直角 */ }
+        };
         menu.Items.Add(new ToolStripMenuItem("显示 / 隐藏窗口",
             RenderMdl2Icon('\uE8F1', Color.FromArgb(60, 60, 60)), // MDL2: RedEye
             (_, _) => ToggleMainWindow(form))
         {
-            Padding = new Padding(8, 6, 12, 6),
+            Padding = new Padding(9, 7, 12, 7),
         });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("退出",
@@ -939,47 +972,73 @@ internal static class Program
                 Application.Exit();
             })
         {
-            Padding = new Padding(8, 6, 12, 6),
+            Padding = new Padding(9, 7, 12, 7),
         });
         return menu;
     }
 
     /// <summary>
-    /// 托盘菜单浅色渲染器：白底 + 1px 浅灰边框 + 浅灰 hover + 深色文字，
-    /// 不随系统深浅色主题变化，观感干净现代。
+    /// 托盘菜单浅色渲染器（Win11 现代风格）：白色圆角底 + 1px 浅灰圆角边框 +
+    /// 浅灰圆角 hover + 深色文字，不随系统深浅色主题变化。
     /// </summary>
     private sealed class LightMenuRenderer : ToolStripProfessionalRenderer
     {
         private static readonly Color MenuBack = Color.White;
-        private static readonly Color MenuBorder = Color.FromArgb(222, 222, 222);
+        private static readonly Color MenuBorder = Color.FromArgb(226, 226, 226);
         private static readonly Color MenuHover = Color.FromArgb(243, 246, 249);
         private static readonly Color MenuText = Color.FromArgb(30, 30, 30);
-        private static readonly Color MenuSeparator = Color.FromArgb(230, 230, 230);
+        private static readonly Color MenuSeparator = Color.FromArgb(233, 233, 233);
+
+        public const int CornerRadius = 8;
+
+        private const int ItemRadius = 6;
 
         public LightMenuRenderer()
         {
-            RoundedEdges = false; // 圆角交给系统阴影/直角，避免自绘与系统圆角叠加
+            RoundedEdges = false; // 圆角由自绘 + Region 控制
+        }
+
+        /// <summary>圆角矩形路径（托盘菜单浮层/hover 共用）。</summary>
+        public static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
+        {
+            var d = radius * 2;
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
         {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using var path = RoundedRect(e.AffectedBounds, CornerRadius);
             using var b = new SolidBrush(MenuBack);
-            e.Graphics.FillRectangle(b, e.AffectedBounds);
+            e.Graphics.FillPath(b, path);
         }
 
         protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
         {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             var r = e.AffectedBounds;
+            r.Width -= 1;
+            r.Height -= 1;
+            using var path = RoundedRect(r, CornerRadius);
             using var p = new Pen(MenuBorder);
-            e.Graphics.DrawRectangle(p, r.X, r.Y, r.Width - 1, r.Height - 1);
+            e.Graphics.DrawPath(p, path);
         }
 
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
             if (!e.Item.Selected || e.Item is ToolStripSeparator) return;
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             var r = new Rectangle(Point.Empty, e.Item.Size);
+            r.Inflate(-2, -2); // hover 高亮略缩进，圆角浮层感
+            using var path = RoundedRect(r, ItemRadius);
             using var b = new SolidBrush(MenuHover);
-            e.Graphics.FillRectangle(b, r);
+            e.Graphics.FillPath(b, path);
         }
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
@@ -992,7 +1051,7 @@ internal static class Program
         {
             var y = e.Item.Height / 2;
             using var p = new Pen(MenuSeparator);
-            e.Graphics.DrawLine(p, 12, y, e.Item.Width - 12, y);
+            e.Graphics.DrawLine(p, 16, y, e.Item.Width - 16, y);
         }
     }
 
@@ -1364,26 +1423,62 @@ internal static class Program
         }
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>标题栏小图标消息（WM_SETICON + ICON_SMALL：只换窗口标题栏的图标，
+    /// 任务栏大图标仍由 form.Icon 控制，保持白色）。</summary>
+    private static void SetTitleBarIcon(Form form, bool dark)
+    {
+        try
+        {
+            if (form.Handle == IntPtr.Zero) return;
+            var icon = dark
+                ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
+                : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
+            if (icon is not null)
+                SendMessage(form.Handle, 0x0080 /* WM_SETICON */, (IntPtr)0 /* ICON_SMALL */, icon.Handle);
+        }
+        catch
+        {
+            // 标题栏图标设置失败不影响功能
+        }
+    }
+
     /// <summary>
-    /// 应用主题：窗口/任务栏图标 + 标题栏配色（深色 → 白色鲸鱼 + 深色标题栏；
-    /// 浅色 → 深色鲸鱼 + 浅色标题栏），托盘图标固定白色。以用户的选择为主
-    /// （dsh 前端主题设置），其次跟随系统。任务栏图标随 form.Icon 实时刷新，
-    /// 不关窗口也会更新。
+    /// 应用主题（以用户的选择为主——dsh 前端主题设置，其次跟随系统）：
+    /// - **系统任务栏图标 + 托盘图标：固定白色鲸鱼**（任务栏/托盘多为深色背景，深色鲸鱼看不清）
+    /// - **窗口标题栏**：小图标跟随主题（深色 → 白色鲸鱼，浅色 → 深色鲸鱼），
+    ///   标题栏背景用 DWM 沉浸式深色/浅色（DwmSetWindowAttribute）
+    /// - 主题状态写入 <c>theme.json</c>（插件设置页可读取显示当前情况）
     /// </summary>
     private static void ApplyThemeIcon(Form form)
     {
         var dark = ResolveDarkMode();
-        try
-        {
-            form.Icon = dark
-                ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png")) ?? SystemIcons.Application
-                : (_darkWhaleIcon ??= LoadIconResource("favicon.png")) ?? SystemIcons.Application;
-        }
-        catch { /* ignore */ }
+        try { form.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+        SetTitleBarIcon(form, dark);
         SetTitleBarDark(form, dark);
         if (_trayIcon is not null)
         {
             try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+        }
+        WriteThemeState(dark);
+    }
+
+    /// <summary>把壳当前的主题判定写入 theme.json，供插件设置页显示诊断（"现在是什么情况"）。</summary>
+    private static void WriteThemeState(bool dark)
+    {
+        try
+        {
+            var state = "{\"preference\":" + System.Text.Json.JsonSerializer.Serialize(ReadDshThemePreference())
+                + ",\"resolved\":\"" + (dark ? "dark" : "light")
+                + "\",\"at\":\"" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\"}";
+            Directory.CreateDirectory(DataDir);
+            File.WriteAllText(Path.Combine(DataDir, "theme.json"), state);
+        }
+        catch
+        {
+            // 状态写入失败不影响功能
         }
     }
 
