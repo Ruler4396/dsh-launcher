@@ -98,17 +98,19 @@
 
     <!-- 现代文件夹选择器（Type-38 立即上下文外部 exe，绕开"远程上下文崩溃"）：
          弹 Windows 11 新版文件夹对话框（IFileDialog）；选择结果写到
-         HKCU\Software\dsh-launcher\InstallDir，由浏览按钮事件链里的标准 AppSearch
-         动作读回（→ PICKEDFOLDER），再 SetTargetPath 应用到安装目录。
-         用户取消时 picker 会删除该注册表值，PICKEDFOLDER 保持未定义，路径不变。 -->
+         HKCU\Software\dsh-launcher\InstallDir，由 ReadPickedFolder（VBScript 自定义
+         动作，立即上下文）读回并设置 _BrowseProperty（PICKED_OK=1），再由浏览按钮
+         的 SetTargetPath 应用到安装目录。用户取消时 picker 会删除该注册表值，
+         PICKED_OK 保持未定义，路径不变。
+         注意：不能用标准 AppSearch 回读——它在安装序列开始时已调度执行，DoAction
+         不会重跑标准动作，属性永远读不到（v0.1.13 实测"选了不生效"的根因）。 -->
     <Binary Id="FolderPickerExe" SourceFile="$(sys.SOURCEFILEDIR)FolderPicker\out\FolderPicker.exe" />
     <CustomAction Id="LaunchModernFolderPicker" BinaryRef="FolderPickerExe"
                   ExeCommand="&quot;[WIXUI_INSTALLDIR]&quot;"
                   Execute="immediate" Return="ignore" />
-    <Property Id="PICKEDFOLDER" Secure="yes">
-      <RegistrySearch Id="PickedFolderSearch" Root="HKCU"
-                      Key="Software\dsh-launcher" Name="InstallDir" Type="raw" />
-    </Property>
+    <CustomAction Id="ReadPickedFolder" Script="vbscript"
+                  ScriptSourceFile="$(sys.SOURCEFILEDIR)ReadPickedFolder.vbs"
+                  Execute="immediate" Return="ignore" />
   </Package>
 
   <Fragment>
@@ -319,16 +321,17 @@
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="FolderLabel" Type="Text" X="20" Y="78" Width="330" Height="15" Text="{\DshUIFont}安装到：" />
         <Control Id="Folder" Type="PathEdit" X="20" Y="95" Width="262" Height="19" Property="WIXUI_INSTALLDIR" Indirect="yes" />
-        <!-- 浏览按钮：现代化文件夹选择器（Type-38 立即上下文外部 exe + 标准 AppSearch 回读）。
-             事件链：① 启动现代选择器（写 HKCU\Software\dsh-launcher\InstallDir）
-             ② 手动执行标准 AppSearch 把注册表值读入 PICKEDFOLDER
-             ③ 若已选择（PICKEDFOLDER 定义）则设为 _BrowseProperty 并 SetTargetPath 应用
-             （PathEdit 即时刷新）；取消时 picker 删除注册表值，PICKEDFOLDER 未定义，路径不变。 -->
+        <!-- 浏览按钮：现代化文件夹选择器（Type-38 立即上下文外部 exe + VBScript 自定义
+             动作回读，不用标准 AppSearch——它只在序列开始执行一次，DoAction 不重跑）。
+             事件链：① 把当前安装目录初始化给 _BrowseProperty ② 启动现代选择器
+             （写 HKCU\Software\dsh-launcher\InstallDir）③ VBScript 读回：有选择则
+             设 _BrowseProperty=新路径 且 PICKED_OK=1 ④ 应用（仅 PICKED_OK 时）。
+             取消时 picker 删除注册表值，PICKED_OK 未定义，路径保持不变。 -->
         <Control Id="Browse" Type="PushButton" X="286" Y="94" Width="64" Height="21" Text="浏览(&amp;R)...">
-          <Publish Event="DoAction" Value="LaunchModernFolderPicker" Order="1" Condition="1" />
-          <Publish Event="DoAction" Value="AppSearch" Order="2" Condition="1" />
-          <Publish Property="_BrowseProperty" Value="[PICKEDFOLDER]" Order="3" Condition="PICKEDFOLDER" />
-          <Publish Event="SetTargetPath" Value="[_BrowseProperty]" Order="4" Condition="PICKEDFOLDER" />
+          <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" Condition="1" />
+          <Publish Event="DoAction" Value="LaunchModernFolderPicker" Order="2" Condition="1" />
+          <Publish Event="DoAction" Value="ReadPickedFolder" Order="3" Condition="1" />
+          <Publish Event="SetTargetPath" Value="[_BrowseProperty]" Order="4" Condition="PICKED_OK" />
         </Control>
         <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %ProgramFiles%\dsh-launcher（需管理员确认）。可在此直接输入或粘贴其他路径，如已有的 E:\ 目录。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
