@@ -895,7 +895,10 @@ internal static class Program
     /// <summary>托盘菜单字体：微软雅黑（中英文系统均自带），9pt 观感干净。</summary>
     private static readonly Font TrayMenuFont = new("Microsoft YaHei UI", 9F);
 
-    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标（32px 大图高质量缩放到 16px，边缘更清晰）。</summary>
+    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标。
+    /// 用 GDI 的 TextRenderer（VerticalCenter 精确垂直居中）在 32px 大图渲染后
+    /// 高质量缩放到 16px——GDI+ DrawString 的 MDL2 字形基线会整体偏下 5-6px
+    /// （截图像素分析实测），导致图标与文字不在同一水平线。</summary>
     private static Image? RenderMdl2Icon(char glyph, Color color)
     {
         try
@@ -904,15 +907,9 @@ internal static class Program
             using var large = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(large))
             {
-                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-                using var brush = new SolidBrush(color);
-                using var sf = new StringFormat
-                {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center,
-                };
-                // MDL2 字形基线偏下，绘制区上移 2px 视觉居中
-                g.DrawString(glyph.ToString(), font, brush, new RectangleF(0, 2, 32, 30), sf);
+                g.Clear(Color.Transparent);
+                TextRenderer.DrawText(g, glyph.ToString(), font, new Rectangle(0, 0, 32, 32), color,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
             var bmp = new Bitmap(16, 16);
             using (var g = Graphics.FromImage(bmp))
@@ -1483,11 +1480,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// 主题实时刷新：系统主题切换（SystemEvents）+ 轮询 dsh 前端主题设置
-    /// （DSH_HOME/settings.yaml 的 ui-theme.preference）。轮询比 FileSystemWatcher 可靠
-    /// （dsh 可能以原子替换方式写文件，只触发 Renamed 而不触发 Changed），
-    /// 每 2 秒读一次小文件。**两路共用同一去抖状态**：主题结果变化才应用
-    /// （换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
+    /// 主题实时刷新（无感切换）：dsh 前端写 settings.yaml 时 FileSystemWatcher 立即触发
+    /// （Changed + Renamed 都监听——dsh 可能原子替换写文件），500ms 轮询兜底
+    /// （watcher 漏事件也能 2 个周期内赶上）。两路共用同一去抖状态：
+    /// 主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
     /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
@@ -1523,7 +1519,26 @@ internal static class Program
             // 系统主题监听失败不影响启动
         }
 
-        var timer = new System.Windows.Forms.Timer { Interval = 2000 };
+        try
+        {
+            var dir = DshHomeDir;
+            if (Directory.Exists(dir))
+            {
+                var watcher = new FileSystemWatcher(dir, "settings.yaml")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                    EnableRaisingEvents = true,
+                };
+                watcher.Changed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
+                watcher.Renamed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
+            }
+        }
+        catch
+        {
+            // 文件监听失败不影响启动（轮询兜底）
+        }
+
+        var timer = new System.Windows.Forms.Timer { Interval = 500 };
         timer.Tick += (_, _) => ApplyIfThemeChanged();
         timer.Start();
     }
