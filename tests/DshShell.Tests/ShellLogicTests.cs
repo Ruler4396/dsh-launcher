@@ -300,4 +300,39 @@ public class ShellLogicTests
         Assert.True(ShellLogic.HasExecutableOnPath("cmd.exe", path));
         Assert.False(ShellLogic.HasExecutableOnPath("node.exe", path));
     }
+
+    [Fact]
+    public void LogShowsStartupError_DetectsNpxAndNpmFailures()
+    {
+        Assert.True(ShellLogic.LogShowsStartupError("npm ERR! code ENOTFOUND\nsomething"));
+        Assert.True(ShellLogic.LogShowsStartupError("'npx' 不是内部或外部命令"));
+        Assert.True(ShellLogic.LogShowsStartupError("EACCES: permission denied"));
+        Assert.True(ShellLogic.LogShowsStartupError("Cannot find module 'x'"));
+        Assert.False(ShellLogic.LogShowsStartupError("dsh web listening on 3080"));
+        Assert.False(ShellLogic.LogShowsStartupError(""));
+        Assert.False(ShellLogic.LogShowsStartupError(null));
+    }
+
+    [Fact]
+    public void ReadLogTail_ReturnsLastLines()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"dsh-test-{Guid.NewGuid():N}.log");
+        try
+        {
+            File.WriteAllLines(path, new[] { "l1", "l2", "l3", "l4", "l5" });
+            var tail = ShellLogic.ReadLogTail(path, 3);
+            Assert.Equal(new[] { "l3", "l4", "l5" }, tail);
+            Assert.Single(ShellLogic.ReadLogTail(path, 1));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ReadLogTail_MissingFile_ReturnsEmpty()
+    {
+        Assert.Empty(ShellLogic.ReadLogTail(Path.Combine(Path.GetTempPath(), "no-such-dsh-log.log"), 10));
+    }
 }
