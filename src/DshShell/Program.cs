@@ -1445,13 +1445,7 @@ internal static class Program
         return IsSystemDarkMode();
     }
 
-    /// <summary>按当前主题选择窗口/任务栏图标：深色主题 → 白色鲸鱼（深色标题栏上可见），浅色 → 深色鲸鱼。</summary>
-    private static Icon? ThemeWindowIcon =>
-        ResolveDarkMode()
-            ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
-            : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
-
-    /// <summary>白色鲸鱼（托盘/任务栏深色背景固定用，深色鲸鱼看不清）。</summary>
+    /// <summary>白色鲸鱼（托盘/任务栏固定用，深色鲸鱼在深色背景上看不清）。</summary>
     private static Icon? TrayWhaleIcon => _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
 
     [DllImport("dwmapi.dll")]
@@ -1824,16 +1818,16 @@ internal static class Program
         }
     }
 
-    /// <summary>标题栏小图标消息（WM_SETICON + ICON_SMALL：只换窗口标题栏的图标，
-    /// 任务栏大图标仍由 form.Icon 控制，保持白色）。</summary>
-    private static void SetTitleBarIcon(Form form, bool dark)
+    /// <summary>标题栏小图标消息（WM_SETICON + ICON_SMALL）。
+    /// <para><b>固定白色鲸鱼</b>：Windows 11 任务栏按钮读取的是小图标（ICON_SMALL），
+    /// 若跟随主题（浅色 → 深色鲸鱼）任务栏 logo 会变黑——因此小图标恒为白色，
+    /// 与托盘一致；标题栏内的鲸鱼由自绘 OnPaint 跟随主题，不受此影响。</para></summary>
+    private static void SetTitleBarIcon(Form form)
     {
         try
         {
             if (form.Handle == IntPtr.Zero) return;
-            var icon = dark
-                ? (_lightWhaleIcon ??= LoadIconResource("favicon-white.png"))
-                : (_darkWhaleIcon ??= LoadIconResource("favicon.png"));
+            var icon = _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
             if (icon is not null)
                 SendMessage(form.Handle, 0x0080 /* WM_SETICON */, (IntPtr)0 /* ICON_SMALL */, icon.Handle);
         }
@@ -1845,8 +1839,10 @@ internal static class Program
 
     /// <summary>
     /// 应用主题（以用户的选择为主——dsh 前端主题设置，其次跟随系统）：
-    /// - **系统任务栏图标 + 托盘图标：固定白色鲸鱼**（任务栏/托盘多为深色背景，深色鲸鱼看不清）
-    /// - **窗口标题栏**：小图标跟随主题（深色 → 白色鲸鱼，浅色 → 深色鲸鱼），
+    /// - **系统任务栏图标 + 托盘图标：固定白色鲸鱼**（Windows 11 任务栏按钮读 ICON_SMALL，
+    ///   因此小图标也固定白色，任何主题下任务栏 logo 始终为白；任务栏/托盘多为深色背景，
+    ///   深色鲸鱼看不清）
+    /// - **窗口标题栏**：自绘鲸鱼图标跟随主题（深色 → 白色鲸鱼，浅色 → 深色鲸鱼），
     ///   标题栏背景用 DWM 沉浸式深色/浅色（DwmSetWindowAttribute）
     /// - 主题状态写入 <c>theme.json</c>（插件设置页可读取显示当前情况）
     /// </summary>
@@ -1854,7 +1850,7 @@ internal static class Program
     {
         var dark = ResolveDarkMode();
         try { form.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
-        SetTitleBarIcon(form, dark);
+        SetTitleBarIcon(form);
         // 自绘标题栏主题（主窗口/弹窗）：自绘颜色即时生效，无 DWM 重绘问题
         if (form is DshShellForm sf && sf.TitleBar is not null)
         {
