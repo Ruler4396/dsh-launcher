@@ -51,21 +51,29 @@
 
 ## 从源码构建 / Building from source
 
+**方式一：完整发布（zip + MSI 安装包）**，需要 [WiX v5](https://wixtoolset.org/)：
+
 ```powershell
 git clone https://github.com/Ruler4396/dsh-launcher.git
 cd dsh-launcher
-./scripts/build-release.ps1    # zip + MSI 安装包 + SHA256 校验和；版本默认取最近 git tag
+dotnet tool install --global wix --version 5.0.2   # 一次性
+./scripts/build-release.ps1 -Version 0.1.8          # zip + MSI + SHA256
 ```
 
-或手动 publish（记得把 scripts 下的部署脚本一并放入产物目录）：
+**方式二：只需源码编译（无需 WiX）**——只编译壳 + 复制部署脚本：
 
 ```powershell
-dotnet publish src/DshShell -c Release -r win-x64 --self-contained false `
-  -p:PublishSingleFile=true -o dist
-copy scripts\start-dsh.vbs, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd dist\
+git clone https://github.com/Ruler4396/dsh-launcher.git
+cd dsh-launcher
+dotnet publish src/DshShell -c Release -r win-x64
+# 产物在 src/DshShell/bin/Release/net10.0-windows/win-x64/publish/
+copy scripts\start-dsh.vbs, scripts\start-dsh.cmd, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd `
+  src\DshShell\bin\Release\net10.0-windows\win-x64\publish\
+# 运行：
+src\DshShell\bin\Release\net10.0-windows\win-x64\publish\DshWeb.exe
 ```
 
-构建产物：`dist\DshWeb.exe`（框架依赖单文件，约 1MB，需 .NET Desktop Runtime 10）、`dist\dsh-launcher-<版本>.msi`、`dist\SHA256SUMS.txt`。
+构建产物：`DshWeb.exe`（框架依赖单文件，约 1MB，需 .NET Desktop Runtime 10）、`dsh-launcher-<版本>.msi`、`SHA256SUMS.txt`。
 
 ## 测试 / Testing
 
