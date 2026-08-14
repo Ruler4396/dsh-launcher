@@ -89,6 +89,16 @@ internal static class Program
         // 设置了 DSH_WEB_URL 时不自动拉起（视为外部托管服务）。
         if (!ServerManagedExternally && !PortOpen(Target.Port))
         {
+            // 依赖预检：启动服务需要 Node.js（dsh 或 npx 都由 node 运行）。
+            // 缺失时立即提示，避免静默等待 90 秒超时才报"服务不可用"。
+            if (!ShellLogic.HasExecutableOnPath("node.exe", Environment.GetEnvironmentVariable("PATH")))
+            {
+                MessageBox.Show(
+                    "未检测到 Node.js，无法启动 dsh 服务。\n\n请先安装 Node.js 18 或更高版本（https://nodejs.org），然后重新打开 dsh-launcher。",
+                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
             if (File.Exists(vbs))
             {
@@ -143,8 +153,20 @@ internal static class Program
             var userDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DshWeb", "WebView2");
-            await InitWebViewAsync(web, userDataFolder);
-            web.CoreWebView2.Navigate(Target.Url);
+            try
+            {
+                await InitWebViewAsync(web, userDataFolder);
+                web.CoreWebView2.Navigate(Target.Url);
+            }
+            catch (Exception ex)
+            {
+                // WebView2 Runtime 缺失等初始化失败：明确提示而不是静默无窗口
+                MessageBox.Show(
+                    "无法初始化 WebView2：\n" + ex.Message +
+                    "\n\n请确认系统已安装 Microsoft Edge WebView2 Runtime（Windows 10/11 通常已自带）。",
+                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                form.Close();
+            }
         };
 
         Application.Run(form);

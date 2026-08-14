@@ -217,6 +217,29 @@ public static class ShellLogic
         && string.Equals(Path.GetFileName(targetPath), "DshWeb.exe", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// 在 PATH 中查找可执行文件（如 node.exe / npx.cmd）。
+    /// 用于启动前的依赖预检：缺 Node.js 时立即提示，而不是等 90 秒服务拉起超时。
+    /// </summary>
+    internal static bool HasExecutableOnPath(string fileName, string? pathEnv)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || string.IsNullOrWhiteSpace(pathEnv))
+            return false;
+        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(dir.Trim(), fileName)))
+                    return true;
+            }
+            catch
+            {
+                // 忽略不可访问的目录
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// 从已安装产品中选出"旧版本"：
     /// - 当前产品（currentCode，安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）永远保留；
     /// - 当前产品存在时，清理所有版本不高于当前版本的其他产品（同版本重复安装也清理），
