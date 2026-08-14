@@ -17,3 +17,4 @@ TestResults/
 # OS
 Thumbs.db
 .DS_Store
+installer/FolderPicker/out/
