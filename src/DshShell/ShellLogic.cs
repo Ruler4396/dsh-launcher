@@ -239,6 +239,50 @@ public static class ShellLogic
         return false;
     }
 
+    /// <summary>npx / 启动器日志中的明确错误标志（命中即认为服务启动失败，提前结束等待）。</summary>
+    private static readonly string[] StartupErrorMarkers =
+    {
+        "npm ERR", "npm error",
+        "EACCES", "ENOSPC", "ETIMEDOUT", "ECONNREFUSED", "ECONNRESET",
+        "不是内部或外部命令", "'npx' 不是内部或外部命令",
+        "Cannot find module", "MODULE_NOT_FOUND",
+        "registry error", "Failed to install",
+    };
+
+    /// <summary>
+    /// 检查启动日志内容是否包含明确的启动失败标志。
+    /// 用于在轮询等待期间提前发现 npx 下载/启动失败，而不是干等超时。
+    /// </summary>
+    internal static bool LogShowsStartupError(string? logContent)
+    {
+        if (string.IsNullOrWhiteSpace(logContent)) return false;
+        foreach (var marker in StartupErrorMarkers)
+        {
+            if (logContent.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；读取失败返回空列表。</summary>
+    internal static List<string> ReadLogTail(string logPath, int maxLines)
+    {
+        var result = new List<string>();
+        try
+        {
+            if (!File.Exists(logPath)) return result;
+            var lines = File.ReadAllLines(logPath);
+            var start = Math.Max(0, lines.Length - maxLines);
+            for (var i = start; i < lines.Length; i++)
+                result.Add(lines[i]);
+        }
+        catch
+        {
+            // 读取失败不阻断流程
+        }
+        return result;
+    }
+
     /// <summary>
     /// 从已安装产品中选出"旧版本"：
     /// - 当前产品（currentCode，安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）永远保留；

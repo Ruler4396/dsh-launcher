@@ -111,16 +111,26 @@ internal static class Program
 
             // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
             // 此期间明确提示而不是静默干等；可随时取消。
+            // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）立即结束等待。
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh-web.log");
             using var status = CreateStartupStatusForm();
             var cts = new CancellationTokenSource();
             var pollTask = Task.Run(() =>
             {
+                var lastLogCheck = DateTime.MinValue;
                 for (var i = 0; i < 180 && !PortOpen(Target.Port); i++)
                 {
-                    if (cts.IsCancellationRequested) return false;
+                    if (cts.IsCancellationRequested) return "canceled";
+                    if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
+                    {
+                        lastLogCheck = DateTime.Now;
+                        var content = SafeReadText(logPath);
+                        if (ShellLogic.LogShowsStartupError(content)) return "logerror";
+                    }
                     Thread.Sleep(1000);
                 }
-                return PortOpen(Target.Port);
+                return PortOpen(Target.Port) ? "ready" : "timeout";
             });
             _ = pollTask.ContinueWith(_ =>
             {
@@ -128,15 +138,30 @@ internal static class Program
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
             status.ShowDialog();
-            var ready = pollTask.GetAwaiter().GetResult();
+            var waitResult = pollTask.GetAwaiter().GetResult();
 
-            if (!ready)
+            if (waitResult != "ready")
             {
-                var hint = cts.IsCancellationRequested
-                    ? "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。"
-                    : "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n详细日志：%USERPROFILE%\\.dsh-web.log";
-                MessageBox.Show("dsh 服务未能就绪。\n\n" + hint, "DeepSeek Harness",
+                var tail = ShellLogic.ReadLogTail(logPath, 12);
+                var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
+                var body = waitResult switch
+                {
+                    "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
+                    "logerror" => "启动过程报错（可能是下载失败、权限或环境问题）。\n\n日志尾部：\n" + tailText,
+                    _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
+                        + "\n\n完整日志：%USERPROFILE%\\.dsh-web.log",
+                };
+                MessageBox.Show("dsh 服务未能就绪。\n\n" + body, "DeepSeek Harness",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 端口已开，但需确认响应的确实是 dsh 服务（端口可能被其他程序占用）。
+            if (!ProbeService(Target.Url))
+            {
+                MessageBox.Show(
+                    $"端口 {Target.Port} 已有程序监听，但响应不像 dsh 服务。\n\n可能被其他程序占用，请关闭占用该端口的程序后重试。",
+                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
         }
@@ -184,6 +209,18 @@ internal static class Program
             {
                 await InitWebViewAsync(web, userDataFolder);
                 web.CoreWebView2.Navigate(Target.Url);
+                // 页面加载失败（如端口被其他程序占用、服务异常退出）：明确提示而非白屏静默
+                var navWarned = false;
+                web.CoreWebView2.NavigationCompleted += (_, e) =>
+                {
+                    if (!e.IsSuccess && !navWarned)
+                    {
+                        navWarned = true;
+                        MessageBox.Show(
+                            $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n日志：%USERPROFILE%\\.dsh-web.log",
+                            "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                };
             }
             catch (Exception ex)
             {
@@ -361,6 +398,41 @@ internal static class Program
         {
             return null;
         }
+    }
+
+    /// <summary>读取文件文本（容错，失败返回 null）。</summary>
+    private static string? SafeReadText(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 探测目标 URL 是否真的返回 HTTP 响应（确认端口上是 dsh 服务而非其他程序）。
+    /// 短超时 + 有限重试（服务可能刚监听但 HTTP 尚未就绪）。失败返回 false。
+    /// </summary>
+    private static bool ProbeService(string url)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        for (var i = 0; i < 3; i++)
+        {
+            try
+            {
+                using var resp = client.GetAsync(url).GetAwaiter().GetResult();
+                return true; // 有 HTTP 响应（任何状态码）即认为服务在
+            }
+            catch
+            {
+                Thread.Sleep(1000);
+            }
+        }
+        return false;
     }
 
     /// <summary>
