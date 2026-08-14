@@ -1040,8 +1040,13 @@ internal static class Program
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.TextColor = MenuText;
-            base.OnRenderItemText(e);
+            // ToolStrip 默认文字渲染偏上（离屏渲染实测：文字中心比菜单项中心低约 7px，
+            // 而图标是居中的）——用 TextRenderer 强制垂直居中，绘制区拉满菜单项高度。
+            var textRect = new Rectangle(
+                e.TextRectangle.X, 0,
+                e.TextRectangle.Width, e.Item.Height);
+            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, textRect, MenuText,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
         }
 
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
@@ -1396,6 +1401,9 @@ internal static class Program
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmFlush();
+
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 
@@ -1405,11 +1413,13 @@ internal static class Program
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_FRAMECHANGED = 0x0020;
 
+    private const int WM_NCPAINT = 0x0085;
+
     /// <summary>
     /// 强制标题栏深色/浅色（Win10 1809+ 的沉浸式深色标题栏）：让标题栏与图标/前端主题
-    /// 保持一致——之前只换图标、标题栏仍是浅色时，白色鲸鱼在浅色标题栏上看不见。
-    /// DWM 属性设置后标题栏**不会自动重绘**（表现为"切换没反应，点走再点回来才变"），
-    /// 必须用 SetWindowPos(SWP_FRAMECHANGED) 强制刷新非客户区。
+    /// 保持一致。DWM 属性设置后标题栏**不会自动重绘**（表现为"切换没反应，点走再点回来
+    /// 才变"），单靠 SetWindowPos(SWP_FRAMECHANGED) 在部分 Win10 上也不触发——
+    /// 用组合拳：SWP_FRAMECHANGED + DwmFlush（等 DWM 批处理）+ WM_NCPAINT（强制重绘非客户区）。
     /// </summary>
     private static void SetTitleBarDark(Form form, bool dark)
     {
@@ -1424,9 +1434,10 @@ internal static class Program
             }
             if (hr != 0)
                 Trace($"title bar dark set failed hr=0x{hr:X8} dark={dark}");
-            // DWM 属性变化后强制重绘标题栏（否则要等焦点切换/手动重绘才生效）
             SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            try { DwmFlush(); } catch { }
+            SendMessage(form.Handle, WM_NCPAINT, (IntPtr)1, IntPtr.Zero);
         }
         catch
         {
