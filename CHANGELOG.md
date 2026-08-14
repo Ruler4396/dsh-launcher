@@ -6,7 +6,7 @@
 
 ### 变更
 
-- **MSI 安装目录"浏览"按钮恢复并修复**：使用 WiX 标准 BrowseDlg（内置对话框，非自定义 CA）。v0.1.11 点击浏览报 **MSI 错误 2819**（BrowseDlg 内部目录属性 `_BrowseProperty` 未初始化导致目录控件创建失败）——已对齐标准 WixUI_InstallDir：点浏览时先把当前安装目录赋值给 `_BrowseProperty` 再打开对话框，并补齐 BrowseDlg"确定"按钮的 `CheckTargetPath`/`SetTargetPath`/`EndDialog` 事件链；现在既可手动输入路径，也可点"浏览"从目录树选择
+- **MSI 安装目录"浏览"按钮 → 现代化文件夹选择器**：Windows 11 新版文件夹对话框（IFileDialog），不再是老式目录树。实现：Type-38 **立即上下文**外部 exe（`FolderPicker`，GUI 子系统无黑色终端，嵌入 MSI Binary 表）弹出选择器，结果写 `HKCU\Software\dsh-launcher\InstallDir`，向导内手动执行标准 **AppSearch** 读回并应用到安装目录。关键修复：交互式自定义动作必须在**立即上下文**运行——此前 DTF / Type-38 在**远程上下文**（deferred）弹窗导致本环境崩溃，浏览按钮因此一度被移除；立即上下文已验证弹窗正常。取消选择时路径保持不变
 - **预留版本更新检测接口**（`UpdateChecker`，暂未接入 UI/启动流程）：拉取本项目 GitHub Releases 最新版本 + dsh（npm registry）最新版本，与本地版本比较（语义化版本比较，含单测）；上线前注意 GitHub API 匿名限流、失败需静默
 
 ### 修复
