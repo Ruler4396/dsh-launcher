@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
@@ -434,6 +435,25 @@ internal static class Program
                 && ShellLogic.IsOurShortcutTarget(GetShortcutTarget(userDesktopLnk)))
             {
                 File.Delete(userDesktopLnk);
+            }
+        }
+        catch
+        {
+            // 忽略
+        }
+
+        // 清理孤儿自启：HKCU Run 的 dsh-launcher 指向的 start-dsh.vbs 已不存在
+        //（per-machine 提权卸载跳过 per-user 组件时残留），避免下次登录白启一个死项。
+        try
+        {
+            using var runKey = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (runKey?.GetValue("dsh-launcher") is string runValue)
+            {
+                var m = Regex.Match(runValue, "\"([^\"]+start-dsh\\.vbs)\"");
+                var vbsPath = m.Success ? m.Groups[1].Value : null;
+                if (vbsPath is null || !File.Exists(vbsPath))
+                    runKey.DeleteValue("dsh-launcher", false);
             }
         }
         catch
