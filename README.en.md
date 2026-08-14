@@ -39,8 +39,9 @@
 - 🪟 **Lightweight window** — WebView2 (~50–150MB, freed on close) instead of a full browser
 - 🔌 **Auto-launch** — starts the service if not running and waits until ready (first run downloads components, with progress)
 - 🔔 **Clear error prompts** — missing Node.js / download failures / port conflicts all show an explicit dialog
-- 🎛️ **Service lifetime modes** — tray menu: always-on / tray-resident / follow-window (dsh service memory management)
-- 📋 **Logging** — `%USERPROFILE%\.dsh-web.log`
+- 🎛️ **Node service lifetime** — switch always-on / tray-resident / follow-window in the dsh settings page (companion plugin); decides whether the node service keeps running after the window closes
+- 🌗 **Theme follow** — the window title bar (custom-painted) and window/taskbar icons follow the dsh theme instantly (dark/light), no restart
+- 📋 **Logging** — dsh service log `%USERPROFILE%\.dsh-web.log`; shell startup trace `DSH_HOME\dsh-launcher\shell.log` (the go-to when startup fails)
 
 ## It won't start? Check by symptom
 
@@ -108,7 +109,7 @@ The new version detects the old per-user install and offers a **one-click elevat
 Get-Content "$env:USERPROFILE\.dsh-web.log" -Tail 30
 ```
 
-The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback.
+The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback (with `DSH_WEB_PORT` set the file is `.dsh-web.<port>.log`). If the service log doesn't explain it, check the **shell startup trace** `DSH_HOME\dsh-launcher\shell.log` (default `~/.dsh\dsh-launcher\shell.log`) — it records every decision point (single instance, port probe, service start, readiness, window shown); attach it when reporting an issue.
 
 ## FAQ
 
@@ -122,7 +123,7 @@ Same contents. MSI adds a standard install/uninstall flow (recommended); ZIP is 
 Yes to custom folder; uninstall only removes the app's own files and keeps a non-empty folder (verified).
 
 **Q: The dsh service keeps using hundreds of MB of memory?**
-dsh is a full service (with web UI); staying resident is by design (instant open). To save memory: tray menu → "服务模式" → **跟随窗口 / follow-window** (service stops on window close and is auto-restarted next time).
+dsh is a full service (with web UI); staying resident is by design (instant open). To save memory: dsh settings page → **"Node 服务驻留 / Node service lifetime"** → **follow-window** (service stops on window close and is auto-restarted next time).
 
 ## More
 
