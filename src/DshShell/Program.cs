@@ -321,8 +321,9 @@ internal static class Program
             RecordServicePid(); // 记录本次拉起的服务 PID（供下次启动接管残留服务）
         }
 
-        if (!ServerManagedExternally)
-            TryAdoptOrphanService(); // 端口已开：接管上次崩溃/退出残留的壳托管服务
+        // 端口已开且本次没拉起服务：接管上次崩溃/退出残留的壳托管服务
+        if (!ServerManagedExternally && !_serviceStartedByShell)
+            TryAdoptOrphanService();
 
         if (!PortOpen(Target.Port))
         {
