@@ -20,7 +20,16 @@ jobs:
 
       - name: Run unit tests
         shell: pwsh
-        run: dotnet test tests/DshShell.Tests -c Release --nologo
+        run: |
+          dotnet test tests/DshShell.Tests -c Release --nologo 2>&1 | Tee-Object -FilePath test-output.log
+          exit $LASTEXITCODE
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.log
 
       - name: Build release package (zip + msi + checksums)
         shell: pwsh
