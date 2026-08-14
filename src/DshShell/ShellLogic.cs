@@ -283,6 +283,37 @@ public static class ShellLogic
         return result;
     }
 
+    /// <summary>dsh 服务的停留模式（由 dsh-launcher-lifetime 插件写入 settings.json，壳执行）。</summary>
+    internal enum ServiceLifetime
+    {
+        /// <summary>常驻：服务一直运行，关窗/托盘退出都不停。</summary>
+        AlwaysOn = 0,
+        /// <summary>托盘驻留：关窗最小化到托盘，托盘"退出"才停服务并退出。</summary>
+        Tray = 1,
+        /// <summary>跟随窗口：关闭主窗口即停止服务并退出（最省内存）。</summary>
+        FollowWindow = 2,
+    }
+
+    /// <summary>解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认常驻）。</summary>
+    internal static ServiceLifetime ParseLifetimeMode(string? json, ServiceLifetime fallback = ServiceLifetime.AlwaysOn)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return fallback;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("serviceLifetime", out var value) && value.TryGetInt32(out var n)
+                && Enum.IsDefined(typeof(ServiceLifetime), n))
+            {
+                return (ServiceLifetime)n;
+            }
+        }
+        catch
+        {
+            // 解析失败回退默认
+        }
+        return fallback;
+    }
+
     /// <summary>
     /// 从已安装产品中选出"旧版本"：
     /// - 当前产品（currentCode，安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）永远保留；
