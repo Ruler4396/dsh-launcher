@@ -295,6 +295,15 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 启动日志路径：默认端口 3080 用 .dsh-web.log（历史兼容），其他端口按端口隔离
+    /// （.dsh-web.&lt;port&gt;.log），避免多个 dsh 服务实例（如壳托管的 9335 与手动 3080）
+    /// 争抢同一个日志文件——被运行中服务锁定的日志会让后续启动直接失败。
+    /// start-dsh.vbs 按同一规则写入。
+    /// </summary>
+    internal static string ResolveLogPath(int port, string userProfileDir) =>
+        Path.Combine(userProfileDir, port == 3080 ? ".dsh-web.log" : $".dsh-web.{port}.log");
+
+    /// <summary>
     /// 解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认"跟随窗口"，
     /// 省内存：关窗即停 dsh 服务，每次启动重新拉起；想常驻请在插件设置里改）。
     /// </summary>
