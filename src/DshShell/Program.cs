@@ -1070,34 +1070,38 @@ internal static class Program
 
     /// <summary>
     /// 托盘右键菜单：LayeredWindow 自绘（alpha 平滑圆角无锯齿 + 商务质感）。
-    /// 内容仅"电源图标 + 退出"（整体居中、加粗、字距）；实心浅色底 + 轻阴影 + 深红强调。
+    /// 内容仅"红色电源图标 + 退出"（黑色、居中、加粗、字距）；实心浅色底 + 轻阴影。
+    /// 全部尺寸按当前 DPI 缩放（物理 = 逻辑 × scale），150% 屏上与 HTML 预览观感一致。
     /// </summary>
     private sealed class TrayMenuForm : Form
     {
         private const int MenuWidth = 152;
         private const int MenuHeight = 54;
         private const int CornerRadius = 16;
-        private const int Shadow = 8; // 阴影边距（内容区外）
+        private const int Shadow = 8; // 阴影边距（逻辑）
 
-        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);       // #B91C1C logo 红
-        private static readonly Color TextBlack = Color.FromArgb(31, 41, 55);          // #1F2937 退出文字黑
-        private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);    // #E5E7EB
+        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);  // #B91C1C logo 红
+        private static readonly Color TextBlack = Color.FromArgb(31, 41, 55);     // #1F2937 退出文字黑
+        private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);
         private static readonly Color HoverFill = Color.FromArgb(18, 220, 38, 38);
 
         private readonly Action _onExit;
+        private readonly float _s; // DPI 缩放（96 为 1）
+        private readonly Font _exitFont;
         private bool _hoverExit;
         private byte _alpha = 255;
-        private readonly Font _exitFont = new("Microsoft YaHei UI", 11F, FontStyle.Bold); // 微软雅黑 11pt≈16px 黑色
 
         public TrayMenuForm(Action onExit)
         {
             _onExit = onExit;
+            using (var g = CreateGraphics()) _s = Math.Max(1f, g.DpiX / 96f);
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
-            Size = new Size(MenuWidth + Shadow * 2, MenuHeight + Shadow * 2);
+            Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
             BackColor = Color.White;
+            _exitFont = new Font("Microsoft YaHei UI", 11f * _s, FontStyle.Bold, GraphicsUnit.Point);
         }
 
         protected override CreateParams CreateParams
@@ -1105,7 +1109,7 @@ internal static class Program
             get
             {
                 var cp = base.CreateParams;
-                cp.ExStyle |= 0x00080000; // WS_EX_LAYERED：位图渲染（alpha 平滑圆角）
+                cp.ExStyle |= 0x00080000; // WS_EX_LAYERED
                 return cp;
             }
         }
@@ -1114,7 +1118,6 @@ internal static class Program
         {
             base.OnShown(e);
             Render();
-            // 淡入动画：alpha 0→255，120ms
             var t = new System.Windows.Forms.Timer { Interval = 12 };
             var start = DateTime.UtcNow;
             t.Tick += (_, _) =>
@@ -1127,7 +1130,7 @@ internal static class Program
             t.Start();
         }
 
-        protected override void OnPaintBackground(PaintEventArgs e) { /* layered：由 Render 绘制 */ }
+        protected override void OnPaintBackground(PaintEventArgs e) { }
 
         private void Render()
         {
@@ -1137,7 +1140,7 @@ internal static class Program
                 using (var g = Graphics.FromImage(bmp))
                 {
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; // 透明背景用灰度抗锯齿，避免 ClearType 深色边缘
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
                     Draw(g);
                 }
                 UpdateLayered(bmp, _alpha);
@@ -1147,64 +1150,64 @@ internal static class Program
 
         private void Draw(Graphics g)
         {
-            var content = new Rectangle(Shadow, Shadow, MenuWidth, MenuHeight);
+            float s = _s;
+            var content = new Rectangle((int)(Shadow * s), (int)(Shadow * s), (int)(MenuWidth * s), (int)(MenuHeight * s));
+            int cr = (int)(CornerRadius * s);
 
-            // 轻阴影（多层半透明黑，模拟模糊投影）
+            // 轻阴影
             for (int i = 4; i >= 1; i--)
             {
-                using var sp = new SolidBrush(Color.FromArgb(12 * i, 0, 0, 0));
-                using var shadowPath = RoundedRect(new Rectangle(content.X + i, content.Y + i + 1, content.Width, content.Height), CornerRadius);
+                using var sp = new SolidBrush(Color.FromArgb((int)(12 * i), 0, 0, 0));
+                using var shadowPath = RoundedRect(new Rectangle(content.X + (int)(i * s), content.Y + (int)((i + 1) * s), content.Width, content.Height), cr);
                 g.FillPath(sp, shadowPath);
             }
 
-            // 圆角背景 + 边框
-            using (var bgPath = RoundedRect(content, CornerRadius))
+            // 圆角背景 + hover 内缩遮罩（内缩 4px，圆角减 4 保持同心曲率）
+            using (var bgPath = RoundedRect(content, cr))
             {
                 using var bg = new SolidBrush(Color.White);
                 g.FillPath(bg, bgPath);
-                if (_hoverExit)
-                {
-                    // 浅红遮罩内缩 4px，四周留空隙（不盖满圆角背景）
-                    using var hb = new SolidBrush(HoverFill);
-                    using var hoverPath = RoundedRect(new Rectangle(content.X + 4, content.Y + 4, content.Width - 8, content.Height - 8), CornerRadius - 4);
-                    g.FillPath(hb, hoverPath);
-                }
                 using var pen = new Pen(BorderColor);
                 g.DrawPath(pen, bgPath);
             }
+            if (_hoverExit)
+            {
+                int inset = (int)(4 * s);
+                using var hb = new SolidBrush(HoverFill);
+                using var hoverPath = RoundedRect(new Rectangle(content.X + inset, content.Y + inset, content.Width - inset * 2, content.Height - inset * 2), cr - (int)(4 * s));
+                g.FillPath(hb, hoverPath);
+            }
 
-            // 内容：电源图标 + "退出"（整体水平居中、垂直居中、字距 4px、加粗）
-            const int iconSize = 24;
-            const int gap = 18;
-            const int letterSpacing = 4;
+            // 内容：红色实心电源图标 + 黑色"退出"（整体水平/垂直居中、字距）
+            int iconSize = (int)(24 * s);
+            int gap = (int)(18 * s);
+            int letterSpacing = (int)(4 * s);
             var m1 = TextRenderer.MeasureText(g, "退", _exitFont);
             var m2 = TextRenderer.MeasureText(g, "出", _exitFont);
-            int textW = m1.Width + letterSpacing + m2.Width;
+            int pad = (int)(4 * s); // 文字区 buffer，防绘制超出
+            int textW = m1.Width + letterSpacing + m2.Width + pad * 2;
             int totalW = iconSize + gap + textW;
-            int x = content.X + (content.Width - totalW) / 2 - 4; // 整体略左移，让图标与文字更舒展
+            int x = content.X + (content.Width - totalW) / 2;
             int cy = content.Y + content.Height / 2;
 
-            // logo 红色实心电源符号；"退出"黑色文字
             using (var iconBrush = new SolidBrush(TextDanger))
-            using (var iconPath = SolidPowerIcon(x + iconSize / 2, cy, 10f, 3f))
+            using (var iconPath = SolidPowerIcon(x + iconSize / 2, cy, 10f * s, 3f * s))
                 g.FillPath(iconBrush, iconPath);
 
-            int tx = x + iconSize + gap;
+            int tx = x + iconSize + gap + pad;
             TextRenderer.DrawText(g, "退", _exitFont,
-                new Rectangle(tx, content.Y, m1.Width, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx, content.Y, m1.Width + pad, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(g, "出", _exitFont,
-                new Rectangle(tx + m1.Width + letterSpacing, content.Y, m2.Width, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx + m1.Width + letterSpacing, content.Y, m2.Width + pad, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
         }
 
-        /// <summary>实心电源符号（对齐用户 SVG：顶部圆头竖线 + 顶部缺口的实心圆环），中心 (cx,cy)。</summary>
+        /// <summary>实心电源符号（对齐用户 SVG：顶部圆头竖线 + 顶部缺口实心圆环）。</summary>
         private static System.Drawing.Drawing2D.GraphicsPath SolidPowerIcon(int cx, int cy, float r, float thickness)
         {
             var p = new System.Drawing.Drawing2D.GraphicsPath();
-            // 圆环：外弧（45° 起顺时针 270°，顶部缺口）+ 内弧反向闭合
             p.AddArc(new RectangleF(cx - r, cy - r, r * 2, r * 2), 45f, 270f);
             p.AddArc(new RectangleF(cx - r + thickness, cy - r + thickness, (r - thickness) * 2, (r - thickness) * 2), 315f, -270f);
             p.CloseFigure();
-            // 顶部竖线（圆头矩形）：从外圆顶上方延伸到圆环上部
             float topY = cy - r - 1.5f;
             float botY = cy - r * 0.30f;
             float w = thickness;
@@ -1226,7 +1229,7 @@ internal static class Program
             return path;
         }
 
-        private bool HitExit(Point p) => new Rectangle(Shadow, Shadow, MenuWidth, MenuHeight).Contains(p);
+        private bool HitExit(Point p) => new Rectangle((int)(Shadow * _s), (int)(Shadow * _s), (int)(MenuWidth * _s), (int)(MenuHeight * _s)).Contains(p);
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
@@ -1251,7 +1254,7 @@ internal static class Program
             return base.ProcessDialogKey(keyData);
         }
 
-        // ---- LayeredWindow（位图渲染，alpha 平滑） ----
+        // ---- LayeredWindow ----
         private void UpdateLayered(Bitmap bmp, byte alpha)
         {
             IntPtr screenDc = GetDC(IntPtr.Zero);
@@ -1275,28 +1278,29 @@ internal static class Program
                 ReleaseDC(IntPtr.Zero, screenDc);
             }
         }
-    }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT { public int X, Y; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SIZE { public int Width, Height; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
-    [DllImport("user32.dll")]
-    private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT ptDst, ref SIZE size, IntPtr hdcSrc, ref POINT ptSrc, int crKey, ref BLENDFUNCTION blend, int flags);
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDC(IntPtr hwnd);
-    [DllImport("user32.dll")]
-    private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteDC(IntPtr hdc);
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr h);
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SIZE { public int Width, Height; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hWnd);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool DeleteObject(IntPtr hObject);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool DeleteDC(IntPtr hdc);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+    }
     /// <summary>
     /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
     /// 隐藏着就显示出来；**最小化时先还原**（Activate 对最小化窗口无效，
