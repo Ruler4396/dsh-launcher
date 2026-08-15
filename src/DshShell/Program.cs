@@ -176,9 +176,13 @@ internal static class Program
             catch { /* 读不到按无标志处理（便携版/未勾选） */ }
             if (!wanted) return;
 
-            var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-            if (!File.Exists(vbs)) return; // 安装目录脚本缺失（异常布局）不写
-            var expected = "wscript.exe \"" + vbs + "\"";
+            // 自启直接拉起壳（登录即见窗口）：壳自行探测/拉起 dsh 服务（无服务时
+            // 自己跑 start-dsh.vbs），不再走 wscript 静默自启服务。值格式与安装器
+            // SetAutoStartFlag CA 一致；旧版 wscript+vbs 格式的存量值会被下面重写
+            // 为新格式（自动迁移）。
+            var exe = Path.Combine(AppContext.BaseDirectory, "DshWeb.exe");
+            if (!File.Exists(exe)) return; // 自身路径异常时不写
+            var expected = "\"" + exe + "\"";
 
             using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
             var cur = run.GetValue("dsh-launcher") as string;
@@ -865,7 +869,7 @@ internal static class Program
             // 忽略
         }
 
-        // 清理孤儿自启：HKCU Run 的 dsh-launcher 指向的 start-dsh.vbs 已不存在
+        // 清理孤儿自启：HKCU Run 的 dsh-launcher 指向的 DshWeb.exe / start-dsh.vbs 已不存在
         //（per-machine 提权卸载跳过 per-user 组件时残留），避免下次登录白启一个死项。
         try
         {
@@ -873,9 +877,10 @@ internal static class Program
                 @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
             if (runKey?.GetValue("dsh-launcher") is string runValue)
             {
-                var m = Regex.Match(runValue, "\"([^\"]+start-dsh\\.vbs)\"");
-                var vbsPath = m.Success ? m.Groups[1].Value : null;
-                if (vbsPath is null || !File.Exists(vbsPath))
+                var m = Regex.Match(runValue, "\"([^\"]+(?:start-dsh\\.vbs|DshWeb\\.exe))\"",
+                    RegexOptions.IgnoreCase);
+                var targetPath = m.Success ? m.Groups[1].Value : null;
+                if (targetPath is null || !File.Exists(targetPath))
                     runKey.DeleteValue("dsh-launcher", false);
             }
         }

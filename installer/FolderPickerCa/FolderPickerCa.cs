@@ -147,7 +147,10 @@ public static class FolderPickerCa
                 @"Software\Microsoft\Windows\CurrentVersion\Run", true))
             {
                 var val = run != null ? run.GetValue("dsh-launcher") as string : null;
-                if (!string.IsNullOrEmpty(val) && val.IndexOf("start-dsh.vbs", StringComparison.OrdinalIgnoreCase) >= 0)
+                var isOurs = !string.IsNullOrEmpty(val) &&
+                    (val.IndexOf("start-dsh.vbs", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     val.IndexOf("DshWeb.exe", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (isOurs)
                 {
                     run.DeleteValue("dsh-launcher");
                     session.Log("RemoveAutoRun: removed dsh-launcher from HKCU Run");
@@ -181,6 +184,66 @@ public static class FolderPickerCa
         catch (Exception ex)
         {
             try { session.Log("RemoveAutoRun: HKLM delete failed: " + ex.Message); } catch { }
+        }
+        return ActionResult.Success;
+    }
+
+    /// <summary>安装/修改时根据 AUTO_START_OPTION 属性写自启两级落地：
+    /// 1) HKLM 意图标志 AutoStartWanted=1（机器级，其他上下文可读）；
+    /// 2) HKCU Run 的 dsh-launcher 值（当前用户登录自启，安装后无需先启动壳）。
+    /// 不使用组件条件（Feature Level / Component Condition）：MSI 在修改安装场景下
+    /// 对 Absent feature 的 Level 条件和已安装组件的 Component 条件均不重新评估
+    /// （0.2.4/0.2.5 实测），导致 checkbox 勾选也不生效。改为 immediate CA 直接操作
+    /// 注册表：AUTO_START_OPTION="1" → 写值；其他情况不操作（保留已有值）。
+    /// 执行上下文：per-machine UAC 提权下 msiexec 服务进程以发起用户身份运行，
+    /// HKCU 即发起用户 hive（0.2.5 实测：卸载 CA 同样上下文可读写真实用户 HKCU）。
+    /// 若 HKCU 写入落空（如部署系统代装），壳 EnsureAutoStartRequested 读 HKLM
+    /// 标志自愈补写。删除由 RemoveAutoRun CA（卸载时）和 uninstall-autostart.cmd 负责。</summary>
+    [CustomAction]
+    public static ActionResult SetAutoStartFlag(Session session)
+    {
+        var opt = session["AUTO_START_OPTION"];
+        if (!string.Equals(opt, "1"))
+        {
+            session.Log("SetAutoStartFlag: AUTO_START_OPTION=[" + (opt ?? "") + "], not '1' — skipping");
+            return ActionResult.Success;
+        }
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"Software\dsh-launcher"))
+            {
+                if (k != null)
+                {
+                    k.SetValue("AutoStartWanted", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                    session.Log("SetAutoStartFlag: wrote AutoStartWanted=1 (AUTO_START_OPTION=1)");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { session.Log("SetAutoStartFlag: HKLM write failed: " + ex.Message); } catch { }
+        }
+        // 直接落地当前用户 Run 项：安装勾选后重启即拉起壳窗口（壳再自行拉起服务），
+        // 无需先手动启动壳（0.2.5 实测：仅靠壳首启自愈则该场景永远不落地）。
+        // 值格式与壳 EnsureAutoStartRequested 完全一致，壳启动后比对相同则不重写。
+        try
+        {
+            var dir = session["INSTALLFOLDER"] ?? @"C:\Program Files\dsh-launcher";
+            if (!dir.EndsWith("\\", StringComparison.Ordinal)) dir += "\\";
+            var expected = "\"" + dir + "DshWeb.exe\"";
+            using (var run = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run"))
+            {
+                if (run != null)
+                {
+                    run.SetValue("dsh-launcher", expected, Microsoft.Win32.RegistryValueKind.String);
+                    session.Log("SetAutoStartFlag: wrote HKCU Run dsh-launcher = " + expected);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { session.Log("SetAutoStartFlag: HKCU Run write failed: " + ex.Message + " (shell self-heal on first start will retry)"); } catch { }
         }
         return ActionResult.Success;
     }
