@@ -5,11 +5,11 @@ using System.Text.Json;
 namespace DshWeb;
 
 /// <summary>
-/// 版本更新检测（**预留接口，暂未接入 UI/启动流程**）：
+/// 版本更新检测：
 /// - 本项目（dsh-launcher）：对比 GitHub Releases 最新 tag 与当前版本
 /// - DeepSeek Harness（dsh）：对比 npm registry latest 与本地版本
-/// 后续接入点：定时检查（如每日一次）+ 托盘气泡/设置页提示"有新版本"。
-/// 上线前注意：GitHub API 匿名限流（60 次/小时/IP），检查频率要克制；
+/// 已接入：壳启动后异步检查 dsh 新版本 → 托盘气泡提示 → 一键 npm 更新（见 Program.cs
+/// ScheduleDshUpdateCheck）。注意：GitHub API 匿名限流（60 次/小时/IP），检查频率要克制；
 /// 失败要静默（网络/限流都不该打扰用户）。
 /// </summary>
 public static class UpdateChecker

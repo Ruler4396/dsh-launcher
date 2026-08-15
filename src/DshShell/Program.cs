@@ -1459,6 +1459,9 @@ internal static class Program
     /// <summary>白色鲸鱼图标（窗口深色主题/托盘深色背景时用）。</summary>
     private static Icon? _lightWhaleIcon;
 
+    /// <summary>蓝色鲸鱼图标（托盘/任务栏按钮固定用：DeepSeek 蓝 #4D6BFE，深浅背景都清晰）。</summary>
+    private static Icon? _blueWhaleIcon;
+
     /// <summary>检测系统应用深色模式（注册表 AppsUseLightTheme=0）。</summary>
     private static bool IsSystemDarkMode()
     {
@@ -1522,7 +1525,9 @@ internal static class Program
     }
 
     /// <summary>白色鲸鱼（托盘/任务栏固定用，深色鲸鱼在深色背景上看不清）。</summary>
-    private static Icon? TrayWhaleIcon => _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
+    /// <summary>蓝色鲸鱼（托盘/任务栏按钮固定用：DeepSeek 蓝 #4D6BFE，深浅背景都清晰；
+    /// 不用白色——白色在浅色背景/浅色任务栏上看不清，蓝色则始终可见）。</summary>
+    private static Icon? TrayWhaleIcon => _blueWhaleIcon ??= LoadIconResource("favicon-blue.png");
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -1903,7 +1908,7 @@ internal static class Program
         try
         {
             if (form.Handle == IntPtr.Zero) return;
-            var icon = _lightWhaleIcon ??= LoadIconResource("favicon-white.png");
+            var icon = _blueWhaleIcon ??= LoadIconResource("favicon-blue.png");
             if (icon is not null)
                 SendMessage(form.Handle, 0x0080 /* WM_SETICON */, (IntPtr)0 /* ICON_SMALL */, icon.Handle);
         }

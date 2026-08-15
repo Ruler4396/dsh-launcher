@@ -5,7 +5,7 @@ Builds the dsh-launcher Windows release package.
 .DESCRIPTION
 Publishes the WebView2 shell app as a single-file executable, assembles the
 deployable files (exe + native loader + all runtime scripts), creates
-dsh-launcher-windows.zip, builds a per-user MSI installer (WiX v5) and writes
+dsh-launcher-windows.zip, builds a per-machine MSI installer (WiX v5) and writes
 SHA256 checksums for both artifacts.
 
 .EXAMPLE
@@ -57,20 +57,23 @@ foreach ($script in "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-
     Copy-Item (Join-Path $root "scripts\$script") $distDir
 }
 
-# 3. zip
-Write-Host ">> packaging zip..."
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $distDir "*") -DestinationPath $zipPath -Force
-
-# 4. publish the modern folder-picker helper used by the MSI wizard's Browse
-#    button (Type-38 immediate external exe; see installer/product.wxs comment)
+# 3. publish the modern folder-picker exe (Type-38, client-process dialog) and
+#    build the DTF read-back CA (Type-1, runs in the msiexec CA server; its
+#    MsiSetProperty changes sync back to the client UI - verified in logs)
 Write-Host ">> publishing folder picker..."
 $pickerOut = Join-Path $root "installer\FolderPicker\out"
 dotnet publish (Join-Path $root "installer\FolderPicker") -c Release -r win-x64 `
     --self-contained false -p:PublishSingleFile=true -o $pickerOut
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish FolderPicker failed" }
 
-# 5. per-machine MSI installer (WiX v5; elevated per-machine uninstall; see installer/product.wxs)
+Write-Host ">> building folder picker CA..."
+dotnet build (Join-Path $root "installer\FolderPickerCa") -c Release --nologo
+if ($LASTEXITCODE -ne 0) { throw "dotnet build FolderPickerCa failed" }
+if (-not (Test-Path (Join-Path $root "installer\FolderPickerCa\bin\x64\Release\net20\FolderPickerCa.CA.dll"))) {
+    throw "FolderPickerCa.CA.dll not produced (DTF build failed?)"
+}
+
+# 4. per-machine MSI installer (WiX v5; elevated per-machine uninstall; see installer/product.wxs)
 Write-Host ">> building MSI installer..."
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) {
@@ -85,13 +88,15 @@ if (-not $wix) { throw "WiX tool not available; run: dotnet tool install --globa
 & $wix.Source extension add -g WixToolset.UI.wixext/5.0.2 *> $null
 if ($LASTEXITCODE -ne 0) { throw "failed to install WixToolset.UI.wixext" }
 
-# build the MSI (the wizard's Browse button runs FolderPicker.exe as an
-# immediate-context Type-38 external exe - interactive dialogs in the *deferred*
-# context crash in this environment, see installer/product.wxs comment)
 & $wix.Source build (Join-Path $root "installer\product.wxs") -arch x64 `
     -ext WixToolset.UI.wixext -culture zh-CN `
     -d "ProductVersion=$Version" -d "SourceDir=$distDir" -o $msiPath
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+
+# 5. zip
+Write-Host ">> packaging zip..."
+if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+Compress-Archive -Path (Join-Path $distDir "*") -DestinationPath $zipPath -Force
 
 # 6. checksums (integrity verification for downloads)
 Write-Host ">> writing checksums..."
@@ -106,3 +111,4 @@ Write-Host ">> done:"
 Write-Host "    $zipPath"
 Write-Host "    $msiPath"
 Write-Host "    $sumsPath"
+

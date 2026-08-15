@@ -96,20 +96,26 @@
       <ui:WixUI Id="WixUI_SimpleCheckbox" />
     </UI>
 
-    <!-- 现代文件夹选择器（Type-38 立即上下文外部 exe，绕开"远程上下文崩溃"）：
-         弹 Windows 11 新版文件夹对话框（IFileDialog）；选择结果写到
-         HKCU\Software\dsh-launcher\InstallDir，由 ReadPickedFolder（VBScript 自定义
-         动作，立即上下文）读回并设置 _BrowseProperty（PICKED_OK=1），再由浏览按钮
-         的 SetTargetPath 应用到安装目录。用户取消时 picker 会删除该注册表值，
-         PICKED_OK 保持未定义，路径不变。
-         注意：不能用标准 AppSearch 回读——它在安装序列开始时已调度执行，DoAction
-         不会重跑标准动作，属性永远读不到（v0.1.13 实测"选了不生效"的根因）。 -->
-    <Binary Id="FolderPickerExe" SourceFile="$(sys.SOURCEFILEDIR)FolderPicker\out\FolderPicker.exe" />
+    <!-- 现代化文件夹选择器（两个自定义动作配合，均已实测验证）：
+         ① LaunchModernFolderPicker：Type-38 外部 exe（FolderPicker.exe），**客户端进程**
+            内弹 Windows 11/10 新版文件夹对话框（IFileDialog），把所选路径写到
+            C:\ProgramData\dsh-launcher\picked.txt（用户与服务端都可读写）
+         ② ReadPickedFolder：DTF Type-1 托管 CA（net20，SfxCA 打包，无需 C++ 工具链）——
+            **本环境实测 DLL CA 恒被 marshal 到 msiexec 服务端执行**（Invoking remote
+            custom action / Connected to service），但 MsiSetProperty 的回写**会同步回
+            客户端 UI**（日志实证：MSI (c) PROPERTY CHANGE: Modifying INSTALLFOLDER）；
+            该 CA 读中转文件 → 写 _BrowseProperty 所指的目录属性（INSTALLFOLDER）→
+            PathEdit 即时刷新。构建目标 net20 匹配 SfxCA 绑定的 CLR v2.0.50727
+            （net48 会 BadImageFormatException）。取消时 picker 不留文件，路径不变。 -->
+    <Binary Id="FolderPickerExe"
+            SourceFile="$(sys.SOURCEFILEDIR)FolderPicker\out\FolderPicker.exe" />
+    <Binary Id="FolderPickerCa"
+            SourceFile="$(sys.SOURCEFILEDIR)FolderPickerCa\bin\x64\Release\net20\FolderPickerCa.CA.dll" />
     <CustomAction Id="LaunchModernFolderPicker" BinaryRef="FolderPickerExe"
-                  ExeCommand="&quot;[WIXUI_INSTALLDIR]&quot;"
+                  ExeCommand="&quot;[INSTALLFOLDER]&quot;"
                   Execute="immediate" Return="ignore" />
-    <CustomAction Id="ReadPickedFolder" Script="vbscript"
-                  ScriptSourceFile="$(sys.SOURCEFILEDIR)ReadPickedFolder.vbs"
+    <CustomAction Id="ReadPickedFolder" BinaryRef="FolderPickerCa"
+                  DllEntry="LaunchFolderPicker"
                   Execute="immediate" Return="ignore" />
   </Package>
 
@@ -280,12 +286,6 @@
     <UIRef Id="WixUI_Common" />
   </Fragment>
 
-  <!-- 说明：现代文件夹选择器（自定义 CA：DTF/Type-38 exe）因本环境远程上下文崩溃而移除；
-       浏览按钮改用 WiX 标准 BrowseDlg（内置对话框）。注意必须按标准 WixUI_InstallDir
-       初始化 _BrowseProperty：点浏览时先把当前安装目录复制给 _BrowseProperty，再
-       SpawnDialog，否则 BrowseDlg 内部目录控件无法初始化（MSI 报错 2819，v0.1.11 的复现）。
-       CustomAction/Binary 代码保留在 git 历史（installer/Picker）供其他环境复用。 -->
-
   <!-- 安装选项对话框：三个勾选框（Segoe UI 风格） -->
   <Fragment>
     <UI>
@@ -300,7 +300,7 @@
           <Publish Event="NewDialog" Value="ChooseFolderDlg" Condition="1" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
-          <Publish Event="EndDialog" Value="Return" Condition="1" />
+          <Publish Event="EndDialog" Value="Exit" Condition="1" />
         </Control>
         <Control Id="AutoStart" Type="CheckBox" X="25" Y="85" Width="320" Height="34" Property="AUTO_START_OPTION" CheckBoxValue="1" Text="{\DshUIFont}开机自启（登录时静默启动 dsh 服务；&#xA;内存占用相对较大，非必要不推荐开启）" />
         <Control Id="DesktopShortcut" Type="CheckBox" X="25" Y="130" Width="320" Height="17" Property="DESKTOP_SHORTCUT_OPTION" CheckBoxValue="1" Text="{\DshUIFont}创建桌面快捷方式" />
@@ -310,7 +310,14 @@
     </UI>
   </Fragment>
 
-  <!-- 选择安装目录：路径输入 + 标准 WiX 浏览对话框（BrowseDlg） -->
+  <!-- 选择安装目录：手动输入 + 现代化文件夹选择器（浏览按钮，DTF Type-1 CA）。
+       浏览按钮事件链：① 当前安装目录属性名初始化给 _BrowseProperty（间接属性语义）
+       ② DoAction LaunchModernFolderPicker（客户端进程弹新版文件夹对话框）
+       ③ DoAction ReadPickedFolder（服务端 CA 回写 INSTALLFOLDER=所选路径，
+       属性回写已验证生效）④ NewDialog 切到另一份目录对话框——MSI 控件静态绑定，
+       属性变化不会让当前对话框控件重绘，重建对话框后 PathEdit 重读属性即回显
+       （这就是 BrowseDlg 能回显而 DoAction 路线"看起来不生效"的最后一个原因）。
+       两份对话框交替，Back/Next/Cancel 完全一致，VerifyReadyDlg 的 Back 仍回第一份。 -->
   <Fragment>
     <UI>
       <Dialog Id="ChooseFolderDlg" Width="370" Height="270" Title="[ProductName] — 选择安装目录">
@@ -321,19 +328,14 @@
         <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
         <Control Id="FolderLabel" Type="Text" X="20" Y="78" Width="330" Height="15" Text="{\DshUIFont}安装到：" />
         <Control Id="Folder" Type="PathEdit" X="20" Y="95" Width="262" Height="19" Property="WIXUI_INSTALLDIR" Indirect="yes" />
-        <!-- 浏览按钮：现代化文件夹选择器（Type-38 立即上下文外部 exe + VBScript 自定义
-             动作回读，不用标准 AppSearch——它只在序列开始执行一次，DoAction 不重跑）。
-             事件链：① 把当前安装目录初始化给 _BrowseProperty ② 启动现代选择器
-             （写 HKCU\Software\dsh-launcher\InstallDir）③ VBScript 读回：有选择则
-             设 _BrowseProperty=新路径 且 PICKED_OK=1 ④ 应用（仅 PICKED_OK 时）。
-             取消时 picker 删除注册表值，PICKED_OK 未定义，路径保持不变。 -->
         <Control Id="Browse" Type="PushButton" X="286" Y="94" Width="64" Height="21" Text="浏览(&amp;R)...">
           <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" Condition="1" />
           <Publish Event="DoAction" Value="LaunchModernFolderPicker" Order="2" Condition="1" />
           <Publish Event="DoAction" Value="ReadPickedFolder" Order="3" Condition="1" />
-          <Publish Event="SetTargetPath" Value="[_BrowseProperty]" Order="4" Condition="PICKED_OK" />
+          <!-- 重建对话框（NewDialog 销毁当前对话框 → PathEdit 重建时重读 INSTALLFOLDER） -->
+          <Publish Event="NewDialog" Value="ChooseFolderDlg2" Order="4" Condition="1" />
         </Control>
-        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %ProgramFiles%\dsh-launcher（需管理员确认）。可在此直接输入或粘贴其他路径，如已有的 E:\ 目录。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
+        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %ProgramFiles%\dsh-launcher（需管理员确认）。可在此直接输入或粘贴其他路径，如已有的 E:\ 目录；或点「浏览」用系统新版文件夹选择器。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
           <Publish Event="NewDialog" Value="OptionsDlg" Condition="1" />
         </Control>
@@ -344,7 +346,37 @@
           <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
-          <Publish Event="EndDialog" Value="Return" Condition="1" />
+          <Publish Event="EndDialog" Value="Exit" Condition="1" />
+        </Control>
+      </Dialog>
+
+      <!-- 第二份目录对话框：内容与第一份完全相同，浏览按钮落点切回第一份 -->
+      <Dialog Id="ChooseFolderDlg2" Width="370" Height="270" Title="[ProductName] — 选择安装目录">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="yes" Text="!(loc.InstallDirDlgBannerBitmap)" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" Text="{\DshUIFontBold}选择安装目录" />
+        <Control Id="Description" Type="Text" X="15" Y="23" Width="340" Height="15" Transparent="yes" Text="{\DshUIFont}选择 dsh-launcher 的安装位置" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="FolderLabel" Type="Text" X="20" Y="78" Width="330" Height="15" Text="{\DshUIFont}安装到：" />
+        <Control Id="Folder" Type="PathEdit" X="20" Y="95" Width="262" Height="19" Property="WIXUI_INSTALLDIR" Indirect="yes" />
+        <Control Id="Browse" Type="PushButton" X="286" Y="94" Width="64" Height="21" Text="浏览(&amp;R)...">
+          <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" Condition="1" />
+          <Publish Event="DoAction" Value="LaunchModernFolderPicker" Order="2" Condition="1" />
+          <Publish Event="DoAction" Value="ReadPickedFolder" Order="3" Condition="1" />
+          <Publish Event="NewDialog" Value="ChooseFolderDlg" Order="4" Condition="1" />
+        </Control>
+        <Control Id="Note" Type="Text" X="20" Y="130" Width="330" Height="45" Text="{\DshUIFont}默认安装到 %ProgramFiles%\dsh-launcher（需管理员确认）。可在此直接输入或粘贴其他路径，如已有的 E:\ 目录；或点「浏览」用系统新版文件夹选择器。卸载只删除本应用的 7 个文件，不会删除目录中的其他内容。" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="上一步(&amp;B)">
+          <Publish Event="NewDialog" Value="OptionsDlg" Condition="1" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)">
+          <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" Condition="1" />
+          <Publish Event="DoAction" Value="WixUIValidatePath_X64" Order="2" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+          <Publish Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" Order="4" Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消">
+          <Publish Event="EndDialog" Value="Exit" Condition="1" />
         </Control>
       </Dialog>
     </UI>
