@@ -19,7 +19,7 @@
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
 | 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
-| 开机自启 | MSI 勾选后由壳首次启动写入 `HKCU\...\Run`（安装器只落 HKLM 意图标志——per-machine 提权安装直接写 HKCU 不可靠）；便携版：启动文件夹放置 `start-dsh.vbs`，均由 `wscript` 无窗口执行 |
+| 开机自启 | MSI 勾选后写 `HKCU\...\Run` 直接指向 `DshWeb.exe`（登录 → 壳窗口出现 → 壳自行拉起服务）；安装器同时落 HKLM 意图标志（per-machine 提权安装直接写 HKCU 不可靠，壳首启补写兜底）；便携版：启动文件夹放置 `start-dsh.vbs` 由 `wscript` 执行，或直接放 `DshWeb.exe` 快捷方式 |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |
 | 弹窗 | 外部 http(s) → 系统默认浏览器；同源弹窗新建轻量窗口（保留会话）；blob:/data: 保持默认 |
@@ -31,7 +31,7 @@
 
 - **系统级安装（per-machine，提权）**：安装/卸载会弹一次 UAC 管理员确认，默认安装到 `%ProgramFiles%\dsh-launcher`，向导中可自定义安装目录；不注册服务、不创建计划任务。提权同时是卸载零报错的保证：Windows Installer 在卸载期对安装盘根 `Config.Msi` 里的回滚文件（.rbf）以用户身份设置安全，而该目录 ACL 硬编码为仅 SYSTEM/管理员，非提权在 ACL 异常的磁盘（如 E:\）必报 1926（详见 FAQ）
 - **卸载只删自己的文件**：MSI 卸载仅移除本应用安装的文件；目录只会在"空"时才被删除，预先存在的文件（如与 DeepSeek Harness 共用目录）绝不会被误删（已实测验证）
-- **自启仅当前用户**：安装器写机器级意图标志（`HKLM\Software\dsh-launcher\AutoStartWanted`，随卸载自动清除），壳首次启动时以当前用户身份落地 `HKCU\...\Run` 一个注册表值；卸载或 `uninstall-autostart.cmd` 时自动删除（脚本同时清除意图标志，防止壳自愈复活）
+- **自启仅当前用户（拉壳方案）**：安装器写机器级意图标志（`HKLM\Software\dsh-launcher\AutoStartWanted`，随卸载自动清除）并写当前用户 `HKCU\...\Run` 指向 `DshWeb.exe`；壳首启若发现标志存在但 Run 值缺失/格式旧（如旧版 wscript+vbs），自动以当前用户身份补写/迁移。卸载或 `uninstall-autostart.cmd` 时删除 Run 值与意图标志（防止壳自愈复活）
 - **下载校验**：每次 Release 附带 `SHA256SUMS.txt`
 - **代码签名**：安装包当前未签名，SmartScreen 可能提示"未知发布者"（正常）；正式分发建议购买代码签名证书
 - **数据本地化**：WebView2 数据在 `%LOCALAPPDATA%\DshWeb`，日志在 `%USERPROFILE%\.dsh-web.log`，无遥测
@@ -89,27 +89,25 @@ CI 每次 push/PR 也会自动跑 `dotnet test`。
 
 ```
 dsh-launcher/
-├── README.md
-├── docs/DETAILS.md        # 本文件
+├── README.md / README.en.md   # 中英文用户文档
+├── CHANGELOG.md
 ├── LICENSE
-├── assets/                # README 截图
-├── installer/
-│   ├── product.wxs        # WiX v5 源文件：per-machine MSI（向导选择开机自启/快捷方式/目录）
-│   └── License.rtf        # 安装向导许可页
-├── scripts/               # 部署脚本（发布包内含全部脚本，与 DshWeb.exe 同目录）
-│   ├── start-dsh.vbs      # 无窗口静默启动服务（自启/壳拉起共用）
-│   ├── start-dsh.cmd      # 前台调试启动（带日志窗口）
-│   ├── dsh-web.cmd        # 一键入口：检查端口 → 拉起服务 → 打开壳
-│   ├── uninstall-autostart.cmd  # 删除自启项与桌面快捷方式
-│   ├── test.ps1           # 集成测试
-│   └── build-release.ps1  # 打包脚本（仅开发用，不随发布包分发）
+├── assets/                    # README 截图（浅色/深色）
+├── docs/DETAILS.md            # 本文件：实现细节
+├── installer/                 # MSI 安装器
+│   ├── product.wxs            # WiX v5 源：per-machine MSI（自启/快捷方式/目录选择向导）
+│   ├── FolderPicker/          # 目录选择器 exe（Type-38，新版文件夹对话框）
+│   ├── FolderPickerCa/        # DTF 托管 CA（net20，读回所选目录 + 自启注册表动作）
+│   └── PrereqCheck/           # 前置检查 exe（Type-38，检测 .NET 10 / Node.js）
+├── scripts/                   # 部署脚本（发布包内与 DshWeb.exe 同目录）
+│   ├── start-dsh.vbs          # 静默启动服务（壳拉起服务用）
+│   ├── start-dsh.cmd / dsh-web.cmd  # 调试启动 / 一键入口
+│   ├── uninstall-autostart.cmd      # 清理自启与快捷方式
+│   ├── test.ps1 / build-release.ps1 # 测试与打包（仅开发用）
 ├── src/
-│   └── DshShell/          # 轻量壳应用源码（C# WinForms + WebView2）
-│       ├── DshShell.csproj
-│       ├── Program.cs
-│       └── ShellLogic.cs
+│   └── DshShell/              # 壳应用源码（C# WinForms + WebView2）
 └── tests/
-    └── DshShell.Tests/    # 单元测试
+    └── DshShell.Tests/        # 单元测试
 ```
 
 ## 常见问题 / FAQ
@@ -151,6 +149,3 @@ MSI 向导中有"选择安装目录"一步（Segoe UI 现代风格，可直接�
 
 **Q：安装后"开始"屏幕/固定区里没有图标？**
 这是 Windows 平台限制：**MSI 快捷方式只会进入"所有应用"列表，无法自动固定到"开始"屏幕的磁贴/固定区**（自动固定只有 UWP 应用或用户手动操作才能做到，且没有官方 API）。安装后请到：开始菜单 →"所有应用"→ 找到 **dsh-launcher** → 右键 →"固定到'开始'屏幕"（或"固定到任务栏"）。安装包已自动创建开始菜单里的"DeepSeek Harness"与"卸载 dsh-launcher"快捷方式。
-
-**Q：升级后有两个 dsh-launcher（设置 → 应用里出现旧版本条目）？**
-0.1.5 及更早是 per-user 安装（注册在 HKCU），新版是 per-machine（HKLM），MSI 的跨作用域升级在标准机器上找不到旧版，因此可能并存。**新版壳启动时会自动检测并提示**："检测到旧版本的 dsh-launcher，是否现在卸载？"——点"是"即以管理员方式卸载旧版（提权卸载不会触发 1926），点"否"则不再打扰（之后可随时手动卸载）。当前运行的版本通过安装时写入的 `HKLM\Software\dsh-launcher\CurrentProductCode` 识别，永远不会被误卸载。

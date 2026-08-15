@@ -9,7 +9,9 @@
 
 > A lightweight Windows launcher for DeepSeek Harness: autostart at logon + a small WebView2 window instead of a full browser. Double-click to run — no command line needed.
 
-![dsh-launcher preview](assets/dsh-launcher-screenshot.png)
+| Light | Dark |
+|---|---|
+| ![Light mode](assets/screenshot-light.png) | ![Dark mode](assets/screenshot-dark.png) |
 
 ## Install
 
@@ -36,7 +38,7 @@
 
 ## Features
 
-- 🚀 **Autostart** — the dsh service starts silently at logon
+- 🚀 **Autostart** — opens the launcher window at logon (the shell then starts the dsh service and waits until ready)
 - 🪟 **Lightweight window** — WebView2 (~50–150MB, freed on close) instead of a full browser
 - 🔌 **Auto-launch** — starts the service if not running and waits until ready (first run downloads components, with progress)
 - 🔔 **Clear error prompts** — missing Node.js / download failures / port conflicts all show an explicit dialog
@@ -96,14 +98,6 @@ If you manage the service yourself, point `DSH_WEB_URL` at it instead (the shell
 $env:DSH_WEB_URL = "http://127.0.0.1:3090"
 ```
 
-**Symptom 6: blurry text/icons at 125%/150% display scaling**
-
-Fixed in v0.1.8 (Per-Monitor DPI) — **upgrade to the latest release**.
-
-**Symptom 7: two dsh-launcher entries in Settings → Apps after upgrading**
-
-The new version detects the old per-user install and offers a **one-click elevated cleanup** (with UpgradeCode verification — it never removes other software). Click Yes.
-
 **View the log:**
 
 ```powershell
@@ -113,9 +107,6 @@ Get-Content "$env:USERPROFILE\.dsh-web.log" -Tail 30
 The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback (with `DSH_WEB_PORT` set the file is `.dsh-web.<port>.log`). If the service log doesn't explain it, check the **shell startup trace** `DSH_HOME\dsh-launcher\shell.log` (default `~/.dsh\dsh-launcher\shell.log`) — it records every decision point (single instance, port probe, service start, readiness, window shown); attach it when reporting an issue.
 
 ## FAQ
-
-**Q: Do I need to run `npx @deepseek-ai/dsh web` manually first?**
-No. Since v0.1.2 the launcher falls back to `npx -y @deepseek-ai/dsh` automatically — no global install needed.
 
 **Q: MSI vs ZIP?**
 Same contents. MSI adds a standard install/uninstall flow (recommended); ZIP is portable.
