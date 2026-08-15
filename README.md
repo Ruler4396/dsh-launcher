@@ -5,6 +5,7 @@
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
+[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
 
 > DeepSeek Harness 的 Windows 轻量启动器：开机自启 + 独立小窗口，**双击即用，不用敲命令**。
 

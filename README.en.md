@@ -5,6 +5,7 @@
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
+[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
 
 > A lightweight Windows launcher for DeepSeek Harness: autostart at logon + a small WebView2 window instead of a full browser. Double-click to run — no command line needed.
 
