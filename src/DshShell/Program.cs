@@ -1130,7 +1130,6 @@ internal static class Program
         private readonly Action _onExit;
         private readonly float _s; // DPI 缩放（96 为 1）
         private readonly Font _exitFont;
-        private readonly bool _exitFontFaux; // true=伪粗体双画（等线/雅黑无中间字重），false=思源 Medium 原生字重
         private System.Windows.Forms.Timer? _fadeTimer; // 淡入动画，完成后 Dispose（B3）
         private bool _hoverExit;
         private byte _alpha = 255;
@@ -1145,31 +1144,31 @@ internal static class Program
             StartPosition = FormStartPosition.Manual;
             Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
             BackColor = Color.White;
-            _exitFont = CreateExitFont(out _exitFontFaux);
+            _exitFont = CreateExitFont();
         }
 
-        /// <summary>菜单字体回退链：Noto Sans SC Medium（思源黑体 500，原生"加粗一点点"）
-        /// → DengXian（等线，Win10/11 自带）→ Microsoft YaHei UI → 系统默认。
+        /// <summary>菜单字体回退链：Noto Sans SC（思源黑体）→ DengXian（等线，Win10/11 自带）
+        /// → Microsoft YaHei UI → 系统默认，统一 Regular（400）单画——v0.2.3 再降一档：
+        /// 前版 Medium(500)/伪粗体双画实测仍偏粗，与图标描边（1.8px）视觉不再平衡。
         /// 其他电脑缺字体时静默降级，不会回退成默认丑字体，也不会抛异常。
         /// 思源/等线为 TrueType 各字重独立 family，按 family 名检测存在性。</summary>
-        private Font CreateExitFont(out bool needsFaux)
+        private Font CreateExitFont()
         {
             try
             {
                 var families = FontFamily.Families;
-                // 1) 思源黑体 Medium：真字重 500，粗细正好（无需伪粗体）
-                var noto = Array.Find(families, f => string.Equals(f.Name, "Noto Sans SC Medium", StringComparison.OrdinalIgnoreCase));
-                if (noto is not null) { needsFaux = false; return new Font(noto, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
-                // 2) 等线：Win10/11 自带，商务现代
+                // 1) 思源黑体：商务现代，Regular 字重清爽
+                var noto = Array.Find(families, f => string.Equals(f.Name, "Noto Sans SC", StringComparison.OrdinalIgnoreCase));
+                if (noto is not null) return new Font(noto, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
+                // 2) 等线：Win10/11 自带
                 var deng = Array.Find(families, f => string.Equals(f.Name, "DengXian", StringComparison.OrdinalIgnoreCase));
-                if (deng is not null) { needsFaux = true; return new Font(deng, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
+                if (deng is not null) return new Font(deng, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
                 // 3) 微软雅黑：最通用兜底
                 var yahei = Array.Find(families, f => string.Equals(f.Name, "Microsoft YaHei UI", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(f.Name, "Microsoft YaHei", StringComparison.OrdinalIgnoreCase));
-                if (yahei is not null) { needsFaux = true; return new Font(yahei, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
+                if (yahei is not null) return new Font(yahei, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
             }
             catch { /* 字体枚举失败走默认 */ }
-            needsFaux = true;
             return new Font(FontFamily.GenericSansSerif, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
         }
 
@@ -1187,6 +1186,9 @@ internal static class Program
         {
             base.OnShown(e);
             Render();
+            // 抢占激活：菜单窗收到焦点后，用户点击其他任意窗口/桌面时才会触发
+            // OnDeactivate → 关闭（与系统右键菜单"点外即消"行为一致）。
+            Activate();
             // 淡入动画 Timer：字段持有防 GC，完成后 Dispose（每次弹菜单一个，不泄漏，B3）。
             _fadeTimer = new System.Windows.Forms.Timer { Interval = 12 };
             var start = DateTime.UtcNow;
@@ -1203,6 +1205,16 @@ internal static class Program
                 }
             };
             _fadeTimer.Start();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            // 关闭时清理：淡入中途关闭的 Timer + 菜单字体（GDI 句柄）
+            _fadeTimer?.Stop();
+            _fadeTimer?.Dispose();
+            _fadeTimer = null;
+            _exitFont.Dispose();
+            base.OnFormClosed(e);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e) { }
@@ -1269,16 +1281,10 @@ internal static class Program
             DrawPowerIcon(g, x + iconSize / 2f, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
         
             int tx = x + iconSize + gap;
-            // 加粗：思源 Medium 用原生字重（500）；等线/雅黑无中间字重，伪粗体双画
-            // （Regular 字形 x+1 偏移、同色无重影），粗细介于 Regular/Bold 之间。
             var r1 = new Rectangle(tx, item.Y, m1.Width + (int)(4 * s), item.Height);
             TextRenderer.DrawText(g, "退", _exitFont, r1, TextBlack, TextFormatFlags.VerticalCenter);
-            if (_exitFontFaux)
-                TextRenderer.DrawText(g, "退", _exitFont, new Rectangle(r1.X + 1, r1.Y, r1.Width, r1.Height), TextBlack, TextFormatFlags.VerticalCenter);
             var r2 = new Rectangle(tx + m1.Width + letterSpacing, item.Y, m2.Width + (int)(4 * s), item.Height);
             TextRenderer.DrawText(g, "出", _exitFont, r2, TextBlack, TextFormatFlags.VerticalCenter);
-            if (_exitFontFaux)
-                TextRenderer.DrawText(g, "出", _exitFont, new Rectangle(r2.X + 1, r2.Y, r2.Width, r2.Height), TextBlack, TextFormatFlags.VerticalCenter);
         }
 
         /// <summary>电源图标，复刻「电源.svg」（#D81E06，顶部开口圆环 + 圆头竖线）。
@@ -1347,6 +1353,8 @@ internal static class Program
             base.OnMouseClick(e);
         }
         protected override void OnDeactivate(EventArgs e) { base.OnDeactivate(e); Close(); }
+        // 失效关闭能生效的前提：OnShown 里 Activate() 抢占激活（菜单窗从未被激活过
+        // 则永远不会收到 Deactivate——0.2.3 前"点外不消失"的根因）。
         protected override bool ProcessDialogKey(Keys keyData)
         {
             if (keyData == Keys.Escape) { Close(); return true; }
@@ -2086,6 +2094,13 @@ internal static class Program
 
         private const int WM_GETMINMAXINFO = 0x0024;
         private const int WM_NCHITTEST = 0x0084;
+        // Aero Snap（拖到屏幕边缘的半屏/最大化、Win+方向键）依赖 WS_CAPTION|WS_THICKFRAME
+        // 样式位；FormBorderStyle.None 会把它们剥掉（0.1.10 自绘标题栏后贴边失效的根因）。
+        // 方案：样式位加回来，再用 WM_NCCALCSIZE 吃掉原生框架预留区，观感仍是全自绘无边框
+        //（Chromium / Windows Terminal 同款做法）。
+        private const int WM_NCCALCSIZE = 0x0083;
+        private const int WS_CAPTION = 0x00C00000;
+        private const int WS_THICKFRAME = 0x00040000;
         private const int HTCLIENT = 0x0001;
         private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
@@ -2104,10 +2119,34 @@ internal static class Program
             public POINT ptMaxTrackSize;
         }
 
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                // 加回 WS_CAPTION|WS_THICKFRAME：恢复 Aero Snap / Win+方向键 / 系统窗口动画与
+                // 任务栏正常交互（FormBorderStyle.None 默认全部剥掉）。原生标题栏/边框区域
+                // 由 WM_NCCALCSIZE 移除，自绘标题栏与 1px 边框视觉不变。
+                var cp = base.CreateParams;
+                cp.Style |= WS_CAPTION | WS_THICKFRAME;
+                return cp;
+            }
+        }
+
         protected override void WndProc(ref Message m)
         {
             switch (m.Msg)
             {
+                case WM_NCCALCSIZE:
+                    // wParam=TRUE：把客户区设为整个窗口矩形（吃掉系统标题栏/边框预留，
+                    // 自绘标题栏照常占据客户区顶部）。不加此处理，窗口顶部会被原生
+                    // 标题栏顶下来、四周出现原生边框。wParam=FALSE（初次计算）走默认。
+                    if (m.WParam != IntPtr.Zero)
+                    {
+                        m.Result = IntPtr.Zero;
+                        return;
+                    }
+                    base.WndProc(ref m);
+                    return;
                 case WM_GETMINMAXINFO:
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);

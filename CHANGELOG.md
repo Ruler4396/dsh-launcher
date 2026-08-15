@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.3] - 2026-08-15
+
+### 修复
+
+- **窗口贴边（Aero Snap）失效（0.1.10 自绘标题栏引入的回归）**：拖到屏幕边缘半屏/拖顶最大化/Win+方向键全部恢复。根因是 `FormBorderStyle.None` 剥掉了 `WS_CAPTION|WS_THICKFRAME` 样式位；改为加回样式位 + `WM_NCCALCSIZE` 吃掉原生框架预留（Chromium / Windows Terminal 同款方案），自绘标题栏与 1px 边框观感不变，附带恢复 Win11 原生圆角/阴影/最小化动画与 Alt+Space 系统菜单。
+- **托盘右键菜单点击其他位置不消失**：菜单窗从未被激活过则永远收不到失活消息（根因），弹出时显式 `Activate()` 抢占激活，点击任意其他窗口/桌面即关闭；Esc 关闭保持；关闭时顺手释放淡入 Timer 与菜单字体。
+
+### 调整
+
+- **托盘菜单"退出"字重再降一档**：Medium(500)/伪粗体双画 → Regular(400) 单画（Noto Sans SC → DengXian → Microsoft YaHei 回退链不变），与 1.8px 图标描边视觉平衡。
+
 ## [0.2.2] - 2026-08-15
 
 ### 修复
