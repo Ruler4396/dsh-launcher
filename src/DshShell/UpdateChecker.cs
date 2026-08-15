@@ -44,6 +44,33 @@ public static class UpdateChecker
         }
     }
 
+    /// <summary>GitHub 最新 Release 信息：版本号 + 是否安全/重要更新
+    /// （约定：Release body 含 "SECURITY" 或 tag 含 "-sec" 标记为安全更新）。</summary>
+    public sealed record LauncherRelease(string Version, bool IsSecurity);
+
+    /// <summary>拉取本项目 GitHub 最新 Release 并判断是否安全更新；失败返回 null。</summary>
+    public static async Task<LauncherRelease?> FetchLatestLauncherReleaseAsync(HttpClient http)
+    {
+        try
+        {
+            using var resp = await http.GetAsync($"https://api.github.com/repos/{LauncherRepo}/releases/latest");
+            if (!resp.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("tag_name", out var tag)) return null;
+            var version = tag.GetString()?.TrimStart('v');
+            if (string.IsNullOrEmpty(version)) return null;
+            var body = root.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+            var isSecurity = body.Contains("SECURITY", StringComparison.OrdinalIgnoreCase)
+                || version.Contains("-sec", StringComparison.OrdinalIgnoreCase);
+            return new LauncherRelease(version, isSecurity);
+        }
+        catch
+        {
+            return null; // 网络失败静默
+        }
+    }
+
     /// <summary>拉取 dsh（@deepseek-ai/dsh）npm 最新版本；失败返回 null。</summary>
     public static async Task<string?> FetchLatestDshVersionAsync(HttpClient http)
     {
