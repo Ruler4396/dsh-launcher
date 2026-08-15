@@ -132,7 +132,7 @@
          InstallExecuteSequence 也放最前（无 UI 的静默/命令行安装同样检查）。
          两个序列都只对"全新安装"（NOT Installed）执行——升级/修复/卸载不拦截。 -->
     <InstallUISequence>
-      <Custom Action="CheckPrereq" Sequence="1" />
+      <Custom Action="CheckPrereq" Sequence="1" Condition="NOT Installed" />
     </InstallUISequence>
     <InstallExecuteSequence>
       <Custom Action="CheckPrereq" Sequence="1" Condition="NOT Installed" />
@@ -400,3 +400,4 @@
     </UI>
   </Fragment>
 </Wix>
+

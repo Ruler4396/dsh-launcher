@@ -7,7 +7,7 @@
 ### 修复
 
 - **MSI 安装失败（0.2.1 撤回原因，严重）**：0.2.1 加入的 .NET Runtime 检测（RegistrySearch + LaunchCondition）因 **WiX 5.0.2 的 AppSearch/Signature 表缺陷**（AppSearch 表引用 `Signature` 表但该表条目缺失）导致检测属性恒为空 → 条件恒假 → **任何机器（即使已装 .NET 10）安装都报"需要 .NET Desktop Runtime 10"并中止（1603）**。0.2.2 移除该方案
-- **安装前置检查改为独立检测程序**：新增 `PrereqCheck.exe`（Type-38 外部 exe，与文件夹选择器同模式）在向导启动时（InstallUISequence 最前）检测 **.NET Desktop Runtime 10**（shared 目录 10.x 存在性）与 **Node.js 18+**（PATH 可执行 + 注册表兜底）；任一缺失 → **弹窗列出缺失项并提供"去下载"按钮**（打开 .NET 官方下载页 / nodejs.org），缺失或取消即中止安装（`Return="check"`）；升级/修复/卸载不拦截（`NOT Installed` 条件）
+- **安装前置检查改为独立检测程序**：新增 `PrereqCheck.exe`（Type-38 外部 exe，与文件夹选择器同模式）在向导启动时（InstallUISequence 最前）检测 **.NET Desktop Runtime 10**（shared 目录 10.x 存在性）与 **Node.js 18+**（PATH 可执行 + 注册表兜底）；任一缺失 → **弹窗列出缺失项并提供"去下载"按钮**（打开 .NET 官方下载页 / nodejs.org），缺失或取消即中止安装（`Return="check"`）；**弹窗 60 秒无响应自动按"否"中止**（兜底静默/无人值守场景不挂起）；升级/修复/卸载不拦截（`NOT Installed` 条件）
 - **安装前置检测不影响正常安装**：环境满足时静默通过（实测安装/升级/卸载全部 exit=0）
 
 ### 变更
