@@ -534,20 +534,6 @@ internal static class Program
     {
         if (_trayIcon is null) return;
         _pendingForm = form;
-        // 隐藏演示开关（DSH_DEMO_UPDATE=1）：启动后依次弹两条演示气泡（安全更新 → dsh 新版），
-        // 用于验收气泡 UI；正式发版前移除。
-        if (Environment.GetEnvironmentVariable("DSH_DEMO_UPDATE") == "1")
-        {
-            form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, "2.0.1", "2.0.0"));
-            var demo = new System.Windows.Forms.Timer { Interval = 4000 };
-            demo.Tick += (_, _) =>
-            {
-                demo.Stop();
-                form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, "0.2.0", "0.1.0-rc.6"));
-            };
-            demo.Start();
-            return;
-        }
         _ = Task.Run(async () =>
         {
             try
