@@ -1074,20 +1074,20 @@ internal static class Program
     /// </summary>
     private sealed class TrayMenuForm : Form
     {
-        private const int MenuWidth = 140;
-        private const int MenuHeight = 46;
-        private const int CornerRadius = 12;
+        private const int MenuWidth = 152;
+        private const int MenuHeight = 54;
+        private const int CornerRadius = 16;
         private const int Shadow = 8; // 阴影边距（内容区外）
 
-        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);       // #B91C1C
-        private static readonly Color TextDangerHover = Color.FromArgb(220, 38, 38);  // #DC2626
+        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);       // #B91C1C logo 红
+        private static readonly Color TextBlack = Color.FromArgb(31, 41, 55);          // #1F2937 退出文字黑
         private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);    // #E5E7EB
         private static readonly Color HoverFill = Color.FromArgb(18, 220, 38, 38);
 
         private readonly Action _onExit;
         private bool _hoverExit;
         private byte _alpha = 255;
-        private readonly Font _exitFont = new("Microsoft YaHei UI", 10F, FontStyle.Bold); // 微软雅黑：中文更饱满清晰
+        private readonly Font _exitFont = new("Microsoft YaHei UI", 11F, FontStyle.Bold); // 微软雅黑 11pt≈16px 黑色
 
         public TrayMenuForm(Action onExit)
         {
@@ -1166,7 +1166,7 @@ internal static class Program
                 {
                     // 浅红遮罩内缩 4px，四周留空隙（不盖满圆角背景）
                     using var hb = new SolidBrush(HoverFill);
-                    using var hoverPath = RoundedRect(new Rectangle(content.X + 4, content.Y + 4, content.Width - 8, content.Height - 8), 8);
+                    using var hoverPath = RoundedRect(new Rectangle(content.X + 4, content.Y + 4, content.Width - 8, content.Height - 8), CornerRadius - 4);
                     g.FillPath(hb, hoverPath);
                 }
                 using var pen = new Pen(BorderColor);
@@ -1174,9 +1174,8 @@ internal static class Program
             }
 
             // 内容：电源图标 + "退出"（整体水平居中、垂直居中、字距 4px、加粗）
-            var color = _hoverExit ? TextDangerHover : TextDanger;
-            const int iconSize = 18;
-            const int gap = 16;
+            const int iconSize = 24;
+            const int gap = 18;
             const int letterSpacing = 4;
             var m1 = TextRenderer.MeasureText(g, "退", _exitFont);
             var m2 = TextRenderer.MeasureText(g, "出", _exitFont);
@@ -1185,25 +1184,34 @@ internal static class Program
             int x = content.X + (content.Width - totalW) / 2 - 4; // 整体略左移，让图标与文字更舒展
             int cy = content.Y + content.Height / 2;
 
-            DrawPowerIcon(g, x + iconSize / 2, cy, 7.5f, color);
+            // logo 红色实心电源符号；"退出"黑色文字
+            using (var iconBrush = new SolidBrush(TextDanger))
+            using (var iconPath = SolidPowerIcon(x + iconSize / 2, cy, 10f, 3f))
+                g.FillPath(iconBrush, iconPath);
 
             int tx = x + iconSize + gap;
             TextRenderer.DrawText(g, "退", _exitFont,
-                new Rectangle(tx, content.Y, m1.Width, content.Height), color, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx, content.Y, m1.Width, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(g, "出", _exitFont,
-                new Rectangle(tx + m1.Width + letterSpacing, content.Y, m2.Width, content.Height), color, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx + m1.Width + letterSpacing, content.Y, m2.Width, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
         }
 
-        /// <summary>电源符号（矢量描边，顶部缺口）：45° 起顺时针 270° 弧 + 顶部竖线。</summary>
-        private static void DrawPowerIcon(Graphics g, int cx, int cy, float r, Color color)
+        /// <summary>实心电源符号（对齐用户 SVG：顶部圆头竖线 + 顶部缺口的实心圆环），中心 (cx,cy)。</summary>
+        private static System.Drawing.Drawing2D.GraphicsPath SolidPowerIcon(int cx, int cy, float r, float thickness)
         {
-            using var pen = new Pen(color, 2.2f)
-            {
-                StartCap = System.Drawing.Drawing2D.LineCap.Round,
-                EndCap = System.Drawing.Drawing2D.LineCap.Round,
-            };
-            g.DrawArc(pen, new RectangleF(cx - r, cy - r, r * 2, r * 2), 45f, 270f);
-            g.DrawLine(pen, cx, cy - r - 2.5f, cx, cy - r + 2.5f);
+            var p = new System.Drawing.Drawing2D.GraphicsPath();
+            // 圆环：外弧（45° 起顺时针 270°，顶部缺口）+ 内弧反向闭合
+            p.AddArc(new RectangleF(cx - r, cy - r, r * 2, r * 2), 45f, 270f);
+            p.AddArc(new RectangleF(cx - r + thickness, cy - r + thickness, (r - thickness) * 2, (r - thickness) * 2), 315f, -270f);
+            p.CloseFigure();
+            // 顶部竖线（圆头矩形）：从外圆顶上方延伸到圆环上部
+            float topY = cy - r - 1.5f;
+            float botY = cy - r * 0.30f;
+            float w = thickness;
+            p.AddArc(new RectangleF(cx - w / 2f, topY, w, w), 90f, 180f);
+            p.AddRectangle(new RectangleF(cx - w / 2f, topY + w / 2f, w, Math.Max(0f, botY - topY - w / 2f)));
+            p.AddArc(new RectangleF(cx - w / 2f, botY - w / 2f, w, w), 270f, 180f);
+            return p;
         }
 
         private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
