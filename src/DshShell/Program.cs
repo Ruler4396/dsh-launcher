@@ -512,52 +512,89 @@ internal static class Program
             }
         };
 
-        ScheduleDshUpdateCheck(form); // 启动后异步检测 dsh 新版本（托盘气泡提示，网络失败静默）
+        ScheduleUpdateCheck(form); // 启动后异步检查更新（dsh 新版 / launcher 安全更新才推送）
 
         Application.Run(form);
         Trace("main loop exited");
     }
 
+    private enum PendingUpdate { None, Dsh, LauncherSecurity }
+    private static PendingUpdate _pendingUpdate;
+    private static string _pendingLatest = "", _pendingLocal = "";
+    private static Form? _pendingForm;
+
     /// <summary>
-    /// 启动后异步检查 dsh（@deepseek-ai/dsh）是否有新版本（仅启动时一次，避免频繁
-    /// 请求 npm registry）：有新版则托盘气泡提示，点击气泡确认后执行 npm 全局更新。
-    /// 网络失败/无新版静默，不打扰用户；GitHub/npm 匿名限流也因此影响可控。
+    /// 启动后异步检查更新（仅启动时一次，避免频繁请求 GitHub/npm）：
+    /// - dsh-launcher 自身：**普通更新不推送**，只有标记为**安全/重要更新**（Release
+    ///   body 含 "SECURITY" 或 tag 含 "-sec"）才托盘气泡提示（点击打开 Releases 下载页）
+    /// - dsh（@deepseek-ai/dsh）：有新版即提示（点击一键 npm 更新）
+    /// 网络失败/无更新静默，不打扰用户；匿名限流影响可控。
     /// </summary>
-    private static void ScheduleDshUpdateCheck(Form form)
+    private static void ScheduleUpdateCheck(Form form)
     {
         if (_trayIcon is null) return;
+        _pendingForm = form;
         _ = Task.Run(async () =>
         {
             try
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
+
+                // 1) launcher 安全更新优先（安全修复比功能更新重要）
+                var lr = await UpdateChecker.FetchLatestLauncherReleaseAsync(http);
+                if (lr is not null && lr.IsSecurity
+                    && UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                {
+                    form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
+                        UpdateChecker.CurrentLauncherVersion ?? "?"));
+                    return;
+                }
+
+                // 2) dsh 新版
                 var latest = await UpdateChecker.FetchLatestDshVersionAsync(http);
                 var local = UpdateChecker.ResolveLocalDshVersion();
-                if (string.IsNullOrWhiteSpace(latest) || string.IsNullOrWhiteSpace(local)) return;
-                if (UpdateChecker.CompareVersions(latest, local) <= 0) return;
-
-                var latestCopy = latest;
-                var localCopy = local;
-                form.BeginInvoke(() =>
+                if (!string.IsNullOrWhiteSpace(latest) && !string.IsNullOrWhiteSpace(local)
+                    && UpdateChecker.CompareVersions(latest, local) > 0)
                 {
-                    try
-                    {
-                        _trayIcon.BalloonTipClicked -= _onDshUpdateClicked;
-                        _onDshUpdateClicked = (_, _) => PromptDshUpdate(form, latestCopy, localCopy);
-                        _trayIcon.BalloonTipClicked += _onDshUpdateClicked;
-                        _trayIcon.ShowBalloonTip(10000, "dsh 有新版本",
-                            $"检测到 dsh {latestCopy}（当前 {localCopy}）。点击此处更新。",
-                            ToolTipIcon.Info);
-                    }
-                    catch { /* 气泡提示失败忽略 */ }
-                });
+                    form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, latest, local));
+                }
             }
             catch { /* 检测失败静默 */ }
         });
     }
 
-    private static EventHandler? _onDshUpdateClicked;
+    private static void NotifyPending(PendingUpdate type, string latest, string local)
+    {
+        try
+        {
+            _pendingUpdate = type;
+            _pendingLatest = latest;
+            _pendingLocal = local;
+            _trayIcon.BalloonTipClicked -= OnPendingBalloonClicked;
+            _trayIcon.BalloonTipClicked += OnPendingBalloonClicked;
+            var (title, body) = type == PendingUpdate.LauncherSecurity
+                ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。")
+                : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处更新。");
+            _trayIcon.ShowBalloonTip(10000, title, body, ToolTipIcon.Info);
+        }
+        catch { /* 气泡提示失败忽略 */ }
+    }
+
+    private static void OnPendingBalloonClicked(object? s, EventArgs e)
+    {
+        var f = _pendingForm;
+        if (_pendingUpdate == PendingUpdate.Dsh && f is not null)
+        {
+            PromptDshUpdate(f, _pendingLatest, _pendingLocal);
+        }
+        else if (_pendingUpdate == PendingUpdate.LauncherSecurity)
+        {
+            try { Process.Start(new ProcessStartInfo("https://github.com/Ruler4396/dsh-launcher/releases/latest") { UseShellExecute = true }); }
+            catch { /* 打开失败忽略 */ }
+        }
+        _pendingUpdate = PendingUpdate.None;
+    }
 
     /// <summary>点击气泡后：确认 → npm 全局更新 dsh → 完成提示（异步执行 npm，不卡壳）。</summary>
     private static void PromptDshUpdate(Form form, string latest, string local)
@@ -982,12 +1019,11 @@ internal static class Program
                 Text = "dsh-launcher",
                 Visible = true,
             };
-            tray.ContextMenuStrip = CreateTrayMenu(form);
-            // 左键单击：窗口置顶显示（开着就提到最上层，不会误关窗口）；
-            // 右键：只弹菜单（NotifyIcon 默认行为，不动窗口）。
+            // 左键单击：窗口置顶显示；右键：弹出自绘托盘菜单（浅色毛玻璃层，仅"退出"）。
             tray.MouseClick += (_, e) =>
             {
                 if (e.Button == MouseButtons.Left) ShowMainWindow(form);
+                else if (e.Button == MouseButtons.Right) ShowTrayMenu();
             };
             _trayIcon = tray;
         }
@@ -997,111 +1033,137 @@ internal static class Program
         }
     }
 
-    /// <summary>托盘菜单字体：微软雅黑（中英文系统均自带），9pt 观感干净。</summary>
-    private static readonly Font TrayMenuFont = new("Microsoft YaHei UI", 9F);
-
-    /// <summary>用 Segoe MDL2 Assets 字形渲染 16x16 菜单图标。
-    /// 用 GDI 的 TextRenderer（VerticalCenter 精确垂直居中）在 32px 大图渲染后
-    /// 高质量缩放到 16px——GDI+ DrawString 的 MDL2 字形基线会整体偏下 5-6px
-    /// （截图像素分析实测），导致图标与文字不在同一水平线。</summary>
-    private static Image? RenderMdl2Icon(char glyph, Color color)
+        /// <summary>在鼠标位置弹出托盘菜单（自绘浅色毛玻璃层）。</summary>
+    private static void ShowTrayMenu()
     {
         try
         {
-            using var font = new Font("Segoe MDL2 Assets", 30F, FontStyle.Regular, GraphicsUnit.Pixel);
-            using var large = new Bitmap(32, 32);
-            using (var g = Graphics.FromImage(large))
-            {
-                g.Clear(Color.Transparent);
-                TextRenderer.DrawText(g, glyph.ToString(), font, new Rectangle(0, 0, 32, 32), color,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            }
-            var bmp = new Bitmap(16, 16);
-            using (var g = Graphics.FromImage(bmp))
-            {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.DrawImage(large, new Rectangle(0, 0, 16, 16));
-            }
-            return bmp;
-        }
-        catch
-        {
-            return null; // 字体缺失等：回退无图标
-        }
-    }
-
-    /// <summary>
-    /// 创建托盘右键菜单（Win11 现代风格）：白色圆角浮层、浅灰圆角 hover、深色文字、
-    /// 微软雅黑，图标（眼睛=显示/隐藏、电源=退出），内容自适应宽度。
-    /// 不用系统默认样式（跟随深色主题变黑、hover 用系统主题色、直角边框）。
-    /// </summary>
-    private static ContextMenuStrip CreateTrayMenu(Form form)
-    {
-        var menu = new ContextMenuStrip
-        {
-            Renderer = new LightMenuRenderer(),
-            Font = TrayMenuFont,
-            ShowImageMargin = true,   // 有图标，保留左侧图标区
-            ShowCheckMargin = false,
-            Padding = new Padding(4),
-        };
-        // 圆角浮层：弹出时给窗口设置圆角 Region（现代菜单观感；系统阴影被 Region 裁剪，接受）
-        menu.Opened += (s, _) =>
-        {
-            try
-            {
-                using var path = LightMenuRenderer.RoundedRect(
-                    new Rectangle(Point.Empty, menu.Size), LightMenuRenderer.CornerRadius);
-                menu.Region = new Region(path);
-            }
-            catch { /* 圆角失败回退直角 */ }
-        };
-        menu.Items.Add(new ToolStripMenuItem("显示 / 隐藏窗口",
-            RenderMdl2Icon('\uE8F1', Color.FromArgb(60, 60, 60)), // MDL2: RedEye
-            (_, _) => ToggleMainWindow(form))
-        {
-            Padding = new Padding(9, 7, 12, 7),
-        });
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("退出",
-            RenderMdl2Icon('\uE7E8', Color.FromArgb(60, 60, 60)), // MDL2: PowerButton
-            (_, _) =>
+            var menu = new TrayMenuForm(() =>
             {
                 _trayExitRequested = true;
                 // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
                 if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
                     StopShellService();
                 Application.Exit();
-            })
-        {
-            Padding = new Padding(9, 7, 12, 7),
-        });
-        return menu;
+            });
+            var pt = Cursor.Position;
+            // 菜单位于鼠标左上方（右键弹菜单位置习惯），略微内偏移避免越过屏幕边缘
+            menu.Location = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
+            menu.Show();
+        }
+        catch { /* 菜单显示失败不影响壳 */ }
     }
 
     /// <summary>
-    /// 托盘菜单浅色渲染器（Win11 现代风格）：白色圆角底 + 1px 浅灰圆角边框 +
-    /// 浅灰圆角 hover + 深色文字，不随系统深浅色主题变化。
+    /// 托盘右键菜单：自绘浅色弹出层（Acrylic 毛玻璃 + 大圆角 + 内容垂直居中 + 仅"退出"）。
+    /// 浅色观感：白 tint 毛玻璃、#E5E7EB 边框、#6B7280 应用名、#DC2626 红色退出、hover 淡红。
+    /// 图标用 GraphicsPath 矢量绘制（电源符号），文字/图标分图层且不缩放，DPI 下清晰。
     /// </summary>
-    private sealed class LightMenuRenderer : ToolStripProfessionalRenderer
+    private sealed class TrayMenuForm : Form
     {
-        private static readonly Color MenuBack = Color.White;
-        private static readonly Color MenuBorder = Color.FromArgb(226, 226, 226);
-        private static readonly Color MenuHover = Color.FromArgb(243, 246, 249);
-        private static readonly Color MenuText = Color.FromArgb(30, 30, 30);
-        private static readonly Color MenuSeparator = Color.FromArgb(233, 233, 233);
+        private const int MenuWidth = 168;
+        private const int PadX = 6;
+        private const int HeaderHeight = 34;
+        private const int ExitHeight = 38;
+        private const int CornerRadius = 12;
 
-        public const int CornerRadius = 8;
+        private static readonly Color TextSecondary = Color.FromArgb(107, 114, 128);   // #6B7280
+        private static readonly Color TextDanger = Color.FromArgb(220, 38, 38);         // #DC2626
+        private static readonly Color TextDangerHover = Color.FromArgb(248, 113, 113); // #F87171
+        private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);      // #E5E7EB
+        private static readonly Color SepColor = Color.FromArgb(243, 244, 246);         // #F3F4F6
+        private static readonly Color DotColor = Color.FromArgb(239, 68, 68);           // #EF4444
 
-        private const int ItemRadius = 6;
+        private readonly Action _onExit;
+        private bool _hoverExit;
+        private Rectangle _exitRect;
 
-        public LightMenuRenderer()
+        public TrayMenuForm(Action onExit)
         {
-            RoundedEdges = false; // 圆角由自绘 + Region 控制
+            _onExit = onExit;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            TopMost = true;
+            StartPosition = FormStartPosition.Manual;
+            DoubleBuffered = true;
+            AutoScaleMode = AutoScaleMode.None;
+            BackColor = Color.White;
+            Size = new Size(MenuWidth, PadX * 2 + HeaderHeight + 1 + ExitHeight);
+            Font = new Font("Segoe UI", 9F); // 字体栈：Segoe UI / Microsoft YaHei / PingFang SC（系统回退）
         }
 
-        /// <summary>圆角矩形路径（托盘菜单浮层/hover 共用）。</summary>
-        public static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            try { ApplyAcrylic(); } catch { }
+            try { using var path = RoundedRect(new Rectangle(Point.Empty, Size), CornerRadius); Region = new Region(path); } catch { }
+            // 弹出动画：opacity 0→1，120ms
+            Opacity = 0;
+            var t = new System.Windows.Forms.Timer { Interval = 12 };
+            var start = DateTime.UtcNow;
+            t.Tick += (_, _) =>
+            {
+                var p = Math.Min(1.0, (DateTime.UtcNow - start).TotalMilliseconds / 120.0);
+                Opacity = p;
+                if (p >= 1.0) t.Stop();
+            };
+            t.Start();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+
+            // 1px 边框（浅灰，Region 圆角内）
+            using (var pen = new Pen(BorderColor))
+                g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+
+            // 标题行：红点 + 应用名，垂直居中
+            int headerY = PadX;
+            using (var dot = new SolidBrush(DotColor))
+                g.FillEllipse(dot, PadX + 9, headerY + (HeaderHeight - 6) / 2, 6, 6);
+            using var titleFont = new Font("Segoe UI", 9F, FontStyle.Regular);
+            TextRenderer.DrawText(g, "dsh-launcher", titleFont,
+                new Rectangle(PadX + 23, headerY, Width - PadX * 2 - 30, HeaderHeight),
+                TextSecondary, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+
+            // 分隔线
+            int sepY = headerY + HeaderHeight;
+            using (var sepPen = new Pen(SepColor))
+                g.DrawLine(sepPen, PadX + 9, sepY, Width - PadX - 9, sepY);
+
+            // 退出项：hover 淡红圆角背景 + 矢量电源图标 + 红色文字（垂直居中）
+            _exitRect = new Rectangle(PadX, sepY + 1, Width - PadX * 2, ExitHeight);
+            if (_hoverExit)
+            {
+                using var hb = new SolidBrush(Color.FromArgb(20, 220, 38, 38));
+                using var path = RoundedRect(_exitRect, 8);
+                g.FillPath(hb, path);
+            }
+            int iconCX = _exitRect.X + 9 + 8;
+            int iconCY = _exitRect.Y + _exitRect.Height / 2;
+            using (var pen = new Pen(_hoverExit ? TextDangerHover : TextDanger, 2f))
+            using (var path = PowerIcon(iconCX, iconCY, 9))
+                g.DrawPath(pen, path);
+            using var exitFont = new Font("Segoe UI", 9F, FontStyle.Regular);
+            TextRenderer.DrawText(g, "退出", exitFont,
+                new Rectangle(_exitRect.X + 26, _exitRect.Y, _exitRect.Width - 34, _exitRect.Height),
+                _hoverExit ? TextDangerHover : TextDanger,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        }
+
+        /// <summary>电源符号矢量路径（弧 + 竖线，中心 (cx,cy) 半径 r）。</summary>
+        private static System.Drawing.Drawing2D.GraphicsPath PowerIcon(int cx, int cy, float r)
+        {
+            var p = new System.Drawing.Drawing2D.GraphicsPath();
+            p.AddArc(new RectangleF(cx - r, cy - r, r * 2, r * 2), 135f, 270f);
+            p.AddLine(cx, cy - r - 2f, cx, cy);
+            return p;
+        }
+
+        private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
         {
             var d = radius * 2;
             var path = new System.Drawing.Drawing2D.GraphicsPath();
@@ -1113,55 +1175,65 @@ internal static class Program
             return path;
         }
 
-        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        private void ApplyAcrylic()
         {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            using var path = RoundedRect(e.AffectedBounds, CornerRadius);
-            using var b = new SolidBrush(MenuBack);
-            e.Graphics.FillPath(b, path);
+            // Win10 1803+：ACCENT_ENABLE_ACRYLICBLURBEHIND，白色半透明 tint（浅色毛玻璃）
+            var accent = new AccentPolicy { AccentState = 4, AccentFlags = 2, GradientColor = unchecked((int)0x80FFFFFF) };
+            var data = new WindowCompositionAttributeData { Attribute = 19, SizeOfData = Marshal.SizeOf(typeof(AccentPolicy)) };
+            data.Data = Marshal.AllocHGlobal(data.SizeOfData);
+            try
+            {
+                Marshal.StructureToPtr(accent, data.Data, false);
+                SetWindowCompositionAttribute(Handle, ref data);
+            }
+            finally { Marshal.FreeHGlobal(data.Data); }
         }
 
-        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
-        {
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var r = e.AffectedBounds;
-            r.Width -= 1;
-            r.Height -= 1;
-            using var path = RoundedRect(r, CornerRadius);
-            using var p = new Pen(MenuBorder);
-            e.Graphics.DrawPath(p, path);
-        }
+        private bool HitExit(Point p) => _exitRect.Contains(p);
 
-        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        protected override void OnMouseMove(MouseEventArgs e)
         {
-            if (!e.Item.Selected || e.Item is ToolStripSeparator) return;
-            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var r = new Rectangle(Point.Empty, e.Item.Size);
-            r.Inflate(-2, -2); // hover 高亮略缩进，圆角浮层感
-            using var path = RoundedRect(r, ItemRadius);
-            using var b = new SolidBrush(MenuHover);
-            e.Graphics.FillPath(b, path);
+            var h = HitExit(e.Location);
+            if (h != _hoverExit) { _hoverExit = h; Invalidate(); }
+            base.OnMouseMove(e);
         }
-
-        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        protected override void OnMouseLeave(EventArgs e)
         {
-            // ToolStrip 默认文字渲染偏上（离屏渲染实测：文字中心比菜单项中心低约 7px，
-            // 而图标是居中的）——用 TextRenderer 强制垂直居中，绘制区拉满菜单项高度。
-            var textRect = new Rectangle(
-                e.TextRectangle.X, 0,
-                e.TextRectangle.Width, e.Item.Height);
-            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, textRect, MenuText,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            if (_hoverExit) { _hoverExit = false; Invalidate(); }
+            base.OnMouseLeave(e);
         }
-
-        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        protected override void OnMouseClick(MouseEventArgs e)
         {
-            var y = e.Item.Height / 2;
-            using var p = new Pen(MenuSeparator);
-            e.Graphics.DrawLine(p, 16, y, e.Item.Width - 16, y);
+            if (e.Button == MouseButtons.Left && HitExit(e.Location)) { Close(); _onExit(); return; }
+            base.OnMouseClick(e);
+        }
+        protected override void OnDeactivate(EventArgs e) { base.OnDeactivate(e); Close(); }
+        protected override bool ProcessDialogKey(Keys keyData)
+        {
+            if (keyData == Keys.Escape) { Close(); return true; }
+            return base.ProcessDialogKey(keyData);
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AccentPolicy
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowCompositionAttributeData
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
     /// <summary>
     /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
     /// 隐藏着就显示出来；**最小化时先还原**（Activate 对最小化窗口无效，
@@ -1189,20 +1261,6 @@ internal static class Program
             _webviewRecoveryNeeded = false;
             _hiddenSince = DateTime.MinValue;
             TryReloadWebViewDeferred(form);
-        }
-    }
-
-    /// <summary>切换主窗口显示/隐藏（托盘菜单项用）。</summary>
-    private static void ToggleMainWindow(Form form)
-    {
-        if (form.Visible)
-        {
-            form.Hide();
-            _hiddenSince = DateTime.Now;
-        }
-        else
-        {
-            ShowMainWindow(form);
         }
     }
 
@@ -1373,7 +1431,7 @@ internal static class Program
 
         // 渲染进程/GPU 进程崩溃或无响应：记下崩溃痕迹，窗口可见时自动重载避免白屏
         //（每 10 秒最多一次，防止崩溃死循环）。窗口隐藏期间的崩溃不立即 Reload——
-        // 隐藏状态下 Reload 无效，等托盘恢复窗口时由 ToggleMainWindow 兜底重载。
+        // 隐藏状态下 Reload 无效，等托盘恢复窗口时由 ShowMainWindow 兜底重载。
         web.CoreWebView2.ProcessFailed += (_, e) =>
         {
             Trace($"webview process failed: {e.ProcessFailedKind}");
