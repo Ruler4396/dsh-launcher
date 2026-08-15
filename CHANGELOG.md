@@ -6,15 +6,18 @@
 
 ### 变更
 
+- **MSI 安装目录"浏览"按钮 → 现代化文件夹选择器**（Windows 10/11 新版文件夹对话框，IFileDialog）：Type-38 外部 exe（客户端进程弹窗，`FolderPicker.exe`）→ 所选路径写 `C:\ProgramData\dsh-launcher\picked.txt` → **DTF Type-1 托管 CA**（`WixToolset.Dtf.CustomAction` 5.0.2，net20 匹配 SfxCA 的 CLR 2.0，在 msiexec CA server 执行但其 `MsiSetProperty` 回写会同步回客户端 UI——实测日志 `PROPERTY CHANGE: Modifying INSTALLFOLDER`）→ 写安装目录属性。**输入框回显用双对话框交替**（ChooseFolderDlg ↔ ChooseFolderDlg2：MSI 控件静态绑定、属性变化不重绘，NewDialog 重建对话框后 PathEdit 重读属性）。关键坑：① SfxCA 选 stub 看 `$(Platform)`（默认 x86 → x64 msiexec 加载 193，需 `<Platform>x64</Platform>`）；② SfxCA 绑 CLR 2.0（net48 程序集 BadImageFormat，需 net20 目标）；③ `SetTargetPath` 参数必须展开成**属性名**（`[WIXUI_INSTALLDIR]`），字面路径报 MSI 2872；④ 取消按钮必须 `EndDialog Exit`（`Return` 在主 UI 序列会被当作正常结束 → 取消也被安装）
+- **托盘/任务栏/资源管理器图标 → DeepSeek 蓝鲸鱼**（#4D6BFE，深浅背景都清晰）：托盘、任务栏按钮（WM_SETICON）、exe 图标（app.ico，文件夹/程序功能/快捷方式/固定）统一蓝色；**自绘标题栏鲸鱼保持主题**（深色→白、浅色→深）
 - **自动检测并更新 dsh**：启动后异步检查 `@deepseek-ai/dsh`（npm registry）最新版，有新版本时**托盘气泡**提示，点击气泡确认后一键执行 `npm install -g @deepseek-ai/dsh@latest`（完成提示，需重启壳生效）；网络失败/无新版静默不打扰
-- **预留版本更新检测接口**（`UpdateChecker`）：拉取本项目 GitHub Releases 最新版本 + dsh（npm registry）最新版本，与本地版本比较（语义化版本比较，含单测）；上线前注意 GitHub API 匿名限流、失败需静默
+- **版本更新检测接口**（`UpdateChecker`，已接入上述托盘气泡流程）：GitHub Releases（dsh-launcher 自身）+ npm registry（dsh）版本比较，语义化版本比较含单测；GitHub API 匿名限流、失败静默
 
 ### 修复
 
 - **跟随窗口模式下关闭窗口服务不停（issue）**：`StopShellService` 的强制杀（`taskkill /f`）原先在后台 Task 里延迟 1.5s 执行——温和 `taskkill` 对无窗口的 node（wscript 隐藏启动）发 WM_CLOSE 无效，而壳退出后后台 Task 未及执行 `/f`，服务残留、端口仍监听。修复：温和终止 → **同步短等待（限时 &lt;1s）** → 未停则**在壳退出前同步强制 `/f`**，实测关窗即停、不卡关窗
+- **MSI 安装向导点"取消"/关窗口仍会完成安装**：自定义对话框的取消按钮误用 `EndDialog Return`——主 UI 序列（非模态）中 `Return` 被 MSI 当作"正常结束 UI（IDOK）"，安装继续执行；`Exit` 才是"用户取消退出安装"。所有自定义对话框（选项页、两份目录页）取消按钮改为 `EndDialog Exit`（欢迎页等 WiX 标准对话框本就是 Exit，故"上一步回欢迎页再取消"不装）
 - **MSI 安装页"开机自启"说明文字被裁切**：复选框高度只有一行但文案两行（"…内存占用相对较大，非必要不推荐开启"）导致上下文字被遮挡——复选框调高为两行高度并显式换行，下方控件同步下移
 - **服务停留模式每次打开被重置为跟随窗口**：根因是 profile 里安装的 dsh-launcher-lifetime 插件为**旧版**（`apply` 无条件把设置写回默认）——之前的同步因 PowerShell `Copy-Item 目录到已存在目录` 会**嵌套复制**（`lib\lib`）而从未真正覆盖旧文件；已清理嵌套目录并正确同步修复版（插件"文件已存在不覆盖用户选择"），hash 校验一致
-- **系统任务栏图标在浅色主题下变黑**：Windows 11 任务栏按钮读取的是窗口小图标（ICON_SMALL），此前它跟随主题（浅色 → 深色鲸鱼），浅色主题下任务栏 logo 就变成黑色——现在小图标**固定白色鲸鱼**（与托盘一致），任何主题下任务栏 logo 始终白色；同时把 exe 资源图标（`app.ico`：任务栏固定 pin 图标、开始菜单、快捷方式、卸载项）也换成白色鲸鱼
+- **系统任务栏图标在浅色主题下变黑**：Windows 11 任务栏按钮读取的是窗口小图标（ICON_SMALL），此前它跟随主题（浅色 → 深色鲸鱼），浅色主题下任务栏 logo 就变成黑色——修复：小图标固定鲸鱼（后随图标统一改为 DeepSeek 蓝，任何主题、深浅背景都清晰）；exe 资源图标（app.ico）同步更新
 
 ## [0.1.10] - 2026-08-14
 

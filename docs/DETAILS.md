@@ -18,7 +18,7 @@
 | --- | --- |
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
-| 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 90s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
+| 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
 | 开机自启 | MSI：`HKCU\...\Run` 一项；便携版：启动文件夹放置 `start-dsh.vbs`，均由 `wscript` 无窗口执行 |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |

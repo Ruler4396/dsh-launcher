@@ -48,7 +48,7 @@ Assert-True ($uninstall -match 'dsh-autostart\.vbs') "uninstall 同时清理旧�
 Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方式"
 
 $vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
-Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port 3080') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
+Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port " & port') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
 Assert-True ($vbs -match '\.dsh-web\.log') "start-dsh.vbs 日志重定向到 .dsh-web.log"
 Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
 
