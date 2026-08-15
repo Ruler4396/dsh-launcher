@@ -6,6 +6,8 @@
 
 ### 变更
 
+- **托盘右键菜单自绘重构**：浅色 **Acrylic 毛玻璃**弹出层（Win10/11 的 `SetWindowCompositionAttribute`）+ **12px 大圆角** + 内容垂直居中；**仅保留"退出"**一项（删除"显示 / 隐藏窗口"，窗口显示用左键单击托盘置顶）；红色电源图标（GraphicsPath 矢量绘制）+ 红色"退出"文字（#DC2626），hover 淡红圆角、弹出淡入动画（120ms）、点击外部/Esc 关闭
+- **更新推送策略**：dsh-launcher 自身**普通更新不推送**，只有标记为**安全/重要更新**（GitHub Release body 含 `SECURITY` 或 tag 含 `-sec`）才托盘气泡提示（点击打开 Releases 下载页）；dsh（npm）有新版本仍提示（一键更新）
 - **MSI 安装目录"浏览"按钮 → 现代化文件夹选择器**（Windows 10/11 新版文件夹对话框，IFileDialog）：Type-38 外部 exe（客户端进程弹窗，`FolderPicker.exe`）→ 所选路径写 `C:\ProgramData\dsh-launcher\picked.txt` → **DTF Type-1 托管 CA**（`WixToolset.Dtf.CustomAction` 5.0.2，net20 匹配 SfxCA 的 CLR 2.0，在 msiexec CA server 执行但其 `MsiSetProperty` 回写会同步回客户端 UI——实测日志 `PROPERTY CHANGE: Modifying INSTALLFOLDER`）→ 写安装目录属性。**输入框回显用双对话框交替**（ChooseFolderDlg ↔ ChooseFolderDlg2：MSI 控件静态绑定、属性变化不重绘，NewDialog 重建对话框后 PathEdit 重读属性）。关键坑：① SfxCA 选 stub 看 `$(Platform)`（默认 x86 → x64 msiexec 加载 193，需 `<Platform>x64</Platform>`）；② SfxCA 绑 CLR 2.0（net48 程序集 BadImageFormat，需 net20 目标）；③ `SetTargetPath` 参数必须展开成**属性名**（`[WIXUI_INSTALLDIR]`），字面路径报 MSI 2872；④ 取消按钮必须 `EndDialog Exit`（`Return` 在主 UI 序列会被当作正常结束 → 取消也被安装）
 - **托盘/任务栏/资源管理器图标 → DeepSeek 蓝鲸鱼**（#4D6BFE，深浅背景都清晰）：托盘、任务栏按钮（WM_SETICON）、exe 图标（app.ico，文件夹/程序功能/快捷方式/固定）统一蓝色；**自绘标题栏鲸鱼保持主题**（深色→白、浅色→深）
 - **自动检测并更新 dsh**：启动后异步检查 `@deepseek-ai/dsh`（npm registry）最新版，有新版本时**托盘气泡**提示，点击气泡确认后一键执行 `npm install -g @deepseek-ai/dsh@latest`（完成提示，需重启壳生效）；网络失败/无新版静默不打扰
