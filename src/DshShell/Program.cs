@@ -1061,8 +1061,16 @@ internal static class Program
                 Application.Exit();
             });
             var pt = Cursor.Position;
-            // 菜单位于鼠标左上方（右键弹菜单位置习惯），略微内偏移避免越过屏幕边缘
-            menu.Location = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
+            // 默认：菜单位于鼠标左上方（右键弹菜单位置习惯），略微内偏移；
+            // 屏幕边界自适应：左/上越界则翻转到鼠标另一侧，仍越界则贴工作区边缘
+            // （左侧竖排任务栏时托盘图标贴近左边缘，不加保护菜单会被推到屏幕外）。
+            var wa = Screen.FromPoint(pt).WorkingArea;
+            var loc = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
+            if (loc.X < wa.Left) loc.X = pt.X + 12;
+            if (loc.Y < wa.Top) loc.Y = pt.Y + 6;
+            if (loc.X + menu.Width > wa.Right) loc.X = wa.Right - menu.Width;
+            if (loc.Y + menu.Height > wa.Bottom) loc.Y = wa.Bottom - menu.Height;
+            menu.Location = loc;
             menu.Show();
         }
         catch { /* 菜单显示失败不影响壳 */ }
@@ -1145,7 +1153,10 @@ internal static class Program
                 }
                 UpdateLayered(bmp, _alpha);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Trace("tray render failed: " + ex);
+            }
         }
 
         private void Draw(Graphics g)
@@ -1288,13 +1299,13 @@ internal static class Program
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern IntPtr GetDC(IntPtr hWnd);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
         private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
         private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
         private static extern bool DeleteObject(IntPtr hObject);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
         private static extern bool DeleteDC(IntPtr hdc);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
