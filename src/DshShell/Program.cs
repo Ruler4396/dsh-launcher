@@ -512,8 +512,92 @@ internal static class Program
             }
         };
 
+        ScheduleDshUpdateCheck(form); // 启动后异步检测 dsh 新版本（托盘气泡提示，网络失败静默）
+
         Application.Run(form);
         Trace("main loop exited");
+    }
+
+    /// <summary>
+    /// 启动后异步检查 dsh（@deepseek-ai/dsh）是否有新版本（仅启动时一次，避免频繁
+    /// 请求 npm registry）：有新版则托盘气泡提示，点击气泡确认后执行 npm 全局更新。
+    /// 网络失败/无新版静默，不打扰用户；GitHub/npm 匿名限流也因此影响可控。
+    /// </summary>
+    private static void ScheduleDshUpdateCheck(Form form)
+    {
+        if (_trayIcon is null) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
+                var latest = await UpdateChecker.FetchLatestDshVersionAsync(http);
+                var local = UpdateChecker.ResolveLocalDshVersion();
+                if (string.IsNullOrWhiteSpace(latest) || string.IsNullOrWhiteSpace(local)) return;
+                if (UpdateChecker.CompareVersions(latest, local) <= 0) return;
+
+                var latestCopy = latest;
+                var localCopy = local;
+                form.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        _trayIcon.BalloonTipClicked -= _onDshUpdateClicked;
+                        _onDshUpdateClicked = (_, _) => PromptDshUpdate(form, latestCopy, localCopy);
+                        _trayIcon.BalloonTipClicked += _onDshUpdateClicked;
+                        _trayIcon.ShowBalloonTip(10000, "dsh 有新版本",
+                            $"检测到 dsh {latestCopy}（当前 {localCopy}）。点击此处更新。",
+                            ToolTipIcon.Info);
+                    }
+                    catch { /* 气泡提示失败忽略 */ }
+                });
+            }
+            catch { /* 检测失败静默 */ }
+        });
+    }
+
+    private static EventHandler? _onDshUpdateClicked;
+
+    /// <summary>点击气泡后：确认 → npm 全局更新 dsh → 完成提示（异步执行 npm，不卡壳）。</summary>
+    private static void PromptDshUpdate(Form form, string latest, string local)
+    {
+        var r = MessageBox.Show(
+            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否现在更新？\n" +
+            "（执行 npm install -g @deepseek-ai/dsh@latest；更新完成后重启 dsh-launcher 生效）",
+            "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (r != DialogResult.Yes) return;
+        try
+        {
+            var psi = new ProcessStartInfo("npm.cmd", "install -g @deepseek-ai/dsh@latest")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            var p = Process.Start(psi);
+            if (p is null) return;
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    p.WaitForExit(120000);
+                    var ok = p.ExitCode == 0;
+                    var msg = ok
+                        ? $"dsh 已更新到 {latest}。\n\n请重启 dsh-launcher 使新版本生效。"
+                        : "dsh 更新失败（npm 报错）。\n\n可稍后在命令行手动执行：\nnpm install -g @deepseek-ai/dsh@latest";
+                    form.BeginInvoke(() => MessageBox.Show(msg, "dsh 更新",
+                        MessageBoxButtons.OK, ok ? MessageBoxIcon.Information : MessageBoxIcon.Warning));
+                }
+                catch { /* 完成提示失败忽略 */ }
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"无法启动 npm 更新：{ex.Message}", "dsh 更新",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     /// <summary>
@@ -820,10 +904,11 @@ internal static class Program
     }
 
     /// <summary>
-    /// 停止"壳本次会话拉起的"dsh 服务（**异步**，不阻塞关窗/托盘退出——同步等待
-    /// taskkill 是关窗卡顿的来源之一）：优先用内存缓存的 PID（就绪时已记录，
-    /// 关窗路径不再跑 netstat），立即启动温和终止，后台检查未停再强制。
-    /// taskkill 是独立进程，壳退出不影响其执行。停止成功后清除 PID 记录。
+    /// 停止"壳本次会话拉起的"dsh 服务：优先用内存缓存的 PID（就绪时已记录，
+    /// 关窗路径不再跑 netstat）。温和 taskkill 对无窗口进程（wscript 隐藏启动的
+    /// node）发 WM_CLOSE 无效，必须**在壳退出前同步确认**：短等待未停则立即
+    /// 强制 /f——此前强制杀在后台 Task 里延迟 1.5s，壳退出后 Task 未及执行，
+    /// 导致"跟随窗口"关窗后服务残留（issue #…）。全程限时（&lt;1s），不卡关窗。
     /// </summary>
     private static void StopShellService()
     {
@@ -838,26 +923,17 @@ internal static class Program
             }
             Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
             { UseShellExecute = false, CreateNoWindow = true });
-            Task.Run(() =>
+
+            // 同步等待温和终止（node 通常几百毫秒内退出）；未停则在退出前强制
+            var deadline = DateTime.UtcNow.AddMilliseconds(900);
+            while (DateTime.UtcNow < deadline && PortOpen(Target.Port))
+                Thread.Sleep(100);
+            if (PortOpen(Target.Port))
             {
-                try
-                {
-                    Thread.Sleep(1500);
-                    if (!PortOpen(Target.Port))
-                    {
-                        ClearServicePidFile(); // 已停止
-                        return;
-                    }
-                    Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
-                    { UseShellExecute = false, CreateNoWindow = true });
-                    Thread.Sleep(1500);
-                    if (!PortOpen(Target.Port)) ClearServicePidFile();
-                }
-                catch
-                {
-                    // 停服务失败不影响退出
-                }
-            });
+                Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
+                { UseShellExecute = false, CreateNoWindow = true });
+            }
+            ClearServicePidFile();
         }
         catch
         {

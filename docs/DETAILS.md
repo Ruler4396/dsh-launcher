@@ -123,9 +123,9 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 **Q：dsh-notification 等插件的桌面通知从来没弹过？**
 最常见原因是**壳没给 WebView2 授权通知权限**（插件客户端 `api.permission !== 'granted'` 时直接不弹）。0.1.2 起的构建已在 `PermissionRequested` 中自动授权，请确认用的是新版本。验证步骤：
 1. 设置 → 通知 → 确认"启用通知"打开、权限状态显示"已授权"，点"发送测试通知"应立刻弹出
-2. 插件默认"仅在后台时通知"：窗口最小化/被遮挡时才弹；想看着窗口也弹就关掉该开关
+2. 插件默认"仅在后台时通知"：**窗口最小化/隐藏时才弹**（插件的后台判定用的是 `document.hidden`，只有"最小化/隐藏"才会变 true；**最大化但被其他窗口遮挡、不在前台时页面仍视为可见，默认不会弹**）。想最大化下也弹，把"仅在后台时通知"关掉即可（或在其他窗口操作前先把 dsh 窗口最小化）
 3. 页面必须保持打开（可后台）；连接中断期间完成的回合不会补发
-4. 仍不生效：F12 → Console 过滤 `dsh-notification`，看 `show=false` 时括号里的原因（`permission=` / `backgroundOnly=` / `hidden=`）
+4. 仍不生效：F12 → Console 过滤 `dsh-notification`，看 `show=false` 时括号里的原因（`permission=` / `backgroundOnly=` / `hidden=` / `focus=`）
 
 **Q：MSI 和 ZIP 有什么区别？**
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
