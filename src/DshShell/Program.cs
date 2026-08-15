@@ -534,6 +534,20 @@ internal static class Program
     {
         if (_trayIcon is null) return;
         _pendingForm = form;
+        // 隐藏演示开关（DSH_DEMO_UPDATE=1）：启动后依次弹两条演示气泡（安全更新 → dsh 新版），
+        // 用于验收气泡 UI；正式发版前移除。
+        if (Environment.GetEnvironmentVariable("DSH_DEMO_UPDATE") == "1")
+        {
+            form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, "2.0.1", "2.0.0"));
+            var demo = new System.Windows.Forms.Timer { Interval = 4000 };
+            demo.Tick += (_, _) =>
+            {
+                demo.Stop();
+                form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, "0.2.0", "0.1.0-rc.6"));
+            };
+            demo.Start();
+            return;
+        }
         _ = Task.Run(async () =>
         {
             try
@@ -574,9 +588,9 @@ internal static class Program
             _trayIcon.BalloonTipClicked -= OnPendingBalloonClicked;
             _trayIcon.BalloonTipClicked += OnPendingBalloonClicked;
             var (title, body) = type == PendingUpdate.LauncherSecurity
-                ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。")
+                ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
                 : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处更新。");
-            _trayIcon.ShowBalloonTip(10000, title, body, ToolTipIcon.Info);
+            _trayIcon.ShowBalloonTip(25000, title, body, ToolTipIcon.Info); // 驻留 25s，安全更新要让人看到
         }
         catch { /* 气泡提示失败忽略 */ }
     }
@@ -1073,7 +1087,7 @@ internal static class Program
         private readonly Action _onExit;
         private bool _hoverExit;
         private byte _alpha = 255;
-        private readonly Font _exitFont = new("Segoe UI", 10.5F, FontStyle.Bold);
+        private readonly Font _exitFont = new("Microsoft YaHei UI", 10F, FontStyle.Bold); // 微软雅黑：中文更饱满清晰
 
         public TrayMenuForm(Action onExit)
         {
@@ -1123,7 +1137,7 @@ internal static class Program
                 using (var g = Graphics.FromImage(bmp))
                 {
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; // 透明背景用灰度抗锯齿，避免 ClearType 深色边缘
                     Draw(g);
                 }
                 UpdateLayered(bmp, _alpha);
@@ -1150,8 +1164,10 @@ internal static class Program
                 g.FillPath(bg, bgPath);
                 if (_hoverExit)
                 {
+                    // 浅红遮罩内缩 4px，四周留空隙（不盖满圆角背景）
                     using var hb = new SolidBrush(HoverFill);
-                    g.FillPath(hb, bgPath);
+                    using var hoverPath = RoundedRect(new Rectangle(content.X + 4, content.Y + 4, content.Width - 8, content.Height - 8), 8);
+                    g.FillPath(hb, hoverPath);
                 }
                 using var pen = new Pen(BorderColor);
                 g.DrawPath(pen, bgPath);
@@ -1160,13 +1176,13 @@ internal static class Program
             // 内容：电源图标 + "退出"（整体水平居中、垂直居中、字距 4px、加粗）
             var color = _hoverExit ? TextDangerHover : TextDanger;
             const int iconSize = 18;
-            const int gap = 10;
+            const int gap = 16;
             const int letterSpacing = 4;
             var m1 = TextRenderer.MeasureText(g, "退", _exitFont);
             var m2 = TextRenderer.MeasureText(g, "出", _exitFont);
             int textW = m1.Width + letterSpacing + m2.Width;
             int totalW = iconSize + gap + textW;
-            int x = content.X + (content.Width - totalW) / 2;
+            int x = content.X + (content.Width - totalW) / 2 - 4; // 整体略左移，让图标与文字更舒展
             int cy = content.Y + content.Height / 2;
 
             DrawPowerIcon(g, x + iconSize / 2, cy, 7.5f, color);
