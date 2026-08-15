@@ -38,14 +38,6 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of dsh-launcher is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- 前置条件（B6）：.NET Desktop Runtime 10 缺失时安装前明确提示，而不是装完双击无反应。
-         检测 WOW6432Node 视图下 sharedfx\Microsoft.WindowsDesktop.App 的 10.* 版本值名
-         （实测 64 位 MSI 的 RegistrySearch 在 HKLM\SOFTWARE 默认 32 位视图命中 WOW6432Node；
-         SDK 自带 runtime 与独立安装器都会写这个键）。 -->
-    <Property Id="DOTNET10_DESKTOP_X64" Secure="yes">
-      <RegistrySearch Id="DotNet10DesktopX64" Root="HKLM" Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App" Name="10.*" Type="raw" />
-    </Property>
-
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="dsh-launcher">
         <Directory Id="RuntimesDir" Name="runtimes">
@@ -104,14 +96,6 @@
       <ui:WixUI Id="WixUI_SimpleCheckbox" />
     </UI>
 
-    <!-- .NET Desktop Runtime 10 前置检查（B6）：缺失时安装向导明确提示而不是装完双击无反应。
-         检测 WOW6432Node 视图下 sharedfx\Microsoft.WindowsDesktop.App 的 10.* 版本值名
-         （SDK 自带 runtime 与独立安装器都会写这个键）。Installed 保证升级/卸载不被拦截。
-         注：WiX v4 中 launch condition 用 Launch 元素（Condition 属性），
-         不再用 v3 的 Condition inner text（已废弃）。 -->
-    <Launch Message="dsh-launcher 需要 .NET Desktop Runtime 10（当前未检测到）。请先安装：winget install Microsoft.DotNet.DesktopRuntime.10 后重新运行安装向导。"
-            Condition="Installed OR DOTNET10_DESKTOP_X64" />
-
     <!-- 现代化文件夹选择器（两个自定义动作配合，均已实测验证）：
          ① LaunchModernFolderPicker：Type-38 外部 exe（FolderPicker.exe），**客户端进程**
             内弹 Windows 11/10 新版文件夹对话框（IFileDialog），把所选路径写到
@@ -127,15 +111,33 @@
             SourceFile="$(sys.SOURCEFILEDIR)FolderPicker\out\FolderPicker.exe" />
     <Binary Id="FolderPickerCa"
             SourceFile="$(sys.SOURCEFILEDIR)FolderPickerCa\bin\x64\Release\net20\FolderPickerCa.CA.dll" />
+    <Binary Id="PrereqCheckExe"
+            SourceFile="$(sys.SOURCEFILEDIR)PrereqCheck\out\PrereqCheck.exe" />
     <CustomAction Id="LaunchModernFolderPicker" BinaryRef="FolderPickerExe"
                   ExeCommand="&quot;[INSTALLFOLDER]&quot;"
                   Execute="immediate" Return="check" />
     <CustomAction Id="ReadPickedFolder" BinaryRef="FolderPickerCa"
                   DllEntry="LaunchFolderPicker"
                   Execute="immediate" Return="check" />
+    <!-- 安装前置检查（用户要求）：.NET Desktop Runtime 10 与 Node.js 缺失时弹窗引导下载。
+         Type-38 外部 exe（客户端进程内 MessageBox）。调度见下方 Fragment 的 InstallUISequence
+         （Sequence=1 最早执行，客户端 UI 上下文、弹窗可见）；Return="check" 使缺失/取消
+         （退出码 2/3）中止安装。 -->
+    <CustomAction Id="CheckPrereq" BinaryRef="PrereqCheckExe"
+                  ExeCommand="" Execute="immediate" Return="check" />
   </Package>
 
   <Fragment>
+    <!-- 前置检查调度：InstallUISequence 最早（Sequence=1，向导启动即弹）；
+         InstallExecuteSequence 也放最前（无 UI 的静默/命令行安装同样检查）。
+         两个序列都只对"全新安装"（NOT Installed）执行——升级/修复/卸载不拦截。 -->
+    <InstallUISequence>
+      <Custom Action="CheckPrereq" Sequence="1" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="CheckPrereq" Sequence="1" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+
     <!-- license page shown by the WixUI wizard (resolved relative to this file) -->
     <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />
 

@@ -66,6 +66,12 @@ dotnet publish (Join-Path $root "installer\FolderPicker") -c Release -r win-x64 
     --self-contained false -p:PublishSingleFile=true -o $pickerOut
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish FolderPicker failed" }
 
+Write-Host ">> publishing prereq checker..."
+$prereqOut = Join-Path $root "installer\PrereqCheck\out"
+dotnet publish (Join-Path $root "installer\PrereqCheck") -c Release -r win-x64 `
+    --self-contained false -p:PublishSingleFile=true -o $prereqOut
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish PrereqCheck failed" }
+
 Write-Host ">> building folder picker CA..."
 dotnet build (Join-Path $root "installer\FolderPickerCa") -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw "dotnet build FolderPickerCa failed" }
