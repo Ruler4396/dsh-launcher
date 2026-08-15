@@ -1083,15 +1083,19 @@ internal static class Program
     /// </summary>
     private sealed class TrayMenuForm : Form
     {
-        private const int MenuWidth = 152;
-        private const int MenuHeight = 54;
-        private const int CornerRadius = 16;
-        private const int Shadow = 8; // 阴影边距（逻辑）
+        // 紧凑版（单功能按钮）：约缩小 20%；图标加粗、文字去加粗，视觉平衡。
+        // 所有尺寸仍按 tray-preview.html 的比例体系等比缩减，DPI 缩放不变。
+        private const int MenuWidth = 116;  // 原 142 等比缩减
+        private const int MenuHeight = 40;  // 原 58
+        private const int CornerRadius = 12; // 原 16
+        private const int ItemInset = 5;     // .menu 的 padding:4 + 1px 边框 → .exit 条目内缩
+        private const int ItemRadius = 6;    // 原 8
+        private const int Shadow = 10;       // 阴影边距（逻辑，容纳 0 6px 16px 的扩散）
 
-        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);  // #B91C1C logo 红
+        private static readonly Color TextDanger = Color.FromArgb(216, 30, 6);    // #D81E06 电源.svg 的亮红
         private static readonly Color TextBlack = Color.FromArgb(31, 41, 55);     // #1F2937 退出文字黑
         private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);
-        private static readonly Color HoverFill = Color.FromArgb(18, 220, 38, 38);
+        private static readonly Color HoverFill = Color.FromArgb(20, 220, 38, 38); // .exit:hover rgba(220,38,38,.08)
 
         private readonly Action _onExit;
         private readonly float _s; // DPI 缩放（96 为 1）
@@ -1109,7 +1113,7 @@ internal static class Program
             StartPosition = FormStartPosition.Manual;
             Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
             BackColor = Color.White;
-            _exitFont = new Font("Microsoft YaHei UI", 11f * _s, FontStyle.Bold, GraphicsUnit.Point);
+            _exitFont = new Font("Microsoft YaHei UI", 10f * _s, FontStyle.Bold, GraphicsUnit.Point); // 10pt 微软雅黑加粗，商务质感
         }
 
         protected override CreateParams CreateParams
@@ -1165,15 +1169,15 @@ internal static class Program
             var content = new Rectangle((int)(Shadow * s), (int)(Shadow * s), (int)(MenuWidth * s), (int)(MenuHeight * s));
             int cr = (int)(CornerRadius * s);
 
-            // 轻阴影
-            for (int i = 4; i >= 1; i--)
-            {
-                using var sp = new SolidBrush(Color.FromArgb((int)(12 * i), 0, 0, 0));
-                using var shadowPath = RoundedRect(new Rectangle(content.X + (int)(i * s), content.Y + (int)((i + 1) * s), content.Width, content.Height), cr);
-                g.FillPath(sp, shadowPath);
-            }
-
-            // 圆角背景 + hover 内缩遮罩（内缩 4px，圆角减 4 保持同心曲率）
+            var item = new Rectangle(content.X + (int)(ItemInset * s), content.Y + (int)(ItemInset * s),
+                content.Width - (int)(ItemInset * 2 * s), content.Height - (int)(ItemInset * 2 * s));
+        
+            // 柔和两级阴影（box-shadow 两级等比缩减；GDI+ 无原生高斯模糊，
+            // 用多层扩张圆角矩形模拟衰减）
+            DrawShadowLayer(g, content, cr, 5, 8, s);
+            DrawShadowLayer(g, content, cr, 2, 3, s);
+        
+            // 白底 + 1px 边框（.menu: #fff + #E5E7EB）
             using (var bgPath = RoundedRect(content, cr))
             {
                 using var bg = new SolidBrush(Color.White);
@@ -1181,51 +1185,65 @@ internal static class Program
                 using var pen = new Pen(BorderColor);
                 g.DrawPath(pen, bgPath);
             }
+        
+            // hover：只铺 .exit 条目区域（内缩 5、圆角 8，与 CSS 一致）
             if (_hoverExit)
             {
-                int inset = (int)(4 * s);
                 using var hb = new SolidBrush(HoverFill);
-                using var hoverPath = RoundedRect(new Rectangle(content.X + inset, content.Y + inset, content.Width - inset * 2, content.Height - inset * 2), cr - (int)(4 * s));
+                using var hoverPath = RoundedRect(item, (int)(ItemRadius * s));
                 g.FillPath(hb, hoverPath);
             }
-
-            // 内容：红色实心电源图标 + 黑色"退出"（整体水平/垂直居中、字距）
-            int iconSize = (int)(24 * s);
-            int gap = (int)(18 * s);
-            int letterSpacing = (int)(4 * s);
+        
+            // 内容：红色电源图标 + 黑色“退出”（13px 常规、字距 2px，紧凑版式）
+            int iconSize = (int)(18 * s);
+            int gap = (int)(12 * s);
+            int letterSpacing = (int)(2 * s);
             var m1 = TextRenderer.MeasureText(g, "退", _exitFont);
             var m2 = TextRenderer.MeasureText(g, "出", _exitFont);
-            int pad = (int)(4 * s); // 文字区 buffer，防绘制超出
-            int textW = m1.Width + letterSpacing + m2.Width + pad * 2;
-            int totalW = iconSize + gap + textW;
-            int x = content.X + (content.Width - totalW) / 2;
-            int cy = content.Y + content.Height / 2;
-
-            using (var iconBrush = new SolidBrush(TextDanger))
-            using (var iconPath = SolidPowerIcon(x + iconSize / 2, cy, 10f * s, 3f * s))
-                g.FillPath(iconBrush, iconPath);
-
-            int tx = x + iconSize + gap + pad;
+            int totalW = iconSize + gap + m1.Width + letterSpacing + m2.Width;
+            int x = item.X + (item.Width - totalW) / 2;
+        
+            DrawPowerIcon(g, x + iconSize / 2f, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
+        
+            int tx = x + iconSize + gap;
             TextRenderer.DrawText(g, "退", _exitFont,
-                new Rectangle(tx, content.Y, m1.Width + pad, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx, item.Y, m1.Width + (int)(4 * s), item.Height), TextBlack, TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(g, "出", _exitFont,
-                new Rectangle(tx + m1.Width + letterSpacing, content.Y, m2.Width + pad, content.Height), TextBlack, TextFormatFlags.VerticalCenter);
+                new Rectangle(tx + m1.Width + letterSpacing, item.Y, m2.Width + (int)(4 * s), item.Height), TextBlack, TextFormatFlags.VerticalCenter);
         }
 
-        /// <summary>实心电源符号（对齐用户 SVG：顶部圆头竖线 + 顶部缺口实心圆环）。</summary>
-        private static System.Drawing.Drawing2D.GraphicsPath SolidPowerIcon(int cx, int cy, float r, float thickness)
+        /// <summary>电源图标，复刻「电源.svg」（#D81E06，顶部开口圆环 + 圆头竖线）。
+        /// 几何按 SVG viewBox(1024) 换算到 18px 图标框并加粗：环中线半径 5.2px、线宽 1.8px；
+        /// 开口 234°–305°（约 71°，居中正上方）；竖线从环顶上方伸到中心上方（r×1.22 → r×0.23）。
+        /// 用 Pen 描边而不是 FillPath 双圆弧拼环体——拼环的起弧角度/填充模式易错
+        /// （曾把开口画到正右方渲染成“C”），描边对任意 DPI/缩放都稳定。</summary>
+        private static void DrawPowerIcon(Graphics g, float cx, float cy, float r, float stroke)
         {
-            var p = new System.Drawing.Drawing2D.GraphicsPath();
-            p.AddArc(new RectangleF(cx - r, cy - r, r * 2, r * 2), 45f, 270f);
-            p.AddArc(new RectangleF(cx - r + thickness, cy - r + thickness, (r - thickness) * 2, (r - thickness) * 2), 315f, -270f);
-            p.CloseFigure();
-            float topY = cy - r - 1.5f;
-            float botY = cy - r * 0.30f;
-            float w = thickness;
-            p.AddArc(new RectangleF(cx - w / 2f, topY, w, w), 90f, 180f);
-            p.AddRectangle(new RectangleF(cx - w / 2f, topY + w / 2f, w, Math.Max(0f, botY - topY - w / 2f)));
-            p.AddArc(new RectangleF(cx - w / 2f, botY - w / 2f, w, w), 270f, 180f);
-            return p;
+            using var pen = new Pen(TextDanger, stroke)
+            {
+                StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                EndCap = System.Drawing.Drawing2D.LineCap.Round,
+            };
+            // 开口在正上方：从 305° 顺时针扫 289° 到 234°（GDI+ 角度 0°=3 点钟方向、
+            // 顺时针为正，270° 即正上方）
+            g.DrawArc(pen, cx - r, cy - r, r * 2, r * 2, 305f, 289f);
+            // 圆头竖线：上端超出环外顶 0.6px（r×1.22），下端到中心上方 1.3px（r×0.23）
+            g.DrawLine(pen, cx, cy - r * 1.22f, cx, cy - r * 0.23f);
+        }
+
+        /// <summary>多层扩张圆角矩形模拟柔和投影（dy 垂直偏移、spread 最大扩散，均为逻辑 px）。</summary>
+        private static void DrawShadowLayer(Graphics g, Rectangle content, int cr, int dy, int spread, float s)
+        {
+            const int steps = 6;
+            for (int i = steps; i >= 1; i--)
+            {
+                int e = (int)(spread * s * i / steps);
+                var r = Rectangle.Inflate(content, e, e);
+                r.Offset(0, (int)(dy * s));
+                using var b = new SolidBrush(Color.FromArgb(6, 0, 0, 0));
+                using var p = RoundedRect(r, cr + e);
+                g.FillPath(b, p);
+            }
         }
 
         private static System.Drawing.Drawing2D.GraphicsPath RoundedRect(Rectangle r, int radius)
@@ -1240,7 +1258,8 @@ internal static class Program
             return path;
         }
 
-        private bool HitExit(Point p) => new Rectangle((int)(Shadow * _s), (int)(Shadow * _s), (int)(MenuWidth * _s), (int)(MenuHeight * _s)).Contains(p);
+        private bool HitExit(Point p) => new Rectangle((int)((Shadow + ItemInset) * _s), (int)((Shadow + ItemInset) * _s),
+            (int)((MenuWidth - ItemInset * 2) * _s), (int)((MenuHeight - ItemInset * 2) * _s)).Contains(p);
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
