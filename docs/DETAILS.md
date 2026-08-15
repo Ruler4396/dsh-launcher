@@ -19,7 +19,7 @@
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
 | 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
-| 开机自启 | MSI：`HKCU\...\Run` 一项；便携版：启动文件夹放置 `start-dsh.vbs`，均由 `wscript` 无窗口执行 |
+| 开机自启 | MSI 勾选后由壳首次启动写入 `HKCU\...\Run`（安装器只落 HKLM 意图标志——per-machine 提权安装直接写 HKCU 不可靠）；便携版：启动文件夹放置 `start-dsh.vbs`，均由 `wscript` 无窗口执行 |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |
 | 弹窗 | 外部 http(s) → 系统默认浏览器；同源弹窗新建轻量窗口（保留会话）；blob:/data: 保持默认 |
@@ -31,7 +31,7 @@
 
 - **系统级安装（per-machine，提权）**：安装/卸载会弹一次 UAC 管理员确认，默认安装到 `%ProgramFiles%\dsh-launcher`，向导中可自定义安装目录；不注册服务、不创建计划任务。提权同时是卸载零报错的保证：Windows Installer 在卸载期对安装盘根 `Config.Msi` 里的回滚文件（.rbf）以用户身份设置安全，而该目录 ACL 硬编码为仅 SYSTEM/管理员，非提权在 ACL 异常的磁盘（如 E:\）必报 1926（详见 FAQ）
 - **卸载只删自己的文件**：MSI 卸载仅移除本应用安装的文件；目录只会在"空"时才被删除，预先存在的文件（如与 DeepSeek Harness 共用目录）绝不会被误删（已实测验证）
-- **自启仅当前用户**：`HKCU\...\Run` 一个注册表值，卸载/`uninstall-autostart.cmd` 时自动删除
+- **自启仅当前用户**：安装器写机器级意图标志（`HKLM\Software\dsh-launcher\AutoStartWanted`，随卸载自动清除），壳首次启动时以当前用户身份落地 `HKCU\...\Run` 一个注册表值；卸载或 `uninstall-autostart.cmd` 时自动删除（脚本同时清除意图标志，防止壳自愈复活）
 - **下载校验**：每次 Release 附带 `SHA256SUMS.txt`
 - **代码签名**：安装包当前未签名，SmartScreen 可能提示"未知发布者"（正常）；正式分发建议购买代码签名证书
 - **数据本地化**：WebView2 数据在 `%LOCALAPPDATA%\DshWeb`，日志在 `%USERPROFILE%\.dsh-web.log`，无遥测

@@ -2,6 +2,16 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.4] - 2026-08-15
+
+### 修复
+
+- **安装向导"开机自启"默认显示为勾选但实际未启用（UI 与实际不一致）**：MSI CheckBox 控件对存在非空值的属性（哪怕 "0"）会渲染为勾选状态，而 feature 条件层面 "0" 又不装组件——用户看到勾上了、实际没自启，很可能也是上游 issue 报告者的遗误诱因。修复：默认不勾的 checkbox 属性必须无默认值（属性不存在 → 不勾；勾选 → "1"；取消 → 空串），与 WiX 官方 FAQ 推荐做法一致。
+- **per-machine 安装勾选"开机自启"后 HKCU Run 值不落地、登录不自启（issue 实测报告）**：根因是 per-machine 提权安装中 `RegistryValue Root="HKCU"` 写入不可靠（值落到提升上下文或被静默丢弃，所有用户 hive 均扫不到）。改为两级落地：MSI 勾选时只写机器级意图标志（`HKLM\Software\dsh-launcher\AutoStartWanted=1`，可靠、随卸载自动清除），壳首次启动时读到标志后以当前用户身份补写 `HKCU\...\Run`——用户上下文写 HKCU 100% 可靠，交互/静默安装均覆盖；也顺带解决"其他管理员过 UAC 时自启写错 hive"的问题（谁先用壳，自启就落在谁头上）。升级/自定义目录导致路径变化时自动更新。
+- **卸载时清理 HKCU Run 自启值**：per-machine 卸载同样无法用注册表组件可靠删 HKCU（对称问题），改由 immediate 自定义动作（发起用户上下文）删除，只删内容包含 `start-dsh.vbs` 的同名值，失败不阻断卸载。
+- **卸载时 HKLM 意图标志残留（Level 条件在卸载时重评的隐蔽行为）**：MSI 对 Level=0（条件禁用）feature 的组件在卸载时不请求移除——实测组件 Installed: Local 但 Request: Null，注册表值残留。修复：卸载 CA 兜底同时删除 HKCU Run 与 HKLM 标志，调度条件加 `NOT UPGRADINGPRODUCTCODE`（升级链路不触发，用户已启用的自启跨版本保留）。
+- **`uninstall-autostart.cmd` 同时清除 HKLM 意图标志**（需管理员）：防止壳自愈机制在下次启动时重新创建用户刚手动删掉的自启项。
+
 ## [0.2.3] - 2026-08-15
 
 ### 修复

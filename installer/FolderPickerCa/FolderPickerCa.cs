@@ -130,4 +130,58 @@ public static class FolderPickerCa
         }
         return ActionResult.Success;
     }
+
+    /// <summary>卸载清理（immediate/发起用户上下文）：删除自启相关两处注册表：
+    /// 1) HKCU Run 的 dsh-launcher 值——只删内容包含 start-dsh.vbs 的（防误删）；
+    /// 2) HKLM\Software\dsh-launcher\AutoStartWanted 意图标志——组件机制在卸载时
+    /// 不可靠：Level 条件（AUTO_START_OPTION <> 1）在卸载时重评，属性不存在 →
+    /// Level=0（feature 禁用），MSI 对禁用 feature 的组件不请求移除（实测
+    /// Installed: Local 但 Request: Null），值残留；卸载提权上下文可写 HKLM，由
+    /// CA 兜底删除。删除失败不阻断卸载（Return="ignore"）。</summary>
+    [CustomAction]
+    public static ActionResult RemoveAutoRun(Session session)
+    {
+        try
+        {
+            using (var run = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", true))
+            {
+                var val = run != null ? run.GetValue("dsh-launcher") as string : null;
+                if (!string.IsNullOrEmpty(val) && val.IndexOf("start-dsh.vbs", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    run.DeleteValue("dsh-launcher");
+                    session.Log("RemoveAutoRun: removed dsh-launcher from HKCU Run");
+                }
+                else
+                {
+                    session.Log("RemoveAutoRun: no matching dsh-launcher Run value (nothing to do)");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { session.Log("RemoveAutoRun: HKCU delete failed: " + ex.Message); } catch { }
+        }
+        try
+        {
+            using (var flag = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"Software\dsh-launcher", true))
+            {
+                if (flag != null && flag.GetValue("AutoStartWanted") != null)
+                {
+                    flag.DeleteValue("AutoStartWanted");
+                    session.Log("RemoveAutoRun: removed AutoStartWanted from HKLM");
+                }
+                else
+                {
+                    session.Log("RemoveAutoRun: no AutoStartWanted flag (nothing to do)");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { session.Log("RemoveAutoRun: HKLM delete failed: " + ex.Message); } catch { }
+        }
+        return ActionResult.Success;
+    }
 }
