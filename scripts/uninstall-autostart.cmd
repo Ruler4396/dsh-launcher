@@ -17,12 +17,25 @@ if not exist "%STARTUP%\start-dsh.vbs" if not exist "%STARTUP%\dsh-autostart.vbs
   echo [SKIP] No autostart entry in the Startup folder.
 )
 
-rem 2) HKCU Run entry (created by the MSI installer's autostart feature)
+rem 2) HKCU Run entry (created by DshWeb.exe on first start when the MSI
+rem    autostart feature is enabled)
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "dsh-launcher" /f >nul 2>&1
 if not errorlevel 1 (
   echo [OK] Removed HKCU Run entry: dsh-launcher
 ) else (
   echo [SKIP] No HKCU Run entry "dsh-launcher".
+)
+
+rem 2.5) Machine-level autostart intent flag written by the MSI installer
+rem      (HKLM ...AutoStartWanted=1). Clearing it prevents DshWeb.exe from
+rem      re-creating the HKCU Run entry on next start (self-healing).
+rem      Requires admin; if denied, re-run this script as Administrator.
+reg delete "HKLM\Software\dsh-launcher" /v "AutoStartWanted" /f >nul 2>&1
+if not errorlevel 1 (
+  echo [OK] Removed HKLM autostart intent flag: AutoStartWanted
+) else (
+  echo [WARN] Could not remove HKLM autostart intent flag ^(admin required^).
+  echo         DshWeb.exe may re-create the HKCU Run entry on next start.
 )
 
 rem 3) Desktop shortcuts (any name starting with DshWeb / DeepSeek Harness / dsh-launcher,

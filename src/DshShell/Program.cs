@@ -156,6 +156,42 @@ internal static class Program
         }
     }
 
+    /// <summary>自启落地（修复 0.2.3 issue：per-machine 提权安装写 HKCU Run 不可靠，
+    /// 勾选了也不落到任何真实用户 hive）。MSI 勾选自启时只在 HKLM 写机器级意图标志
+    /// （AutoStartWanted=1，随卸载自动清除），本方法在壳启动时读标志、以当前用户
+    /// 身份补写 HKCU Run——用户上下文写 HKCU 100% 可靠，交互/静默安装均覆盖；也顺带
+    /// 解决"其他管理员过 UAC 时自启写错 hive"的问题（谁先用壳，自启就落在谁头上）。
+    /// 升级/自定义目录导致的路径变化自动更新；用户跑了 uninstall-autostart.cmd
+    /// （会同时清 HKLM 标志）则不再自愈。</summary>
+    private static void EnsureAutoStartRequested()
+    {
+        try
+        {
+            var wanted = false;
+            try
+            {
+                using var flagKey = Registry.LocalMachine.OpenSubKey(@"Software\dsh-launcher");
+                wanted = flagKey?.GetValue("AutoStartWanted") is int v && v == 1;
+            }
+            catch { /* 读不到按无标志处理（便携版/未勾选） */ }
+            if (!wanted) return;
+
+            var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
+            if (!File.Exists(vbs)) return; // 安装目录脚本缺失（异常布局）不写
+            var expected = "wscript.exe \"" + vbs + "\"";
+
+            using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
+            var cur = run.GetValue("dsh-launcher") as string;
+            if (string.Equals(cur, expected, StringComparison.OrdinalIgnoreCase)) return;
+            run.SetValue("dsh-launcher", expected, RegistryValueKind.String);
+            Trace("autostart: " + (cur is null ? "created" : "updated") + " HKCU Run entry (HKLM AutoStartWanted=1)");
+        }
+        catch (Exception ex)
+        {
+            Trace("autostart ensure failed: " + ex);
+        }
+    }
+
     /// <summary>
     /// 启动轨迹日志（DSH_HOME\dsh-launcher\shell.log）：记录壳的关键决策点
     /// （单实例、端口探测、服务拉起、就绪判定、窗口显示），用于排查"窗口没出来/要多点一次"
@@ -239,6 +275,7 @@ internal static class Program
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
         MigrateLegacyData(); // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME（settings.json 保留、旧目录清理）
         CleanupProgramDataResidue(); // 清理卸载后 ProgramData 空目录残留
+        EnsureAutoStartRequested(); // 自启落地：MSI 机器级意图标志 → 当前用户 HKCU Run
 
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。

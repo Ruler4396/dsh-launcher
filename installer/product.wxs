@@ -60,11 +60,11 @@
       <ComponentRef Id="CurrentProductCodeReg" />
       <ComponentRef Id="DisplayIconReg" />
     </Feature>
-    <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（HKCU Run，卸载时移除）" Level="1">
+    <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（壳首次启动时写入当前用户自启项，卸载时移除）" Level="1">
       <!-- 注意：MSI 条件中非空字符串"0"会被当作 true，`NOT AUTO_START_OPTION` 对默认值 "0"
            不生效；必须用显式数值比较（勾选=1 才安装）。默认不勾选 = 默认不安装自启（省内存）。 -->
       <Level Value="0" Condition="AUTO_START_OPTION &lt;&gt; 1" />
-      <ComponentRef Id="AutoStartEntry" />
+      <ComponentRef Id="AutoStartFlag" />
     </Feature>
     <Feature Id="DesktopShortcut" Title="桌面快捷方式" Description="在桌面创建 dsh-launcher 快捷方式" Level="1">
       <Level Value="0" Condition="NOT DESKTOP_SHORTCUT_OPTION" />
@@ -76,8 +76,12 @@
     </Feature>
 
     <!-- checkbox 默认值：开机自启默认【不勾选】（dsh 服务内存占用相对较大，非必要不推荐开启）；
-         快捷方式默认勾选；WIXUI_INSTALLDIR 指向目录选择页 -->
-    <Property Id="AUTO_START_OPTION" Value="0" Secure="yes" />
+         快捷方式默认勾选；WIXUI_INSTALLDIR 指向目录选择页。
+         注意：默认不勾的 checkbox 属性必须【无默认值】——MSI CheckBox 控件对存在非空值的
+         属性（哪怕 "0"）会渲染为勾选状态，UI 与实际 feature 状态不一致（0.2.4 实测：
+         默认勾上但组件未装，用户以为启用了自启）。属性不存在 → 不勾；勾选 → "1"；
+         取消勾选 → 空串。Level 条件 AUTO_START_OPTION <> 1 对三者均正确。 -->
+<Property Id="AUTO_START_OPTION" Secure="yes" />
     <Property Id="DESKTOP_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="MENU_SHORTCUT_OPTION" Value="1" Secure="yes" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" Secure="yes" />
@@ -119,6 +123,16 @@
     <CustomAction Id="ReadPickedFolder" BinaryRef="FolderPickerCa"
                   DllEntry="LaunchFolderPicker"
                   Execute="immediate" Return="check" />
+<!-- 卸载清理自启项：per-machine 卸载（提权）无法用注册表组件可靠删 HKCU（对称问题），
+         且 Level 条件在卸载时重评会使禁用 feature 的组件（含 HKLM 标志）不清理，
+         改由本 immediate CA（发起用户上下文，卸载提权可写 HKLM）统一删除：
+         1) HKCU Run 的 dsh-launcher 值（仅内容含 start-dsh.vbs 的，防误删）；
+         2) HKLM\Software\dsh-launcher\AutoStartWanted 意图标志。
+         调度条件含 NOT UPGRADINGPRODUCTCODE（升级不触发）。Return="ignore"：清理
+         失败不阻断卸载。 -->
+<CustomAction Id="RemoveAutoRun" BinaryRef="FolderPickerCa"
+                  DllEntry="RemoveAutoRun"
+                  Execute="immediate" Return="ignore" />
     <!-- 安装前置检查（用户要求）：.NET Desktop Runtime 10 与 Node.js 缺失时弹窗引导下载。
          Type-38 外部 exe（客户端进程内 MessageBox）。调度见下方 Fragment 的 InstallUISequence
          （Sequence=1 最早执行，客户端 UI 上下文、弹窗可见）；Return="check" 使缺失/取消
@@ -136,6 +150,13 @@
     </InstallUISequence>
     <InstallExecuteSequence>
       <Custom Action="CheckPrereq" Sequence="1" Condition="NOT Installed" />
+      <!-- 卸载时清理当前用户 HKCU Run 自启值与 HKLM 意图标志（REMOVE=ALL：完整卸载）。
+           必须由 CA 兜底而不能依赖组件机制：Level 条件（AUTO_START_OPTION <> 1）在
+           卸载时重新评估，属性已不存在 → Level=0（feature 禁用），MSI 对禁用 feature
+           的组件在卸载时不请求移除——实测 Installed: Local 但 Request: Null，注册表值
+           残留。NOT UPGRADINGPRODUCTCODE：被升级卸载时不触发（升级后壳首启按新包
+           标志重新落地，用户已启用的自启跨版本保留）。 -->
+      <Custom Action="RemoveAutoRun" After="InstallInitialize" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <!-- license page shown by the WixUI wizard (resolved relative to this file) -->
@@ -187,13 +208,17 @@
                      KeyPath="yes" />
     </Component>
 
-    <!-- per-user autostart: HKCU Run -> wscript start-dsh.vbs (silent service start at logon) -->
-    <Component Id="AutoStartEntry" Directory="INSTALLFOLDER" Guid="*">
-      <RegistryValue Root="HKCU"
-                     Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                     Name="dsh-launcher"
-                     Value='wscript.exe "[INSTALLFOLDER]start-dsh.vbs"'
-                     Type="string"
+    <!-- 自启意图标志（机器级）：per-machine 提权安装直接写 HKCU Run 不可靠（值落到
+         提升上下文或被静默丢弃，0.2.3 issue 实测勾选也不写入任何用户 hive）。改为：
+         MSI 只落 HKLM 意图标志（可靠、随卸载自动清除），壳 DshWeb.exe 首次启动读到
+         标志后以当前用户身份补写 HKCU Run（EnsureAutoStartRequested）；卸载时
+         HKCU Run 由 RemoveAutoRun CA（用户上下文）清理。 -->
+    <Component Id="AutoStartFlag" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKLM"
+                     Key="Software\dsh-launcher"
+                     Name="AutoStartWanted"
+                     Value="1"
+                     Type="integer"
                      KeyPath="yes" />
     </Component>
 
