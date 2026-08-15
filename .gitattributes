@@ -1,0 +1,23 @@
+# 行尾统一（清理项 2）：Windows 脚本固定 CRLF——本地与 CI 构建产物行尾一致，
+# 校验和可跨环境复现（此前 LF/CRLF 混用导致 SHA256 无法跨环境对齐）。
+*.vbs   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+*.wxs   text eol=crlf
+*.cs    text eol=crlf
+*.csproj text eol=crlf
+*.md    text eol=crlf
+*.json  text eol=crlf
+*.yml   text eol=crlf
+*.yaml  text eol=crlf
+
+# 二进制/已知不可安全合并的文件
+*.exe   binary
+*.dll   binary
+*.ico   binary
+*.png   binary
+*.zip   binary
+*.msi   binary
+*.wixpdb binary
+*.rtf   binary

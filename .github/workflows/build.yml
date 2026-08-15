@@ -6,15 +6,18 @@ on:
     tags: ["v*"]
   pull_request:
 
+# 供应链卫生（S4）：默认最小权限 contents: read；只有打 Release 的步骤放开 write。
+# tag 名经 env 注入（不经 ${{ }} 内插进脚本），第三方 action 全部 pin commit SHA。
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "10.0.x"
 
@@ -30,22 +33,24 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-output
           path: test-output.log
 
       - name: Build release package (zip + msi + checksums)
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $ver = "${{ github.ref_name }}"
+          $ver = $env:REF_NAME
           if ($ver -like 'v*') {
             ./scripts/build-release.ps1 -OutputDir dist -Version $ver.TrimStart('v')
           } else {
             ./scripts/build-release.ps1 -OutputDir dist
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dsh-launcher-windows
           path: |
@@ -56,8 +61,10 @@ jobs:
       - name: Prepare release notes from CHANGELOG
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:REF_NAME
           $ver = $tag.TrimStart('v')
           $changelog = Get-Content CHANGELOG.md -Raw
           $m = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($ver))\] - .*?(?=^## |\z)")
@@ -86,7 +93,9 @@ jobs:
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        permissions:
+          contents: write
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             dist/dsh-launcher-windows.zip

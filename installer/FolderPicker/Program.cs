@@ -3,6 +3,12 @@
 // C:\ProgramData\dsh-launcher\picked.txt，由 DTF 自定义动作（服务端 remote 执行，
 // 属性回写已验证生效）读回并应用到安装目录属性。取消时不留文件（路径不变）。
 // 用法: FolderPicker.exe [初始目录]   退出码 0=已写文件；1=取消/出错。
+//
+// 安全：picked.txt 位于 C:\ProgramData\dsh-launcher（ACL 允许 Users 写入），低权限
+// 攻击者可预置文件诱导安装用户——而 FolderPicker.exe 启动时删除旧文件失败会被 catch
+// 吞掉、写文件失败也按取消处理，CA 读到的可能是攻击者伪造的路径。修复：写入内容为
+// "路径<换行>一次性随机令牌"，由 CA 校验令牌非空且与本次写入匹配才采纳（攻击者无法
+// 预知令牌）；启动时若无法删除旧文件则**直接拒绝继续**（不弹对话框），避免旧文件残留。
 using System;
 using System.IO;
 using Microsoft.Win32;
@@ -16,7 +22,16 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        try { if (File.Exists(PickedFile)) File.Delete(PickedFile); } catch { /* ignore */ }
+        // 启动前必须能清掉旧文件：清不掉说明目录里有攻击者占位（ACL 允许 Users 创建，
+        // 但目录无 DC 位时当前用户无权删除他人文件）→ 拒绝继续，不冒用旧内容。
+        try
+        {
+            if (File.Exists(PickedFile)) File.Delete(PickedFile);
+        }
+        catch
+        {
+            return 1; // 旧中转文件无法清理：中止（防伪造路径被 CA 采纳）
+        }
 
         var raw = args.Length > 0 ? args[0] : null;
         var initial = string.IsNullOrEmpty(raw) ? null : raw.TrimEnd('"', '\\');
@@ -34,7 +49,9 @@ internal static class Program
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(PickedFile));
-                    File.WriteAllText(PickedFile, dlg.FolderName.TrimEnd('\\') + "\\");
+                    // 一次性令牌：CA 侧校验"路径+令牌"配对，防低权限攻击者预置伪造路径。
+                    var token = Guid.NewGuid().ToString("N");
+                    File.WriteAllText(PickedFile, dlg.FolderName.TrimEnd('\\') + "\\" + Environment.NewLine + token);
                     return 0;
                 }
                 catch { /* 写文件失败按取消处理 */ }

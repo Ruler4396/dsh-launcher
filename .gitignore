@@ -9,6 +9,9 @@ dist/
 # Test output
 TestResults/
 
+# Archived stale content (old releases, build artifacts)
+archive/
+
 # IDE
 .vs/
 *.user

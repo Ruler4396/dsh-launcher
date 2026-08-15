@@ -45,4 +45,7 @@ Else
     cmdline = "npx -y @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
     note = "dsh not on PATH - falling back to npx -y @deepseek-ai/dsh"
 End If
-sh.Run "cmd /c ""echo [start-dsh] " & note & " >> " & logfile & " && " & cmdline & " >> " & logfile & " 2>&1""", 0, False
+' 日志重定向目标必须加引号：USERPROFILE 含空格（如 C:\Users\John Smith）时，
+' 不带引号会把路径截断成命令参数/碎片文件名（实测复现）；含 & 等 cmd 元字符时可注入命令。
+q = Chr(34)
+sh.Run "cmd /c ""echo [start-dsh] " & note & " >> " & q & logfile & q & " && " & cmdline & " >> " & q & logfile & q & " 2>&1""", 0, False

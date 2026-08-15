@@ -50,6 +50,7 @@ Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方
 $vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
 Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port " & port') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
 Assert-True ($vbs -match '\.dsh-web\.log') "start-dsh.vbs 日志重定向到 .dsh-web.log"
+Assert-True ($vbs -match 'Chr\(34\)') "start-dsh.vbs 日志重定向加引号（防用户名含空格/元字符注入，S5）"
 Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
