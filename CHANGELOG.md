@@ -2,6 +2,33 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-08-15
+
+### 变更
+
+- **MSI 安装向导前置检查 .NET Desktop Runtime 10**：缺失时安装前明确提示（附 `winget install Microsoft.DotNet.DesktopRuntime.10` 指引），不再出现"装完双击无反应"；检测 WOW6432Node 视图下 `sharedfx\Microsoft.WindowsDesktop.App` 的 10.* 版本值（SDK 自带 runtime 与独立安装器均会写该键）
+- **托盘菜单字体回退链**：Noto Sans SC Medium（思源黑体 500，原生加粗）→ DengXian（等线）→ Microsoft YaHei UI → 系统默认；等线/雅黑无中间字重时伪粗体双画补粗，缺字体静默降级
+- **MSI 目录选择器回写校验**：文件夹选择结果带一次性随机令牌（Guid），安装动作校验令牌匹配且路径为本地绝对路径、拒绝系统目录（Windows/Program Files/ProgramData 等）后才采纳，防低权限攻击者预置伪造路径
+- **下载完成智能打开**：仅无害扩展名（图片/文本/pdf/音视频/压缩包等）自动用默认程序打开；其余（.html/.svg/.hta/.exe 等可执行代码面）落盘后托盘气泡提示，不自动执行
+- **主窗口导航白名单**：只允许本地（127.0.0.1/localhost）导航，外部 http(s) 导航自动转系统默认浏览器——壳无地址栏，防被重定向到伪站点
+- **CI 供应链加固**：第三方 action 全部 pin commit SHA；顶层 `permissions: contents: read`（仅 Release 步骤放开 write）；tag 名经环境变量注入不再内插进脚本
+- **start-dsh.vbs 日志重定向加引号**：用户目录含空格/元字符时不再截断日志路径或注入命令（实测复现修复）
+
+### 修复
+
+- **副屏负坐标窗口边缘缩放失效**（B1）：WM_NCHITTEST 的 64 位 lParam 用 `ToInt32()` 在左侧/上方副屏抛 OverflowException，改为有符号 16 位拆位
+- **单实例误聚焦插件弹窗**（B2）：弹窗初始标题不再与主窗口同名（"dsh-launcher 弹窗"），第二实例按标题找主窗口时不会误聚焦 popup
+- **托盘菜单淡入 Timer 泄漏**（B3）：动画完成后 Dispose（每次弹菜单一个，不再等 GC）
+- **托盘菜单位置屏幕外**：屏幕边界自适应——左/上越界翻转到鼠标另一侧，仍越界贴工作区边缘（左侧竖排任务栏时菜单不再被推出屏幕）
+- **托盘菜单透明不显示**：`CreateCompatibleDC`/`SelectObject`/`DeleteDC`/`DeleteObject` 四个 P/Invoke 的 DLL 归属修正为 gdi32.dll（此前误标 user32.dll 导致渲染异常被吞、菜单全透明）
+- **卸载后 ProgramData 空目录残留**：壳启动时清理中转文件与空目录（非空则不动，不删第三方文件）
+- **MSI 自定义动作失败静默**：浏览/回写动作 `Return="ignore"` → `Return="check"`（失败即中止安装，不再悄悄继续）
+
+### 其他
+
+- `.gitattributes` 统一脚本/源码行尾（*.vbs/*.cmd/*.cs 等 CRLF），本地与 CI 构建产物校验和可跨环境复现
+- 安全策略文档补充已知边界说明（PATH 解析、HKCU 自启归属）
+
 ## [0.2.0] - 2026-08-15
 
 ### 变更

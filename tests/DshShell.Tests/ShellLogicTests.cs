@@ -162,6 +162,46 @@ public class ShellLogicTests
         }
     }
 
+    [Theory]
+    [InlineData("report.pdf", true)]        // 文档：渲染器不执行脚本
+    [InlineData("photo.png", true)]         // 图片
+    [InlineData("data.csv", true)]          // 数据/文本
+    [InlineData("music.mp3", true)]         // 音频
+    [InlineData("video.mp4", true)]         // 视频
+    [InlineData("bundle.zip", true)]        // 压缩包（查看/解压，不自动执行内容）
+    [InlineData("font.ttf", true)]          // 字体
+    [InlineData("page.html", false)]        // 可执行代码面：不自动打开（S2）
+    [InlineData("icon.svg", false)]         // SVG 可含脚本：不自动打开
+    [InlineData("run.hta", false)]          // HTA 本地执行面：不自动打开
+    [InlineData("setup.exe", false)]        // 可执行文件：不自动打开
+    [InlineData("script.js", false)]        // 脚本：不自动打开
+    [InlineData("cmd.bat", false)]          // 批处理：不自动打开
+    [InlineData("macro.docm", false)]       // 含宏文档：不自动打开
+    [InlineData(null, false)]               // 空路径安全拒绝
+    [InlineData("", false)]
+    public void IsSafeToOpen_OnlyHarmlessExtensions(string? path, bool expected)
+        => Assert.Equal(expected, ShellLogic.IsSafeToOpen(path));
+
+    [Theory]
+    [InlineData(0x0014000A, 10, 20)]                // 正常正坐标（X=10, Y=20）
+    [InlineData(0xFFF40006, 6, -12)]                // 负 Y（上方副屏）：低 16 位 6、高 16 位 -12
+    [InlineData(0x0004FFEC, -20, 4)]                // 负 X（左侧副屏）：低 16 位 -20、高 16 位 4
+    [InlineData(0xFFF0FFE2, -30, -16)]              // 双负（左上副屏）
+    public void SplitLParam_HandlesNegativeCoordinates(long lParam, short expectedX, short expectedY)
+    {
+        var (x, y) = ShellLogic.SplitLParam(lParam);
+        Assert.Equal(expectedX, x);
+        Assert.Equal(expectedY, y);
+    }
+
+    [Fact]
+    public void SplitLParam_DoesNotThrowOnMaxInt()
+    {
+        // 旧实现 (int)lParam 在坐标超过 int.MaxValue 时抛 OverflowException（B1 回归）
+        var (x, y) = ShellLogic.SplitLParam(unchecked((long)0xFFFFFFFFFFFFFFFF));
+        Assert.True(x < 0 && y < 0);
+    }
+
     [Fact]
     public void PickOldInstalls_EmptyOrSingle_ReturnsEmpty()
     {

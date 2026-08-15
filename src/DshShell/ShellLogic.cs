@@ -142,6 +142,41 @@ public static class ShellLogic
         return result;
     }
 
+    /// <summary>
+    /// 从 WM_NCHITTEST 的 64 位 lParam 拆出屏幕坐标：低 16 位有符号 = X，高 16 位有符号 = Y。
+    /// 左侧/上方副屏为负坐标，直接 (int)lParam 会抛 OverflowException（B1 修复）。
+    /// </summary>
+    internal static (short X, short Y) SplitLParam(long lParam)
+        => ((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));
+
+    /// <summary>
+    /// 下载完成后是否可以直接用默认程序打开：仅无害扩展名（图片/文本/pdf 等）自动打开，
+    /// 其余（.html/.svg/.hta/.exe/.js 等可执行代码面）落盘后只提示不自动执行，
+    /// 防止任意被加载页面触发下载后自动执行本地代码（S2 修复）。
+    /// </summary>
+    internal static bool IsSafeToOpen(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)) return false;
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        return ext switch
+        {
+            // 图片
+            ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".ico" or ".tif" or ".tiff"
+            // 文本/数据
+            or ".txt" or ".md" or ".csv" or ".json" or ".xml" or ".log" or ".ini" or ".yml" or ".yaml" or ".toml"
+            // 文档（渲染器不执行脚本）
+            or ".pdf"
+            // 压缩包（打开=查看/解压，不自动执行内容）
+            or ".zip" or ".7z" or ".rar" or ".gz" or ".tar" or ".xz"
+            // 音视频
+            or ".mp3" or ".wav" or ".flac" or ".ogg" or ".mp4" or ".mkv" or ".webm" or ".mov"
+            // 字体/其他静态资源
+            or ".woff" or ".woff2" or ".ttf" or ".otf"
+                => true,
+            _ => false,
+        };
+    }
+
     /// <summary>已安装的 dsh-launcher 产品（ProductCode + 版本）。</summary>
     public sealed record InstalledDsh(string ProductCode, Version Version);
 

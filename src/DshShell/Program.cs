@@ -127,6 +127,35 @@ internal static class Program
         }
     }
 
+    /// <summary>清理卸载后 ProgramData 范围外的空目录残留（清理项 1）：安装用 FolderPicker
+    /// 会在 C:\ProgramData\dsh-launcher 创建中转文件（picked.txt），卸载不删该目录；目录为空
+    /// （无其他用户残留文件）时顺手清掉。非空（如被其他软件占用）则不动。</summary>
+    private static void CleanupProgramDataResidue()
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "dsh-launcher");
+            if (!Directory.Exists(dir)) return;
+            // 只清理中转文件与空目录；不删除任何非本产品文件
+            var picked = Path.Combine(dir, "picked.txt");
+            if (File.Exists(picked))
+            {
+                try { File.Delete(picked); } catch { /* 占用则跳过 */ }
+            }
+            try
+            {
+                if (Directory.GetFiles(dir).Length == 0 && Directory.GetDirectories(dir).Length == 0)
+                    Directory.Delete(dir);
+            }
+            catch { /* 删除失败（可能有其他用户文件/占用）不动 */ }
+        }
+        catch
+        {
+            // 清理失败不影响启动
+        }
+    }
+
     /// <summary>
     /// 启动轨迹日志（DSH_HOME\dsh-launcher\shell.log）：记录壳的关键决策点
     /// （单实例、端口探测、服务拉起、就绪判定、窗口显示），用于排查"窗口没出来/要多点一次"
@@ -209,6 +238,7 @@ internal static class Program
 
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
         MigrateLegacyData(); // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME（settings.json 保留、旧目录清理）
+        CleanupProgramDataResidue(); // 清理卸载后 ProgramData 空目录残留
 
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。
@@ -562,6 +592,20 @@ internal static class Program
             }
             catch { /* 检测失败静默 */ }
         });
+    }
+
+    /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：托盘气泡告知落盘位置，
+    /// 不自动打开——防恶意页面触发下载后自动执行本地代码（S2 修复）。</summary>
+    private static void NotifyDownloadComplete(string filePath)
+    {
+        try
+        {
+            if (_trayIcon is null) return;
+            _trayIcon.ShowBalloonTip(8000, "下载完成",
+                "文件已保存：\n" + filePath + "\n（点击" + _trayIcon.Text + "托盘图标查看）",
+                ToolTipIcon.Info);
+        }
+        catch { /* 气泡失败忽略 */ }
     }
 
     private static void NotifyPending(PendingUpdate type, string latest, string local)
@@ -1087,6 +1131,7 @@ internal static class Program
         private readonly float _s; // DPI 缩放（96 为 1）
         private readonly Font _exitFont;
         private readonly bool _exitFontFaux; // true=伪粗体双画（等线/雅黑无中间字重），false=思源 Medium 原生字重
+        private System.Windows.Forms.Timer? _fadeTimer; // 淡入动画，完成后 Dispose（B3）
         private bool _hoverExit;
         private byte _alpha = 255;
 
@@ -1142,16 +1187,22 @@ internal static class Program
         {
             base.OnShown(e);
             Render();
-            var t = new System.Windows.Forms.Timer { Interval = 12 };
+            // 淡入动画 Timer：字段持有防 GC，完成后 Dispose（每次弹菜单一个，不泄漏，B3）。
+            _fadeTimer = new System.Windows.Forms.Timer { Interval = 12 };
             var start = DateTime.UtcNow;
-            t.Tick += (_, _) =>
+            _fadeTimer.Tick += (_, _) =>
             {
                 var p = Math.Min(1.0, (DateTime.UtcNow - start).TotalMilliseconds / 120.0);
                 _alpha = (byte)(255 * p);
                 Render();
-                if (p >= 1.0) t.Stop();
+                if (p >= 1.0)
+                {
+                    _fadeTimer.Stop();
+                    _fadeTimer.Dispose();
+                    _fadeTimer = null;
+                }
             };
-            t.Start();
+            _fadeTimer.Start();
         }
 
         protected override void OnPaintBackground(PaintEventArgs e) { }
@@ -1478,6 +1529,18 @@ internal static class Program
                 e.State = CoreWebView2PermissionState.Allow;
         };
 
+        // 导航白名单（S3）：主窗口/内部弹窗只允许本地（127.0.0.1/localhost）导航；
+        // 外部 http(s) 导航一律取消并转系统默认浏览器——壳无地址栏，防止被重定向到
+        // 伪站点，且外部页会拿到已自动放行的剪贴板/存储等权限（白名单之外不生效）。
+        web.CoreWebView2.NavigationStarting += (_, e) =>
+        {
+            if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri)) return;
+            if (uri.Scheme is not ("http" or "https")) return;   // about:/blob:/data: 等内部资源放行
+            if (uri.Host is "127.0.0.1" or "localhost") return;  // 本地 dsh 服务
+            e.Cancel = true;
+            try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
+        };
+
         // 下载：固定保存到系统“下载”文件夹（自动避开同名文件），完成后用默认程序打开
         web.CoreWebView2.DownloadStarting += (_, e) =>
         {
@@ -1500,7 +1563,16 @@ internal static class Program
                     {
                         try
                         {
-                            Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true });
+                            // 仅无害扩展名（图片/文本/pdf 等）自动打开；其余（.html/.svg/.hta/.exe 等
+                            // 可执行代码面）只落盘 + 气泡提示，不自动执行，防恶意下载自动运行（S2 修复）。
+                            if (ShellLogic.IsSafeToOpen(e.DownloadOperation.ResultFilePath))
+                            {
+                                Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true });
+                            }
+                            else
+                            {
+                                NotifyDownloadComplete(e.DownloadOperation.ResultFilePath);
+                            }
                         }
                         catch { /* 无默认程序打开时忽略 */ }
                     }
@@ -1574,7 +1646,10 @@ internal static class Program
         var popupWeb = new WebView2();
         var form = new DshShellForm
         {
-            Text = "DeepSeek Harness",
+            // 初始标题区别于主窗口（"DeepSeek Harness"）：单实例逻辑按标题找主窗口，
+            // 弹窗开着时第二实例不会被误聚焦到 popup（B2）。页面加载后 DocumentTitle
+            // 会覆盖成实际页面标题。
+            Text = "dsh-launcher 弹窗",
             ClientSize = new Size(900, 640),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.None, // 自绘标题栏（与主窗口一致，主题即时切换）
@@ -2049,7 +2124,10 @@ internal static class Program
                     base.WndProc(ref m);
                     if (m.Result == (IntPtr)HTCLIENT && WindowState != FormWindowState.Maximized)
                     {
-                        var pt = new Point(m.LParam.ToInt32() & 0xFFFF, (m.LParam.ToInt32() >> 16) & 0xFFFF);
+                        // 64 位屏幕坐标：左侧/上方副屏为负坐标，LParam.ToInt32() 会抛 OverflowException
+                        //（B1）。正确拆位：低 16 位有符号 = X，高 16 位有符号 = Y。
+                        var (x, y) = ShellLogic.SplitLParam(m.LParam.ToInt64());
+                        var pt = new Point(x, y);
                         var r = RectangleToScreen(ClientRectangle);
                         var left = pt.X < r.Left + ResizeEdge;
                         var right = pt.X > r.Right - ResizeEdge;
