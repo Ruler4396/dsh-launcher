@@ -36,7 +36,7 @@ $sumsPath = Join-Path $root "$OutputDir\SHA256SUMS.txt"
 Write-Host ">> publishing shell app..."
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 dotnet publish (Join-Path $root "src\DshShell") -c Release -r win-x64 `
-    --self-contained false -p:PublishSingleFile=true -o $publishDir
+    --self-contained false -p:PublishSingleFile=true -p:Version=$Version -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
 if (-not (Test-Path (Join-Path $publishDir "DshWeb.exe")) -or
     -not (Test-Path (Join-Path $publishDir "WebView2Loader.dll"))) {
