@@ -6,8 +6,8 @@ on:
     tags: ["v*"]
   pull_request:
 
-# 供应链卫生（S4）：默认最小权限 contents: read；只有打 Release 的步骤放开 write。
-# tag 名经 env 注入（不经 ${{ }} 内插进脚本），第三方 action 全部 pin commit SHA。
+# 供应链卫生（S4）：顶层默认最小权限 contents: read；Release 发布在独立 job 中放开 write。
+# 第三方 action 全部 pin commit SHA；tag 名经 env 注入（不经 ${{ }} 内插进脚本）。
 permissions:
   contents: read
 
@@ -58,8 +58,22 @@ jobs:
             dist/*.msi
             dist/SHA256SUMS.txt
 
+  release:
+    # 仅 tag 推送才发布 Release；独立 job 单独声明 contents: write（构建 job 保持只读）
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dsh-launcher-windows
+          path: dist
+
       - name: Prepare release notes from CHANGELOG
-        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -92,9 +106,6 @@ jobs:
           Set-Content -Path body.md -Value $body -Encoding utf8
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        permissions:
-          contents: write
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
