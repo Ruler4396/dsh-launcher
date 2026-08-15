@@ -1067,9 +1067,9 @@ internal static class Program
         private const int ExitHeight = 38;
         private const int CornerRadius = 12;
 
-        private static readonly Color TextSecondary = Color.FromArgb(107, 114, 128);   // #6B7280
-        private static readonly Color TextDanger = Color.FromArgb(220, 38, 38);         // #DC2626
-        private static readonly Color TextDangerHover = Color.FromArgb(248, 113, 113); // #F87171
+        private static readonly Color TextSecondary = Color.FromArgb(55, 65, 81);       // #374151 深灰（白底清晰）
+        private static readonly Color TextDanger = Color.FromArgb(185, 28, 28);         // #B91C1C 深红（白底清晰）
+        private static readonly Color TextDangerHover = Color.FromArgb(220, 38, 38);    // #DC2626
         private static readonly Color BorderColor = Color.FromArgb(229, 231, 235);      // #E5E7EB
         private static readonly Color SepColor = Color.FromArgb(243, 244, 246);         // #F3F4F6
         private static readonly Color DotColor = Color.FromArgb(239, 68, 68);           // #EF4444
@@ -1092,10 +1092,21 @@ internal static class Program
             Font = new Font("Segoe UI", 9F); // 字体栈：Segoe UI / Microsoft YaHei / PingFang SC（系统回退）
         }
 
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW：浮层投影
+                return cp;
+            }
+        }
+
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            try { ApplyAcrylic(); } catch { }
+            // 实心浅色背景 + Region 圆角（不用 Acrylic 毛玻璃：实测 Win10 上模糊背景
+            // 让文字几乎不可见；成熟托盘菜单均为实心/近实心底 + 清晰深色文字）
             try { using var path = RoundedRect(new Rectangle(Point.Empty, Size), CornerRadius); Region = new Region(path); } catch { }
             // 弹出动画：opacity 0→1，120ms
             Opacity = 0;
@@ -1175,20 +1186,6 @@ internal static class Program
             return path;
         }
 
-        private void ApplyAcrylic()
-        {
-            // Win10 1803+：ACCENT_ENABLE_ACRYLICBLURBEHIND，白色半透明 tint（浅色毛玻璃）
-            var accent = new AccentPolicy { AccentState = 4, AccentFlags = 2, GradientColor = unchecked((int)0x80FFFFFF) };
-            var data = new WindowCompositionAttributeData { Attribute = 19, SizeOfData = Marshal.SizeOf(typeof(AccentPolicy)) };
-            data.Data = Marshal.AllocHGlobal(data.SizeOfData);
-            try
-            {
-                Marshal.StructureToPtr(accent, data.Data, false);
-                SetWindowCompositionAttribute(Handle, ref data);
-            }
-            finally { Marshal.FreeHGlobal(data.Data); }
-        }
-
         private bool HitExit(Point p) => _exitRect.Contains(p);
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -1215,25 +1212,6 @@ internal static class Program
         }
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct AccentPolicy
-    {
-        public int AccentState;
-        public int AccentFlags;
-        public int GradientColor;
-        public int AnimationId;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WindowCompositionAttributeData
-    {
-        public int Attribute;
-        public IntPtr Data;
-        public int SizeOfData;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
     /// <summary>
     /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
     /// 隐藏着就显示出来；**最小化时先还原**（Activate 对最小化窗口无效，
