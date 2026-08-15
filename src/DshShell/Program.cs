@@ -1100,6 +1100,7 @@ internal static class Program
         private readonly Action _onExit;
         private readonly float _s; // DPI 缩放（96 为 1）
         private readonly Font _exitFont;
+        private readonly bool _exitFontFaux; // true=伪粗体双画（等线/雅黑无中间字重），false=思源 Medium 原生字重
         private bool _hoverExit;
         private byte _alpha = 255;
 
@@ -1113,7 +1114,32 @@ internal static class Program
             StartPosition = FormStartPosition.Manual;
             Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
             BackColor = Color.White;
-            _exitFont = new Font("Microsoft YaHei UI", 10f * _s, FontStyle.Regular, GraphicsUnit.Point); // 10pt 微软雅黑常规，配合伪粗体（x+1 双画）介于 Regular/Bold 之间
+            _exitFont = CreateExitFont(out _exitFontFaux);
+        }
+
+        /// <summary>菜单字体回退链：Noto Sans SC Medium（思源黑体 500，原生"加粗一点点"）
+        /// → DengXian（等线，Win10/11 自带）→ Microsoft YaHei UI → 系统默认。
+        /// 其他电脑缺字体时静默降级，不会回退成默认丑字体，也不会抛异常。
+        /// 思源/等线为 TrueType 各字重独立 family，按 family 名检测存在性。</summary>
+        private Font CreateExitFont(out bool needsFaux)
+        {
+            try
+            {
+                var families = FontFamily.Families;
+                // 1) 思源黑体 Medium：真字重 500，粗细正好（无需伪粗体）
+                var noto = Array.Find(families, f => string.Equals(f.Name, "Noto Sans SC Medium", StringComparison.OrdinalIgnoreCase));
+                if (noto is not null) { needsFaux = false; return new Font(noto, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
+                // 2) 等线：Win10/11 自带，商务现代
+                var deng = Array.Find(families, f => string.Equals(f.Name, "DengXian", StringComparison.OrdinalIgnoreCase));
+                if (deng is not null) { needsFaux = true; return new Font(deng, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
+                // 3) 微软雅黑：最通用兜底
+                var yahei = Array.Find(families, f => string.Equals(f.Name, "Microsoft YaHei UI", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(f.Name, "Microsoft YaHei", StringComparison.OrdinalIgnoreCase));
+                if (yahei is not null) { needsFaux = true; return new Font(yahei, 10f * _s, FontStyle.Regular, GraphicsUnit.Point); }
+            }
+            catch { /* 字体枚举失败走默认 */ }
+            needsFaux = true;
+            return new Font(FontFamily.GenericSansSerif, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
         }
 
         protected override CreateParams CreateParams
@@ -1206,14 +1232,16 @@ internal static class Program
             DrawPowerIcon(g, x + iconSize / 2f, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
         
             int tx = x + iconSize + gap;
-            // 伪粗体：Regular 字形画两遍（x+1 偏移，同色无重影），
-            // 粗细介于 Regular 与 Bold 之间——"加粗一点点"（Bold 实测过粗）。
+            // 加粗：思源 Medium 用原生字重（500）；等线/雅黑无中间字重，伪粗体双画
+            // （Regular 字形 x+1 偏移、同色无重影），粗细介于 Regular/Bold 之间。
             var r1 = new Rectangle(tx, item.Y, m1.Width + (int)(4 * s), item.Height);
             TextRenderer.DrawText(g, "退", _exitFont, r1, TextBlack, TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(g, "退", _exitFont, new Rectangle(r1.X + 1, r1.Y, r1.Width, r1.Height), TextBlack, TextFormatFlags.VerticalCenter);
+            if (_exitFontFaux)
+                TextRenderer.DrawText(g, "退", _exitFont, new Rectangle(r1.X + 1, r1.Y, r1.Width, r1.Height), TextBlack, TextFormatFlags.VerticalCenter);
             var r2 = new Rectangle(tx + m1.Width + letterSpacing, item.Y, m2.Width + (int)(4 * s), item.Height);
             TextRenderer.DrawText(g, "出", _exitFont, r2, TextBlack, TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(g, "出", _exitFont, new Rectangle(r2.X + 1, r2.Y, r2.Width, r2.Height), TextBlack, TextFormatFlags.VerticalCenter);
+            if (_exitFontFaux)
+                TextRenderer.DrawText(g, "出", _exitFont, new Rectangle(r2.X + 1, r2.Y, r2.Width, r2.Height), TextBlack, TextFormatFlags.VerticalCenter);
         }
 
         /// <summary>电源图标，复刻「电源.svg」（#D81E06，顶部开口圆环 + 圆头竖线）。
