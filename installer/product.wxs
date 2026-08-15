@@ -52,19 +52,16 @@
       <Directory Id="ProgramMenuDir" Name="dsh-launcher" />
     </StandardDirectory>
 
-    <!-- Main is always installed; the three optional features map to the wizard checkboxes
-         (Level elements turn the feature off when the matching checkbox is unchecked). -->
+    <!-- Main is always installed; the two shortcut features map to the wizard checkboxes
+         (Level elements turn the feature off when the matching checkbox is unchecked).
+         自启标志由 SetAutoStartFlag CA 直接写注册表（不再使用 Feature Level 或
+         Component 条件：MSI 在修改安装场景下对 Absent feature / 已安装组件的条件
+         均不重新评估，0.2.4/0.2.5 实测）。 -->
     <Feature Id="Main" Title="dsh-launcher" Description="dsh-launcher application files" Level="1">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="UninstallShortcut" />
       <ComponentRef Id="CurrentProductCodeReg" />
       <ComponentRef Id="DisplayIconReg" />
-    </Feature>
-    <Feature Id="AutoStart" Title="开机自启" Description="登录时静默启动 dsh 服务（壳首次启动时写入当前用户自启项，卸载时移除）" Level="1">
-      <!-- 注意：MSI 条件中非空字符串"0"会被当作 true，`NOT AUTO_START_OPTION` 对默认值 "0"
-           不生效；必须用显式数值比较（勾选=1 才安装）。默认不勾选 = 默认不安装自启（省内存）。 -->
-      <Level Value="0" Condition="AUTO_START_OPTION &lt;&gt; 1" />
-      <ComponentRef Id="AutoStartFlag" />
     </Feature>
     <Feature Id="DesktopShortcut" Title="桌面快捷方式" Description="在桌面创建 dsh-launcher 快捷方式" Level="1">
       <Level Value="0" Condition="NOT DESKTOP_SHORTCUT_OPTION" />
@@ -133,6 +130,15 @@
 <CustomAction Id="RemoveAutoRun" BinaryRef="FolderPickerCa"
                   DllEntry="RemoveAutoRun"
                   Execute="immediate" Return="ignore" />
+    <!-- 安装/修改时自启两级落地：AUTO_START_OPTION=1（checkbox 勾选）时写
+         1) HKLM\Software\dsh-launcher\AutoStartWanted=1（机器级意图标志）；
+         2) HKCU Run dsh-launcher（当前用户登录自启，装完直接重启即生效，
+            无需先启动壳——0.2.5 实测仅靠壳首启自愈则该场景永远不落地）。
+         不使用组件条件（Feature Level / Component Condition 在修改安装时
+         不重新评估，实测失效）。 -->
+    <CustomAction Id="SetAutoStartFlag" BinaryRef="FolderPickerCa"
+                  DllEntry="SetAutoStartFlag"
+                  Execute="immediate" Return="ignore" />
     <!-- 安装前置检查（用户要求）：.NET Desktop Runtime 10 与 Node.js 缺失时弹窗引导下载。
          Type-38 外部 exe（客户端进程内 MessageBox）。调度见下方 Fragment 的 InstallUISequence
          （Sequence=1 最早执行，客户端 UI 上下文、弹窗可见）；Return="check" 使缺失/取消
@@ -150,12 +156,12 @@
     </InstallUISequence>
     <InstallExecuteSequence>
       <Custom Action="CheckPrereq" Sequence="1" Condition="NOT Installed" />
+      <!-- 安装/修改时自启两级落地（AUTO_START_OPTION=1 时触发：写 HKLM 标志 + HKCU Run）。
+           调度在 InstallValidate 之后：属性已从命令行/UI 确定，INSTALLFOLDER 已解析。 -->
+      <Custom Action="SetAutoStartFlag" After="InstallValidate" Condition="AUTO_START_OPTION = &quot;1&quot;" />
       <!-- 卸载时清理当前用户 HKCU Run 自启值与 HKLM 意图标志（REMOVE=ALL：完整卸载）。
-           必须由 CA 兜底而不能依赖组件机制：Level 条件（AUTO_START_OPTION <> 1）在
-           卸载时重新评估，属性已不存在 → Level=0（feature 禁用），MSI 对禁用 feature
-           的组件在卸载时不请求移除——实测 Installed: Local 但 Request: Null，注册表值
-           残留。NOT UPGRADINGPRODUCTCODE：被升级卸载时不触发（升级后壳首启按新包
-           标志重新落地，用户已启用的自启跨版本保留）。 -->
+           NOT UPGRADINGPRODUCTCODE：升级不触发（升级后壳首启按新包标志重新落地，
+           用户已启用的自启跨版本保留）。 -->
       <Custom Action="RemoveAutoRun" After="InstallInitialize" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
@@ -208,19 +214,10 @@
                      KeyPath="yes" />
     </Component>
 
-    <!-- 自启意图标志（机器级）：per-machine 提权安装直接写 HKCU Run 不可靠（值落到
-         提升上下文或被静默丢弃，0.2.3 issue 实测勾选也不写入任何用户 hive）。改为：
-         MSI 只落 HKLM 意图标志（可靠、随卸载自动清除），壳 DshWeb.exe 首次启动读到
-         标志后以当前用户身份补写 HKCU Run（EnsureAutoStartRequested）；卸载时
-         HKCU Run 由 RemoveAutoRun CA（用户上下文）清理。 -->
-    <Component Id="AutoStartFlag" Directory="INSTALLFOLDER" Guid="*">
-      <RegistryValue Root="HKLM"
-                     Key="Software\dsh-launcher"
-                     Name="AutoStartWanted"
-                     Value="1"
-                     Type="integer"
-                     KeyPath="yes" />
-    </Component>
+    <!-- 自启意图标志由 SetAutoStartFlag CA 直接写 HKLM（不再使用组件机制）。
+         原因：MSI 的 Feature Level 条件和 Component 条件在修改安装场景下
+         均不重新评估（0.2.4/0.2.5 实测），导致 checkbox 勾选也不生效。
+         CA 直接操作注册表，所有场景（全新/修改/升级/修复）一致可靠。 -->
 
     <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="*">
       <Shortcut Id="DesktopShortcutLnk"

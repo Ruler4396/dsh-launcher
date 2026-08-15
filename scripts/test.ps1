@@ -53,6 +53,18 @@ Assert-True ($vbs -match '\.dsh-web\.log') "start-dsh.vbs 日志重定向到 .ds
 Assert-True ($vbs -match 'Chr\(34\)') "start-dsh.vbs 日志重定向加引号（防用户名含空格/元字符注入，S5）"
 Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
 
+# 自启=拉壳（Run 项直接指向 DshWeb.exe，壳自行拉起服务）：
+# 壳源码 EnsureAutoStartRequested 写 DshWeb.exe（不再 wscript+vbs）
+$shellSrc = Get-Content (Join-Path $root "src\DshShell\Program.cs") -Raw
+Assert-True ($shellSrc -match 'Path\.Combine\(AppContext\.BaseDirectory, "DshWeb\.exe"\)') "壳自启写 DshWeb.exe（拉壳方案）"
+Assert-True ($shellSrc -notmatch 'wscript\.exe.*start-dsh\.vbs.*HKCU') "壳自启不再用 wscript+start-dsh.vbs"
+# 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
+$caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
+Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"
+Assert-True ($caSrc -match 'start-dsh\.vbs') "卸载 CA 兼容清理旧版 start-dsh.vbs 自启值"
+# 安装 CA：SetAutoStartFlag 写 DshWeb.exe（带引号）
+Assert-True ($caSrc -match '\\"" \+ dir \+ "DshWeb\.exe\\""') "安装 CA 写 HKCU Run 指向 DshWeb.exe"
+
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
 try {

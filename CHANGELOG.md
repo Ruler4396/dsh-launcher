@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.5] - 2026-08-15
+
+### 变更
+
+- **自启改为"拉壳"方案**：HKCU Run 的 dsh-launcher 值从 `wscript ...start-dsh.vbs`（静默起服务）改为直接指向 **`DshWeb.exe`**——登录 → 壳窗口出现 → 壳自行探测/拉起 dsh 服务（未运行→跑 start-dsh.vbs + 状态窗，已运行→收养）。壳全程管理服务生命周期，自启不再依赖独立的 vbs 静默服务路径；旧版 wscript+vbs 格式的存量 Run 值会被壳首启自动迁移为新格式
+
+### 修复
+
+- **勾选"开机自启"后重启不自启（0.2.5 发版前实测发现）**：两级落地要求壳首次启动补写 HKCU Run，但用户自然流程是"装完勾选→直接重启"，壳从未运行，HKCU Run 永远不落地。修复：安装 CA 同时写 HKCU Run（UAC 提权下 msiexec 服务进程以发起用户身份运行，写真实用户 hive 可靠），壳首启自愈保留作兜底。
+- **勾选"开机自启"后标志不落地（0.2.4 发版后实测发现）**：0.2.4 使用 MSI Feature Level 条件控制自启标志组件安装，但 MSI 在修改安装场景下对 Absent feature 的 Level 条件不重新评估——实测 AUTO_START_OPTION=1 已设置但 Feature Request 仍为 Null。尝试改用 Component 条件同样失效（条件已写入 MSI 但组件仍被无条件安装）。最终改为 immediate 自定义动作 `SetAutoStartFlag` 直接写 HKLM 注册表值，绕过组件/Feature 条件机制，所有场景（全新安装/修改安装/升级安装/修复）一致可靠。
+
 ## [0.2.4] - 2026-08-15
 
 ### 修复
