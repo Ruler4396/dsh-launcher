@@ -33,12 +33,16 @@ internal static class Program
         if (hasDotNet && hasNode)
             return 0; // 全部满足，继续安装
 
+        // 静默安装（/qn 等无交互上下文）：弹窗无人可点会挂起安装——直接返回 2 中止，
+        // 由安装日志说明原因（用户以 UI 向导安装时弹窗可见、可正常交互）。
+        if (!Environment.UserInteractive)
+            return 2;
+
         string message =
             "检测到缺少以下运行环境，安装后 dsh-launcher 无法正常启动：\n\n"
             + missing.ToString().TrimEnd('\n', '\r')
             + "\n\n是否打开下载页面安装？";
-        var result = MessageBox.Show(message, "dsh-launcher 安装 - 缺少运行环境",
-            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Yes);
+        var result = ShowPrereqDialog(message);
 
         if (result == MessageBoxResult.Yes)
         {
@@ -52,6 +56,31 @@ internal static class Program
             return 3; // 用户去下载了，视为取消本次安装（重新运行向导即可）
         }
         return result == MessageBoxResult.Cancel ? 3 : 2; // 取消=3，否=2
+    }
+
+    /// <summary>弹出前置检查对话框。60 秒无响应自动按"否"（中止安装）——
+    /// 兜底静默/无人值守场景，避免安装进程无限挂起。</summary>
+    private static MessageBoxResult ShowPrereqDialog(string message)
+    {
+        var autoClose = new System.Threading.Timer(_ => { }, null, Timeout.Infinite, Timeout.Infinite);
+        var result = MessageBoxResult.No;
+        var dialog = new MessageBoxWindow(message);
+        var closed = false;
+        // 60 秒后自动关闭（按"否"）
+        autoClose = new System.Threading.Timer(_ =>
+        {
+            if (!closed) { closed = true; dialog.CloseWith(MessageBoxResult.No); }
+        }, null, TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
+        try
+        {
+            result = dialog.ShowDialogAndGetResult();
+        }
+        finally
+        {
+            closed = true;
+            autoClose.Dispose();
+        }
+        return result;
     }
 
     /// <summary>.NET Desktop Runtime 10：检测 shared 目录下 Microsoft.WindowsDesktop.App 10.x
@@ -131,3 +160,68 @@ internal static class Program
         return int.TryParse(v, out major);
     }
 }
+
+/// <summary>带超时自动关闭的 MessageBox 替代（WPF 窗口）：支持 60 秒后程序化按"否"，
+/// 兜底静默/无人值守场景防挂起。按钮行为与标准 MessageBox 一致（是=打开下载页）。</summary>
+internal sealed class MessageBoxWindow : System.Windows.Window
+{
+    private System.Windows.MessageBoxResult _result;
+    private readonly System.Windows.Controls.WrapPanel _panel = new();
+
+    public MessageBoxWindow(string message)
+    {
+        Title = "dsh-launcher 安装 - 缺少运行环境";
+        Width = 460;
+        SizeToContent = System.Windows.SizeToContent.Height;
+        WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen;
+        ResizeMode = System.Windows.ResizeMode.NoResize;
+        ShowInTaskbar = true;
+
+        var grid = new System.Windows.Controls.StackPanel { Margin = new System.Windows.Thickness(16) };
+        var text = new System.Windows.Controls.TextBlock
+        {
+            Text = message,
+            TextWrapping = System.Windows.TextWrapping.Wrap,
+            Margin = new System.Windows.Thickness(0, 0, 0, 16),
+        };
+        grid.Children.Add(text);
+
+        _panel.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
+        AddButton("是(Y)", System.Windows.MessageBoxResult.Yes, true);
+        AddButton("否(N)", System.Windows.MessageBoxResult.No, false);
+        AddButton("取消", System.Windows.MessageBoxResult.Cancel, false);
+        grid.Children.Add(_panel);
+        Content = grid;
+    }
+
+    private void AddButton(string text, System.Windows.MessageBoxResult result, bool isDefault)
+    {
+        var btn = new System.Windows.Controls.Button
+        {
+            Content = text,
+            MinWidth = 76,
+            Margin = new System.Windows.Thickness(6, 0, 0, 0),
+            IsDefault = isDefault,
+            IsCancel = result == System.Windows.MessageBoxResult.Cancel,
+        };
+        btn.Click += (_, _) => CloseWith(result);
+        _panel.Children.Add(btn);
+    }
+
+    /// <summary>以指定结果关闭（线程安全：任意线程可调用）。</summary>
+    public void CloseWith(System.Windows.MessageBoxResult result)
+    {
+        _result = result;
+        Dispatcher.Invoke(() => Close());
+    }
+
+    /// <summary>显示窗口并返回用户选择（或超时默认"否"）。</summary>
+    public System.Windows.MessageBoxResult ShowDialogAndGetResult()
+    {
+        ShowDialog();
+        return _result;
+    }
+}
+
+
+
