@@ -130,6 +130,12 @@
 <CustomAction Id="RemoveAutoRun" BinaryRef="FolderPickerCa"
                   DllEntry="RemoveAutoRun"
                   Execute="immediate" Return="ignore" />
+    <!-- 卸载清理用户数据（v0.3.0）：只清理 DSH_HOME\dsh-launcher\ 与旧版 .dsh-web*.log，
+         绝不触碰 dsh 生态（profiles/settings.yaml/插件等）；顺带杀死 pid 文件记录的
+         壳托管服务进程（只动我们记录的 PID）。Return="ignore"：清理失败不阻断卸载。 -->
+    <CustomAction Id="CleanUserData" BinaryRef="FolderPickerCa"
+                  DllEntry="CleanUserData"
+                  Execute="immediate" Return="ignore" />
     <!-- 安装/修改时自启两级落地：AUTO_START_OPTION=1（checkbox 勾选）时写
          1) HKLM\Software\dsh-launcher\AutoStartWanted=1（机器级意图标志）；
          2) HKCU Run dsh-launcher（当前用户登录自启，装完直接重启即生效，
@@ -163,6 +169,8 @@
            NOT UPGRADINGPRODUCTCODE：升级不触发（升级后壳首启按新包标志重新落地，
            用户已启用的自启跨版本保留）。 -->
       <Custom Action="RemoveAutoRun" After="InstallInitialize" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <!-- 卸载清理用户数据（v0.3.0，同一调度窗口：完整卸载且非升级链路） -->
+      <Custom Action="CleanUserData" After="RemoveAutoRun" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <!-- license page shown by the WixUI wizard (resolved relative to this file) -->

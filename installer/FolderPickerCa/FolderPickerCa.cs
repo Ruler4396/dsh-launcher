@@ -188,6 +188,77 @@ public static class FolderPickerCa
         return ActionResult.Success;
     }
 
+    /// <summary>卸载清理用户数据（immediate/发起用户上下文，Return="ignore"，v0.3.0）：
+    /// 只清理启动器自有数据——DSH_HOME\dsh-launcher\ 整目录（settings.json 残留、统一日志
+    /// dsh.log、window-state/pending-update/service-pid 等）与旧版 %USERPROFILE%\.dsh-web*.log。
+    /// 硬边界：绝不触碰 DSH_HOME 下其余内容（profiles/、settings.yaml、.credentials.yaml、
+    /// sessions、storages、插件等一切 dsh 生态数据）。同时杀死 pid 文件记录、仍存活的服务
+    /// 进程（只动我们记录的 PID，绝不按进程名批量杀）。任何失败跳过，不阻断卸载。</summary>
+    [CustomAction]
+    public static ActionResult CleanUserData(Session session)
+    {
+        string userProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+        if (string.IsNullOrEmpty(userProfile))
+            userProfile = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
+        string dshHome = Environment.GetEnvironmentVariable("DSH_HOME");
+        if (string.IsNullOrEmpty(dshHome))
+            dshHome = Path.Combine(userProfile, ".dsh");
+        string dataDir = Path.Combine(dshHome, "dsh-launcher");
+        try { session.Log("CleanUserData: dataDir=" + dataDir); } catch { }
+
+        // 1) 清理 pid 文件记录的壳托管服务进程（只动我们记录的 PID）
+        try
+        {
+            if (Directory.Exists(dataDir))
+            {
+                string[] pidFiles = Directory.GetFiles(dataDir, "service-pid-*.txt");
+                foreach (string pf in pidFiles)
+                {
+                    try
+                    {
+                        int pid;
+                        if (int.TryParse(File.ReadAllText(pf).Trim(), out pid) && pid > 0)
+                        {
+                            try
+                            {
+                                System.Diagnostics.Process.Start("taskkill", "/pid " + pid);
+                                System.Threading.Thread.Sleep(500);
+                                System.Diagnostics.Process.Start("taskkill", "/f /pid " + pid);
+                                session.Log("CleanUserData: asked taskkill for pid " + pid);
+                            }
+                            catch (Exception ex) { try { session.Log("CleanUserData: kill failed: " + ex.Message); } catch { } }
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch (Exception ex) { try { session.Log("CleanUserData: pid sweep failed: " + ex.Message); } catch { } }
+
+        // 2) 删除自有数据目录（先文件后子目录，最后空目录本身）
+        try
+        {
+            if (Directory.Exists(dataDir))
+            {
+                foreach (string f in Directory.GetFiles(dataDir))
+                { try { File.Delete(f); } catch { } }
+                foreach (string s in Directory.GetDirectories(dataDir))
+                { try { Directory.Delete(s, true); } catch { } }
+                try { Directory.Delete(dataDir, false); } catch { }
+            }
+        }
+        catch (Exception ex) { try { session.Log("CleanUserData: dir delete failed: " + ex.Message); } catch { } }
+
+        // 3) 旧版日志残留 %USERPROFILE%\.dsh-web*.log（多次打开的滚动/按端口分文件）
+        try
+        {
+            foreach (string f in Directory.GetFiles(userProfile, ".dsh-web*.log"))
+            { try { File.Delete(f); } catch { } }
+        }
+        catch { }
+        return ActionResult.Success;
+    }
+
     /// <summary>安装/修改时根据 AUTO_START_OPTION 属性写自启两级落地：
     /// 1) HKLM 意图标志 AutoStartWanted=1（机器级，其他上下文可读）；
     /// 2) HKCU Run 的 dsh-launcher 值（当前用户登录自启，安装后无需先启动壳）。
