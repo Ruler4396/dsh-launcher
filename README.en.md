@@ -2,12 +2,10 @@
 
 [简体中文](README.md) · [English](README.en.md)
 
-[![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
-[![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
 
-> A lightweight Windows launcher for DeepSeek Harness: autostart at logon + a small WebView2 window instead of a full browser. Double-click to run — no command line needed.
+> A lightweight Windows launcher for DeepSeek Harness. Double-click to run — no command line needed.
 
 | Light | Dark |
 |---|---|
@@ -15,136 +13,45 @@
 
 ## What this is
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) is officially a CLI + web app: you run `npx @deepseek-ai/dsh web` and keep a browser tab open. dsh-launcher is a **native Windows shell**: double-click to run, optional autostart at logon, a small standalone window, with service lifecycle and error diagnostics handled for you — dsh feels like a normal desktop app.
+A native Windows shell for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`): double-click to run, optional autostart at logon, a small standalone window, with service lifecycle and error diagnostics handled for you. The installer is **~1.4MB**; it does not bundle dsh, and missing dependencies (Node.js, etc.) are filled on demand without touching system settings.
 
-It is not an official product and does not bundle dsh; the installer is **~1.4MB**, and runtime dependencies are filled on demand (missing Node.js? it downloads a portable copy to your user directory without touching system settings).
-
-## Design philosophy
-
-**Restraint.** dsh-launcher does one thing: give you the original dsh experience (the same Web UI, the same data, the same plugins) and handle the desktop plumbing — launching, lifecycle, error diagnostics. Nothing else gets added: no built-in file manager, no built-in terminal, no custom frontend. It is a shell, not a platform; the ~1.4MB installer is the result of that restraint.
-
-## Non-goals
-
-- **Not an official product** — not affiliated with DeepSeek / DeepSeek AI (see the disclaimer at the bottom).
-- **Not a desktop IDE** — no file panel, no built-in terminal. It is a shell that starts dsh, manages its lifecycle, and keeps failures diagnosable.
+**Restraint**: it only recreates the original dsh experience — no file panel, no built-in terminal, nothing extra.
 
 ## Install
 
-**Option 1: MSI installer (recommended for beginners)**
+**MSI (recommended for beginners)**: download `dsh-launcher-<version>.msi` from [Releases](https://github.com/Ruler4396/dsh-launcher/releases), double-click to install (choose autostart in the wizard). Uninstall: Settings → Apps → dsh-launcher.
 
-1. Download `dsh-launcher-<version>.msi` from [Releases](https://github.com/Ruler4396/dsh-launcher/releases)
-2. Double-click and follow the wizard (choose **autostart** / desktop / start menu shortcuts, custom folder supported)
-3. Install and uninstall prompt once for **UAC elevation** (per-machine install, default `%ProgramFiles%\dsh-launcher`)
-4. Uninstall: Settings → Apps → dsh-launcher (or the "卸载 dsh-launcher" Start Menu entry)
+**Portable ZIP**: download `dsh-launcher-windows-<version>.zip`, extract, run `DshWeb.exe`; delete the folder to uninstall.
 
-**Option 2: portable ZIP**
-
-1. Download `dsh-launcher-windows-<version>.zip` (e.g. `dsh-launcher-windows-0.3.1.zip`) and extract anywhere
-2. Run `DshWeb.exe`
-3. Uninstall: delete the folder (use `uninstall-autostart.cmd` to remove autostart/shortcuts)
-
-## Requirements
-
-| Dependency | Why | How to get |
-|---|---|---|
-| **Node.js 18+** | required to run the dsh service (a global dsh install is optional — the launcher falls back to `npx -y @deepseek-ai/dsh`) | https://nodejs.org (LTS, default install) |
-| **.NET Desktop Runtime 10** | required to run the shell | if double-click does nothing, run `winget install Microsoft.DotNet.DesktopRuntime.10` |
-| **WebView2 Runtime** | renders the window | usually preinstalled on Windows 10/11; if missing the launcher auto-installs it silently on startup (E1006 only if that fails) |
+> Double-click does nothing? Run `check-prereq.cmd` from the extracted folder — it checks .NET / WebView2 / Node and prints install commands for anything missing.
 
 ## Features
 
-- 🚀 **Autostart** — opens the launcher window at logon (the shell then starts the dsh service and waits until ready)
-- 🪟 **Lightweight window** — WebView2 (~50–150MB, freed on close) instead of a full browser
-- 🔌 **Auto-launch** — starts the service if not running and waits until ready (first run downloads components, with progress)
-- 🔔 **Clear error prompts** — missing Node.js / download failures / port conflicts all show an explicit dialog
-- 🎛️ **Node service lifetime** — switch always-on / tray-resident / follow-window in the dsh settings page (companion plugin); decides whether the node service keeps running after the window closes
-- 🌗 **Theme follow** — the window title bar (custom-painted) and window/taskbar icons follow the dsh theme instantly (dark/light), no restart
-- 🖥️ **On-demand tray** — hidden by default; only shown in **tray-resident** mode (window hides to tray, needs a way back) or temporarily when an update notification is pending
-- 🧰 **One-command diagnostics** — `DshWeb.exe --diagnose` packages a sanitized log/environment/error-code summary into a zip (no usernames or secrets) for issue reports
-- 📋 **Unified logging** — shell decisions and dsh service output share a single log file `~/.dsh\dsh-launcher\dsh.log` (JSON Lines + raw output, controlled by `DSH_LOG_LEVEL`; the go-to when startup fails)
+- Autostart · standalone WebView2 window · auto-launch the service and wait until ready
+- Error dialogs carry error codes; unified log at `~/.dsh\dsh-launcher\dsh.log`
+- `DshWeb.exe --diagnose` exports a sanitized diagnostic package in one command
+- Service lifetime: follow-window / always-on / tray-resident (see "Plugin")
+- Theme follow · window position memory · deferred dsh updates (no session interruption)
 
-## It won't start? Check by symptom
+## Plugin
 
-> Most "nothing happens" cases come from **missing dependencies**. First confirm Node.js and .NET are installed (see Requirements), then check the symptom.
+Install [dsh-launcher-lifetime](https://github.com/Ruler4396/dsh-launcher-lifetime) to switch service modes from the dsh settings page:
 
-**Symptom 1: double-click does nothing (no window, no dialog)**
-
-Mostly a missing **.NET Desktop Runtime 10**. In PowerShell:
-
-```powershell
-winget install Microsoft.DotNet.DesktopRuntime.10
+```sh
+dsh plugin add dsh-launcher-lifetime
 ```
-
-Then double-click again. Still nothing → see "View the log" below.
-
-> Tip: during **MSI install** the prerequisite check offers an "Auto-install (A)" button that runs winget to install .NET for you.
->
-> Tip: the **portable ZIP** ships a `check-prereq.cmd` (pure cmd, zero dependencies) — run it to check .NET / WebView2 / Node in one go; it prints install commands and download links for anything missing.
-
-**Symptom 2: dialog "Node.js not detected, cannot start the dsh service"**
-
-Since v0.3.0 the launcher shows a one-time confirm and **auto-downloads a portable Node.js** (LTS, SHA256-verified, mirror fallback, installed to `%LOCALAPPDATA%\dsh-launcher\env\node\` without touching system settings). Or install [Node.js](https://nodejs.org) 18+ yourself (LTS, default options), then **reopen** dsh-launcher.
-
-**Symptom 3: stuck on "starting dsh service… first run downloads components"**
-
-The first run downloads the dsh components via npx — **it can take a few minutes** depending on your network. Wait:
-- download finishes → the window opens automatically
-- after 3 minutes a dialog explains the reason (slow download / network issue) and shows the log tail
-
-For slow networks you can switch npm to a mirror and retry:
-
-```powershell
-npm config set registry https://registry.npmmirror.com
-```
-
-**Symptom 4: dialog "dsh service could not be reached" / "service unavailable"**
-
-Open the log and check the last lines: `~/.dsh\dsh-launcher\dsh.log`
-
-- `npm ERR` or network errors → **network/proxy issue**, retry or change network
-- `'npx' is not recognized` → **Node.js is not installed properly**, reinstall (Symptom 2)
-- `EADDRINUSE` → **port 3080 is taken**, see Symptom 5
-
-**Symptom 5: port 3080 is used by another program**
-
-Set `DSH_WEB_PORT` to another port and restart — the shell starts the dsh service on that port automatically (simplest, recommended):
-
-```powershell
-$env:DSH_WEB_PORT = "3090"
-```
-
-If you manage the service yourself, point `DSH_WEB_URL` at it instead (the shell will not auto-start the service — see [docs/DETAILS.md](docs/DETAILS.md)):
-
-```powershell
-$env:DSH_WEB_URL = "http://127.0.0.1:3090"
-```
-
-**View the log:**
-
-```powershell
-Get-Content "$env:USERPROFILE\.dsh\dsh-launcher\dsh.log" -Tail 30
-```
-
-The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback (a `[start-dsh] using ...` line). The JSON Lines rows record every shell decision point (single instance, port probe, service start, readiness, window shown); error dialogs carry `[E####]` codes. Attach `~/.dsh\dsh-launcher\dsh.log` when reporting an issue.
 
 ## FAQ
 
-**Q: MSI vs ZIP?**
-Same contents. MSI adds a standard install/uninstall flow (recommended); ZIP is portable.
-
-**Q: Can I choose the install folder? Will uninstall delete other files in the same folder?**
-Yes to custom folder; uninstall only removes the app's own files and keeps a non-empty folder (verified).
-
-**Q: The dsh service keeps using hundreds of MB of memory?**
-dsh is a full service (with web UI); staying resident is by design (instant open). To save memory: dsh settings page → **"Node 服务驻留 / Node service lifetime"** → **follow-window** (service stops on window close and is auto-restarted next time).
-
-**Q: Which dsh versions are supported?**
-The launcher does not pin a dsh version — it follows the version you have installed locally (or the latest pulled via npx). The shell only calls the stable `dsh web` CLI interface, so dsh upgrades generally need no launcher update; if upstream changes the start arguments or default port, the `DSH_WEB_URL` env var covers it without a rebuild (see [docs/DETAILS.md](docs/DETAILS.md) → Version compatibility).
+- **MSI vs ZIP?** Same contents; the MSI adds a standard install/uninstall flow.
+- **Does uninstall delete my dsh data?** No — only the launcher's own data; `profiles/`, `settings.yaml`, etc. stay untouched.
+- **The service uses a lot of memory?** dsh is a full service; staying resident is by design. For less memory choose "follow-window".
+- **Port 3080 taken?** Set `DSH_WEB_PORT=3090` and restart.
+- **Something wrong?** Run `check-prereq.cmd`; if it persists, `DshWeb.exe --diagnose` exports a sanitized package to attach to an [issue](https://github.com/Ruler4396/dsh-launcher/issues/new/choose). Log: `~/.dsh\dsh-launcher\dsh.log`.
 
 ## More
 
-- Implementation / Security / Release policy / Building from source: [docs/DETAILS.md](docs/DETAILS.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
+Implementation / Security / Building: [docs/DETAILS.md](docs/DETAILS.md) · Changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ## Disclaimer & License
 
