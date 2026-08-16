@@ -15,9 +15,9 @@
 
 ## 这是什么
 
-一个 Windows 原生壳：双击启动 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）、可开机自启、独立小窗口，并把服务生命周期与出错诊断管起来。安装包只有 **~1.4MB**，不内置 dsh；缺失的依赖（Node.js 等）按需补齐，不改系统环境。
+一个 Windows 原生壳：双击启动 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）、可设置开机自启，高度重视服务生命周期与出错诊断。安装包大小仅为 **~1.4MB**，不内置 dsh；缺失的依赖（Node.js 等）按需补齐，不改动系统环境。
 
-**克制**：只还原 dsh 原版体验，不做文件面板、内置终端等额外功能。
+**克制**：本项目意在打造一个舒适的 dsh 原版体验，不添加文件面板、内置终端等额外功能，一切交给dsh的插件，由用户自行决定。仅在推出安全性更新和dsh版本更新时弹出系统通知。
 
 ## 安装
 
@@ -31,13 +31,13 @@
 
 - 开机自启 · 独立小窗口（WebView2）· 自动拉起服务并等待就绪
 - 出错弹窗带错误码，统一日志 `~/.dsh\dsh-launcher\dsh.log`
-- `DshWeb.exe --diagnose` 一键导出脱敏诊断包
+- `DshWeb.exe --diagnose` 一键导出信息脱敏诊断包
 - 服务生命周期：跟随窗口 / 常驻 / 托盘驻留（见下"插件"）
 - 主题跟随 · 窗口位置记忆 · dsh 延迟更新（不打断会话）
 
-## 插件
+## 配套插件
 
-安装 [dsh-launcher-lifetime](https://github.com/Ruler4396/dsh-launcher-lifetime) 后，可在 dsh 设置页切换服务模式：
+安装 [dsh-launcher-lifetime](https://github.com/Ruler4396/dsh-launcher-lifetime) 后，拥有三种node.js的驻留模式（随窗口驻留、常驻、随托盘驻留），可在 dsh 设置页“Node服务驻留”中切换：
 
 ```sh
 dsh plugin add dsh-launcher-lifetime
@@ -46,10 +46,10 @@ dsh plugin add dsh-launcher-lifetime
 ## 常见问题
 
 - **MSI 和 ZIP 有区别吗？** 内容相同；MSI 有标准安装/卸载流程。
-- **卸载会删 dsh 数据吗？** 不会——只清启动器自有数据，`profiles/`、`settings.yaml` 等原样保留。
-- **服务占内存？** dsh 是完整服务，常驻是设计；想省内存选"跟随窗口"。
+- **卸载会删 dsh 数据和插件吗？** 不会——只清启动器自有数据，`profiles/`、`settings.yaml` 等原样保留。
+- **服务占内存？** dsh 是完整服务，必须常驻node.js。
 - **端口 3080 被占用？** 设置 `DSH_WEB_PORT=3090` 后重启。
-- **遇到问题？** 跑 `check-prereq.cmd`；仍不行用 `DshWeb.exe --diagnose` 导出诊断包，附到 Issue（[模板](https://github.com/Ruler4396/dsh-launcher/issues/new/choose)）。日志在 `~/.dsh\dsh-launcher\dsh.log`。
+- **遇到问题？** 运行 `check-prereq.cmd`；仍不行用 `DshWeb.exe --diagnose` 导出诊断包，提交至 Issue（[模板](https://github.com/Ruler4396/dsh-launcher/issues/new/choose)）。日志在 `~/.dsh\dsh-launcher\dsh.log`。
 
 ## 更多
 
