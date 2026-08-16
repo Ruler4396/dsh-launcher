@@ -21,19 +21,10 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Run unit tests
-        shell: pwsh
-        run: |
-          dotnet test tests/DshShell.Tests -c Release --nologo 2>&1 | Tee-Object -FilePath test-output.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Select-String -Path test-output.log -Pattern '^\s*(Failed|失败) ' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
-            exit $code
-          }
-
-      - name: Run script/integration checks (test.ps1, no -Smoke)
-        # 质量治理阶段四：静态断言 + uninstall/-CleanData 隔离行为测试纳入每次 PR/push 的 gate
-        #（防 R05 数据边界 / R06 脚本行为漂移）。纯只读 + %TEMP% 隔离，runner 上安全。
+      - name: Run tests (unit + script/integration checks, no -Smoke)
+        # P1-5：test.ps1 是唯一测试入口（第 1 节内部已跑 dotnet test，此前独立
+        # "Run unit tests" 步骤导致单测在 CI 双跑）；含静态断言 + uninstall/-CleanData
+        # 隔离行为测试（防 R05 数据边界 / R06 脚本行为漂移）。纯只读 + %TEMP% 隔离，runner 上安全。
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 2>&1 | Tee-Object -FilePath test-scripts.log
@@ -48,9 +39,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-output
-          path: |
-            test-output.log
-            test-scripts.log
+          path: test-scripts.log
 
       - name: Build release package (zip + msi + checksums)
         shell: pwsh
