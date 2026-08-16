@@ -1,11 +1,14 @@
 # dsh-launcher
 
+<p align="center">
 [简体中文](../README.md) · [English](README.en.md)
+</p>
 
+<p align="center">
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
-[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
+</p>
 
 > A lightweight Windows launcher for DeepSeek Harness. Double-click to run — no command line needed.
 
@@ -40,7 +43,7 @@ A native Windows shell for [DeepSeek Harness](https://github.com/deepseek-ai/dee
 Install [dsh-launcher-lifetime](https://github.com/Ruler4396/dsh-launcher-lifetime) to switch service modes from the dsh settings page:
 
 ```sh
-dsh plugin add dsh-launcher-lifetime
+dsh plugin --profile web add dsh-launcher-lifetime
 ```
 
 ## FAQ
@@ -58,3 +61,10 @@ Implementation / Security / Building: [docs/DETAILS.md](docs/DETAILS.md) · Chan
 ## Disclaimer & License
 
 Independent third-party tool, not affiliated with DeepSeek / DeepSeek AI. The window icon uses the DeepSeek brand mark, copyright of DeepSeek, used locally only. [MIT](LICENSE) © dsh-launcher contributors
+
+## Friendly Links
+
+<p align="center">
+[![dsh.so](https://www.dsh.so/badges/dsh-launcher.svg)](https://www.dsh.so/artifact/dsh-launcher/)
+[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
+</p>
