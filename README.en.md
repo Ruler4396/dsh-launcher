@@ -13,6 +13,18 @@
 |---|---|
 | ![Light mode](assets/screenshot-light.png) | ![Dark mode](assets/screenshot-dark.png) |
 
+## What this is
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) is officially a CLI + web app: you run `npx @deepseek-ai/dsh web` and keep a browser tab open. dsh-launcher is a **native Windows shell**: double-click to run, optional autostart at logon, a small standalone window, with service lifecycle and error diagnostics handled for you — dsh feels like a normal desktop app.
+
+It is not an official product and does not bundle dsh; the installer is **~1.4MB**, and runtime dependencies are filled on demand (missing Node.js? it downloads a portable copy to your user directory without touching system settings).
+
+## Non-goals
+
+- **Not an official product** — not affiliated with DeepSeek / DeepSeek AI (see the disclaimer at the bottom).
+- **Not cross-platform** — Windows 10/11 only (a deliberate choice for the WebView2 window).
+- **Not a desktop IDE** — no file panel, no built-in terminal. It is a shell that starts dsh, manages its lifecycle, and keeps failures diagnosable.
+
 ## Install
 
 **Option 1: MSI installer (recommended for beginners)**
@@ -44,6 +56,8 @@
 - 🔔 **Clear error prompts** — missing Node.js / download failures / port conflicts all show an explicit dialog
 - 🎛️ **Node service lifetime** — switch always-on / tray-resident / follow-window in the dsh settings page (companion plugin); decides whether the node service keeps running after the window closes
 - 🌗 **Theme follow** — the window title bar (custom-painted) and window/taskbar icons follow the dsh theme instantly (dark/light), no restart
+- 🖥️ **On-demand tray** — hidden by default; only shown in **tray-resident** mode (window hides to tray, needs a way back) or temporarily when an update notification is pending
+- 🧰 **One-command diagnostics** — `DshWeb.exe --diagnose` packages a sanitized log/environment/error-code summary into a zip (no usernames or secrets) for issue reports
 - 📋 **Unified logging** — shell decisions and dsh service output share a single log file `~/.dsh\dsh-launcher\dsh.log` (JSON Lines + raw output, controlled by `DSH_LOG_LEVEL`; the go-to when startup fails)
 
 ## It won't start? Check by symptom
@@ -61,6 +75,8 @@ winget install Microsoft.DotNet.DesktopRuntime.10
 Then double-click again. Still nothing → see "View the log" below.
 
 > Tip: during **MSI install** the prerequisite check offers an "Auto-install (A)" button that runs winget to install .NET for you.
+>
+> Tip: the **portable ZIP** ships a `check-prereq.cmd` (pure cmd, zero dependencies) — run it to check .NET / WebView2 / Node in one go; it prints install commands and download links for anything missing.
 
 **Symptom 2: dialog "Node.js not detected, cannot start the dsh service"**
 
