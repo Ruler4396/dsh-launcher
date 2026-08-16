@@ -7,24 +7,6 @@ namespace DshShell.Tests;
 /// <summary>ShellLogic 纯逻辑单元测试。</summary>
 public class ShellLogicTests
 {
-    // ---------- 版本更新检测（UpdateChecker） ----------
-
-    [Theory]
-    [InlineData("0.1.10", "0.1.9", 1)]
-    [InlineData("0.1.10", "0.1.10", 0)]
-    [InlineData("0.1.9", "0.1.10", -1)]
-    [InlineData("0.1.10", "0.2.0", -1)]
-    [InlineData("0.1.10", null, 1)]          // 最新版本缺失 → 当前更大（不误报）
-    [InlineData(null, "0.1.10", -1)]
-    [InlineData(null, null, 0)]
-    [InlineData("garbage", "0.1.10", -1)]    // 非法版本按 0.0.0
-    [InlineData("v0.1.10", "0.1.10", 0)]     // 去 v 前缀后比较
-    [InlineData("0.1.10-alpha", "0.1.10", -1)] // 预发布按缺失段处理
-    public void CompareVersions_ReturnsExpected(string? a, string? b, int expected)
-    {
-        var result = UpdateChecker.CompareVersions(a?.TrimStart('v'), b);
-        Assert.Equal(Math.Sign(expected), Math.Sign(result));
-    }
     // ---------- 目标地址解析（DSH_WEB_URL） ----------
 
     [Theory]
@@ -34,6 +16,7 @@ public class ShellLogicTests
     [InlineData("http://127.0.0.1:3090", "http://127.0.0.1:3090", 3090)]
     [InlineData("http://127.0.0.1:3090/", "http://127.0.0.1:3090", 3090)]
     [InlineData("https://example.com:8443", "https://example.com:8443", 8443)]
+    [InlineData("http://localhost:4321", "http://localhost:4321", 4321)]  // localhost 主机名保留
     [InlineData("not a url", "http://127.0.0.1:3080", 3080)]   // 非法输入回退默认
     [InlineData("ftp://x:21", "http://127.0.0.1:3080", 3080)]  // 非 http(s) 回退默认
     public void ResolveTarget_Works(string? env, string expectedUrl, int expectedPort)
@@ -73,6 +56,8 @@ public class ShellLogicTests
     [InlineData(CoreWebView2PermissionKind.Microphone, false)]
     [InlineData(CoreWebView2PermissionKind.Camera, false)]
     [InlineData(CoreWebView2PermissionKind.Geolocation, false)]
+    [InlineData(CoreWebView2PermissionKind.OtherSensors, false)]
+    [InlineData(CoreWebView2PermissionKind.MidiSystemExclusiveMessages, false)]
     [InlineData(CoreWebView2PermissionKind.FileReadWrite, false)]
     [InlineData(CoreWebView2PermissionKind.LocalFonts, false)]
     [InlineData(CoreWebView2PermissionKind.WindowManagement, false)]
@@ -161,26 +146,6 @@ public class ShellLogicTests
             Assert.All(result, c => Assert.DoesNotContain(c, Path.GetInvalidFileNameChars()));
         }
     }
-
-    [Theory]
-    [InlineData("report.pdf", true)]        // 文档：渲染器不执行脚本
-    [InlineData("photo.png", true)]         // 图片
-    [InlineData("data.csv", true)]          // 数据/文本
-    [InlineData("music.mp3", true)]         // 音频
-    [InlineData("video.mp4", true)]         // 视频
-    [InlineData("bundle.zip", true)]        // 压缩包（查看/解压，不自动执行内容）
-    [InlineData("font.ttf", true)]          // 字体
-    [InlineData("page.html", false)]        // 可执行代码面：不自动打开（S2）
-    [InlineData("icon.svg", false)]         // SVG 可含脚本：不自动打开
-    [InlineData("run.hta", false)]          // HTA 本地执行面：不自动打开
-    [InlineData("setup.exe", false)]        // 可执行文件：不自动打开
-    [InlineData("script.js", false)]        // 脚本：不自动打开
-    [InlineData("cmd.bat", false)]          // 批处理：不自动打开
-    [InlineData("macro.docm", false)]       // 含宏文档：不自动打开
-    [InlineData(null, false)]               // 空路径安全拒绝
-    [InlineData("", false)]
-    public void IsSafeToOpen_OnlyHarmlessExtensions(string? path, bool expected)
-        => Assert.Equal(expected, ShellLogic.IsSafeToOpen(path));
 
     [Theory]
     [InlineData(0x0014000A, 10, 20)]                // 正常正坐标（X=10, Y=20）

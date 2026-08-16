@@ -149,11 +149,21 @@ public static class RuntimeResolver
             if (p is null) return false;
             var outText = p.StandardOutput.ReadToEnd().Trim();
             p.WaitForExit(3000);
-            var v = outText.TrimStart('v');
-            var major = v.Split('.')[0];
-            return int.TryParse(major, out var m) && m >= 18;
+            return IsUsableNodeVersion(outText);
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// Node 可用门槛契约（C10，P1-6）：主版本 ≥18 才算可用（当前 dsh 运行要求）。
+    /// 纯函数（stub 可测），与 dsh 上游要求脱钩时只需改这一处。
+    /// </summary>
+    internal static bool IsUsableNodeVersion(string? versionOutput)
+    {
+        if (string.IsNullOrWhiteSpace(versionOutput)) return false;
+        var v = versionOutput.Trim().TrimStart('v');
+        var major = v.Split('.')[0];
+        return int.TryParse(major, out var m) && m >= 18;
     }
 
     private static string? FindOnPath(string fileName)
