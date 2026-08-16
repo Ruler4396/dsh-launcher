@@ -273,8 +273,18 @@ internal static class Program
     private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     [STAThread]
-    private static async Task Main()
+    private static void Main()
     {
+        // 注意：Main 必须是【同步】签名。实测 .NET 10 对 `async Task Main` 的入口线程
+        // 不应用 STAThread（GetApartmentState()==MTA），而 WebView2 环境创建
+        // （CoreWebView2Environment.CreateAsync → native CreateCoreWebView2EnvironmentWithOptions）
+        // 要求 STA 线程，MTA 下必抛 RPC_E_CHANGED_MODE (0x80010106)——v0.3.0 曾因改为
+        // async Main 引入该回归（0.2.5 同步 Main 正常），安装后首次真实 GUI 启动即报 E1006。
+        // 启动流程中唯一的 await（TryEnsureNodeAsync）用同步等待：其内部 ShowDialog 跑
+        // 嵌套消息循环（窗口仍正常显示/可取消），await 已完成的 task 不漂移线程。
+        // 主窗 form.Load 等事件处理器里的 await 处于 Application.Run 消息循环内，
+        // 有 WindowsFormsSynchronizationContext，续延回到 STA UI 线程，不受影响。
+
         // 进程级 Per-Monitor V2 DPI 感知：必须在任何窗口/控件创建之前调用，
         // 否则 150% 等缩放下 Windows 对 WebView2 内容做位图拉伸（字体/图标模糊，issue #2）。
         // 用 user32 直接调用（WinForms 的 Application.SetHighDpiMode 在部分环境下
@@ -376,7 +386,9 @@ internal static class Program
                 var nodeEnv = RuntimeResolver.ResolveExisting();
                 if (nodeEnv.NodeExe is null)
                 {
-                    if (!await TryEnsureNodeAsync()) return;
+                    // 同步等待（Main 为同步 STA 入口，见 Main 顶部注释）：TryEnsureNodeAsync
+                    // 内部的 ShowDialog 在嵌套消息循环中运行，可正常交互；完成后继续在 STA 线程。
+                    if (!TryEnsureNodeAsync().GetAwaiter().GetResult()) return;
                     nodeEnv = RuntimeResolver.ResolveExisting();
                     if (nodeEnv.NodeExe is null) return;
                 }
