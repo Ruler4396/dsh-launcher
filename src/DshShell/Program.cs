@@ -2909,6 +2909,8 @@ internal static class Program
         private const int WM_NCCALCSIZE = 0x0083;
         private const int WS_CAPTION = 0x00C00000;
         private const int WS_THICKFRAME = 0x00040000;
+        private const int WS_MINIMIZEBOX = 0x00020000;
+        private const int WS_MAXIMIZEBOX = 0x00010000;
         private const int HTCLIENT = 0x0001;
         private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
@@ -2934,8 +2936,11 @@ internal static class Program
                 // 加回 WS_CAPTION|WS_THICKFRAME：恢复 Aero Snap / Win+方向键 / 系统窗口动画与
                 // 任务栏正常交互（FormBorderStyle.None 默认全部剥掉）。原生标题栏/边框区域
                 // 由 WM_NCCALCSIZE 移除，自绘标题栏与 1px 边框视觉不变。
+                // 追加 WS_MINIMIZEBOX|WS_MAXIMIZEBOX：任务栏"再点一次最小化"依赖 WS_MINIMIZEBOX
+                //（Explorer 只对带最小化框的窗口做收起切换——此前任务栏点击只能激活不能隐藏），
+                // 同时恢复 Alt+Space 系统菜单的最小化/最大化项（与自绘标题栏按钮一致）。
                 var cp = base.CreateParams;
-                cp.Style |= WS_CAPTION | WS_THICKFRAME;
+                cp.Style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
                 return cp;
             }
         }

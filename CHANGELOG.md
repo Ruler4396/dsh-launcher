@@ -8,6 +8,7 @@
 
 ### 修复
 
+- **任务栏"再点一次最小化"失效（用户反馈）**：主窗口 `CreateParams` 补回 `WS_MINIMIZEBOX|WS_MAXIMIZEBOX`（此前只补了 `WS_CAPTION|WS_THICKFRAME`，而 Explorer 只对带最小化框的窗口做任务栏收起切换）——任务栏点击现在可正常"打开/收起"切换，Alt+Space 系统菜单同步恢复最小化/最大化项。
 - **启动中途取消不再产生无主服务（P0-1）**：取消启动时若服务已在后台下载/启动，已监听则记录服务 PID 供下次启动接管（此前无 pid 文件 → `TryAdoptOrphanService` 无法认领，服务永久无主占端口）；"取消"从内部错误 E9001 改为独立码 **E2006**。
 - **崩溃留痕（P0-2）**：挂未处理异常钩子（UI 线程 `Application.ThreadException` + 全局 `AppDomain.UnhandledException`），任何崩溃先写 E9001 日志（含异常全文）再退出——此前崩溃零留痕，无法诊断。
 - **进程杀灭加固（P1-3）**：taskkill 加 `/T`（子进程树一并清理）；杀前校验 PID 确在监听目标端口（防 PID 复用误杀无关 node；`SweepStaleServicePid` 对"活着但不监听"的记录改为只清 pid 文件不误杀）。
