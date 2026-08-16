@@ -44,7 +44,7 @@
 - 🔔 **Clear error prompts** — missing Node.js / download failures / port conflicts all show an explicit dialog
 - 🎛️ **Node service lifetime** — switch always-on / tray-resident / follow-window in the dsh settings page (companion plugin); decides whether the node service keeps running after the window closes
 - 🌗 **Theme follow** — the window title bar (custom-painted) and window/taskbar icons follow the dsh theme instantly (dark/light), no restart
-- 📋 **Logging** — dsh service log `%USERPROFILE%\.dsh-web.log`; shell startup trace `DSH_HOME\dsh-launcher\shell.log` (the go-to when startup fails)
+- 📋 **Unified logging** — shell decisions and dsh service output share a single log file `~/.dsh\dsh-launcher\dsh.log` (JSON Lines + raw output, controlled by `DSH_LOG_LEVEL`; the go-to when startup fails)
 
 ## It won't start? Check by symptom
 
@@ -62,7 +62,7 @@ Then double-click again. Still nothing → see "View the log" below.
 
 **Symptom 2: dialog "Node.js not detected, cannot start the dsh service"**
 
-Install [Node.js](https://nodejs.org) 18+ (LTS, default options), then **reopen** dsh-launcher.
+Since v0.3.0 the launcher shows a one-time confirm and **auto-downloads a portable Node.js** (LTS, SHA256-verified, mirror fallback, installed to `%LOCALAPPDATA%\dsh-launcher\env\node\` without touching system settings). Or install [Node.js](https://nodejs.org) 18+ yourself (LTS, default options), then **reopen** dsh-launcher.
 
 **Symptom 3: stuck on "starting dsh service… first run downloads components"**
 
@@ -78,7 +78,7 @@ npm config set registry https://registry.npmmirror.com
 
 **Symptom 4: dialog "dsh service could not be reached" / "service unavailable"**
 
-Open the log and check the last lines: `%USERPROFILE%\.dsh-web.log`
+Open the log and check the last lines: `~/.dsh\dsh-launcher\dsh.log`
 
 - `npm ERR` or network errors → **network/proxy issue**, retry or change network
 - `'npx' is not recognized` → **Node.js is not installed properly**, reinstall (Symptom 2)
@@ -101,10 +101,10 @@ $env:DSH_WEB_URL = "http://127.0.0.1:3090"
 **View the log:**
 
 ```powershell
-Get-Content "$env:USERPROFILE\.dsh-web.log" -Tail 30
+Get-Content "$env:USERPROFILE\.dsh\dsh-launcher\dsh.log" -Tail 30
 ```
 
-The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback (with `DSH_WEB_PORT` set the file is `.dsh-web.<port>.log`). If the service log doesn't explain it, check the **shell startup trace** `DSH_HOME\dsh-launcher\shell.log` (default `~/.dsh\dsh-launcher\shell.log`) — it records every decision point (single instance, port probe, service start, readiness, window shown); attach it when reporting an issue.
+The first log line tells you whether the service was started with a global `dsh` or the `npx` fallback (a `[start-dsh] using ...` line). The JSON Lines rows record every shell decision point (single instance, port probe, service start, readiness, window shown); error dialogs carry `[E####]` codes. Attach `~/.dsh\dsh-launcher\dsh.log` when reporting an issue.
 
 ## FAQ
 
