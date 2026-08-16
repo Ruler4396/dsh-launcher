@@ -2,6 +2,25 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.1] - Unreleased
+
+> v0.3.0 规划中 P2 储备的六项全部落地（commit 27881f8，单测 140/140）：WebView2 缺失自动修复、MSI 安装时 winget 自动装 .NET、SIGINT 优雅终止、Node 默认 LTS 升级、日志超长告警、镜像路由纯函数化。
+
+### 新增
+
+- **WebView2 缺失兜底（自动修复）**：WebView2 初始化失败时，先静默安装 Evergreen Bootstrapper（官方固定链接下载约 2MB → `/silent /install` → 重试初始化），仍失败才弹 E1006；不再一上来就让用户手动装 WebView2。
+- **MSI 前置检查 winget 自动装 .NET**：`PrereqCheck.exe` 缺 .NET 时弹「自动安装(A)」，一键 `winget install Microsoft.DotNet.DesktopRuntime.10 --silent --accept-package-agreements --accept-source-agreements`（10 分钟超时），装完重测满足即继续安装；winget 缺失回退下载页；仅缺 Node 时不显示自动安装按钮。
+- **常驻超长日志告警**：启动早段检测到 `dsh.log` >50MB 且最后写入 >24h → 记 `Warn`（轮转留给下次重启——热轮转会被运行中 node 的句柄阻止，故只告警不折腾）。
+
+### 变更
+
+- **Node 便携默认 LTS 升级**：`v22.16.0` → `v24.15.0`（2026-08 核对：Node 24.x Active LTS，支持至 2028-04，最大化支持窗口）；`DSH_NODE_VERSION` 仍可覆盖。
+- **SIGINT 尽力而为优雅终止**：停服务先 `TryGracefulStop`（`AttachConsole` + `CTRL_BREAK`，node 映射 SIGBREAK 可选清理），无控制台进程时自动降级温和 `taskkill`，仍不退才 `/f`（等待窗 1.5s）——替代此前直白 taskkill。
+
+### 修复
+
+- **便携 Node 镜像路由去重**：`BaseUrls` 重构为纯函数（`DSH_NODE_MIRROR` → 上次成功源 → nodejs.org → npmmirror，`Distinct` 去重），消除返回链重复的可能，新增 4 个单元测试。
+
 ## [0.3.0] - Unreleased
 
 > 底座重构版本：可观测性统一（一份日志、一套错误码、一键诊断）＋更省心的环境与生命周期（便携 Node、延迟更新、托盘按需）＋更强的稳健性（僵尸清理、窗口容灾）＋更清楚的数据边界。重构规划与验收见 [docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)。

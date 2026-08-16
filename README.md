@@ -34,7 +34,7 @@
 |---|---|---|
 | **Node.js 18+** | dsh 服务运行必需（dsh 不必全局安装，启动器会自动用 `npx` 拉取） | https://nodejs.org 下载 LTS 版，默认安装 |
 | **.NET Desktop Runtime 10** | 壳程序运行必需 | 缺失时双击无反应，见下方排障；`winget install Microsoft.DotNet.DesktopRuntime.10` |
-| **WebView2 Runtime** | 窗口渲染用 | Windows 10/11 通常已自带，无需操作 |
+| **WebView2 Runtime** | 窗口渲染用 | Windows 10/11 通常已自带；缺失时启动会自动静默安装（失败才弹 E1006） |
 
 ## 特性
 
@@ -69,6 +69,10 @@ dsh plugin add dsh-launcher-lifetime
 - **一键诊断导出**：命令 `DshWeb.exe --diagnose`（可加 `--min-level warn|error`）把脱敏日志/环境/错误码打包 zip 到"下载"文件夹，反馈时一键携带。
 - **卸载数据边界**：MSI 卸载**自动**清理启动器自有数据（`~/.dsh\dsh-launcher\` 与旧 `.dsh-web*.log`）；便携版需显式 `uninstall-autostart.cmd -CleanData` 才清。两者都**绝不触碰** `profiles/`、`settings.yaml`、插件等 dsh 生态数据。
 
+**v0.3.1 补强**：
+- **WebView2 缺失自动修复**：若 WebView2 Runtime 缺失，启动会静默下载官方 Bootstrapper 自动安装后重试，实在装不上才报 E1006。
+- **安装时自动装 .NET 与 Node 便携升级**：MSI 向导前置检查在缺 .NET 时可一键点「自动安装(A)」跑 winget 装好继续；便携 Node 默认升级到 LTS v24。
+
 ## 启动不了？按现象排查
 
 > 大多数"没反应"都出在**环境依赖**上。先对照上方"环境要求"确认 Node.js 和 .NET 都装了，再按现象查。
@@ -82,6 +86,8 @@ winget install Microsoft.DotNet.DesktopRuntime.10
 ```
 
 装完再双击。仍不行 → 看下方"看日志"。
+
+> 提示：**MSI 安装时**的前置检查已在缺 .NET 时提供「自动安装(A)」按钮，一键 winget 装好后继续，无需手动进 PowerShell。
 
 **现象 2：弹出"未检测到 Node.js，无法启动 dsh 服务"**
 
