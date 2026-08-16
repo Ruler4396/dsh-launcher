@@ -473,8 +473,17 @@ internal static class Program
                 try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
-            status.ShowDialog();
-            var waitResult = pollTask.GetAwaiter().GetResult();
+            string waitResult;
+            if (NoUiMode)
+            {
+                // 测试钩子（DSH_NO_UI=1）：不显示状态窗，等待轮询自然结束（无窗口无弹窗）
+                waitResult = pollTask.GetAwaiter().GetResult();
+            }
+            else
+            {
+                status.ShowDialog();
+                waitResult = pollTask.GetAwaiter().GetResult();
+            }
             Trace($"status window closed, waitResult={waitResult}");
 
             if (waitResult != "ready")
@@ -524,7 +533,16 @@ internal static class Program
 
         if (!PortOpen(Target.Port))
         {
+            // E2004 在 NoUiMode（DSH_NO_UI=1 测试钩子）下同样写日志但不弹窗：
+            // 先于 NoUiMode 退出块判定，保证"外部托管指向死端口"等场景可诊断（负向测试 N1 断言）。
             ShowError(ErrorCodes.E2004, $"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看统一日志：{UnifiedLogPath}");
+            return;
+        }
+
+        // 无 UI 测试钩子：服务就绪后直接退出（不建主窗，供自动化验证拉起链路；服务进程保持由测试管理）
+        if (NoUiMode)
+        {
+            Trace("no-ui mode: service ready; exiting without window");
             return;
         }
 
@@ -716,10 +734,16 @@ internal static class Program
     private static string _pendingLatest = "", _pendingLocal = "";
     private static Form? _pendingForm;
 
+    /// <summary>测试钩子：DSH_NO_UI=1 时所有用户弹窗（ShowError/状态窗/确认框）改为仅写日志，
+    /// 供自动化/负向测试在无窗口环境运行（不打扰真实桌面）。仅测试使用，文档注明。</summary>
+    private static bool NoUiMode =>
+        string.Equals(Environment.GetEnvironmentVariable("DSH_NO_UI"), "1", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>统一出错弹窗（v0.3.0 显式差错控制）：正文含 [错误码]，错误一并写入结构化日志；
     /// 消息文本可 Ctrl+C 复制，便于粘贴到 Issue。
     /// 质量治理 P1-7：可指定日志级别——"用户取消/拒绝"类非故障（如 E1002）传 Info，
-    /// 避免污染错误码汇总；log 参数供"显式 Logger 已写过"的场景去重（如 E4001 双写）。</summary>
+    /// 避免污染错误码汇总；log 参数供"显式 Logger 已写过"的场景去重（如 E4001 双写）。
+    /// DSH_NO_UI=1（测试钩子）时不弹窗，仅写日志并返回 OK（进程可自然退出，无残留窗口）。</summary>
     private static DialogResult ShowError(string code, string detail,
         MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.Warning,
         Logger.Level level = Logger.Level.Error, bool log = true)
@@ -730,6 +754,7 @@ internal static class Program
             else if (level == Logger.Level.Warn) Logger.Warn(detail, code);
             else Logger.Info(detail, code);
         }
+        if (NoUiMode) return DialogResult.OK; // 测试钩子：只记录不弹窗
         return MessageBox.Show($"[{code}] {ErrorCodes.Describe(code)}\n\n{detail}", "DeepSeek Harness", buttons, icon);
     }
 
@@ -807,6 +832,12 @@ internal static class Program
     /// 返回是否已具备可用 Node。</summary>
     private static async Task<bool> TryEnsureNodeAsync()
     {
+        // 测试钩子：DSH_NO_UI 时不弹确认框，直接视为拒绝（自动化环境不打断）
+        if (NoUiMode)
+        {
+            ShowError(ErrorCodes.E1002, "未安装 Node.js（DSH_NO_UI 模式：不自动下载）。", level: Logger.Level.Info);
+            return false;
+        }
         var ask = MessageBox.Show(
             "未检测到 Node.js（dsh 服务运行必需）。\n\n是否自动下载便携版 Node.js 到用户目录？\n" +
             "（约 30MB，仅用于本启动器，不改动系统环境；版本采用 LTS 固定版）",
@@ -824,7 +855,7 @@ internal static class Program
         {
             try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        status.ShowDialog();
+        if (NoUiMode) await task; else status.ShowDialog();
         var (ok, code, detail) = await task;
         if (!ok)
         {
@@ -1083,6 +1114,7 @@ internal static class Program
     /// </summary>
     private static void TryPromptOldVersionCleanup()
     {
+        if (NoUiMode) return; // 测试钩子：不弹确认框（自动化环境不打断）
         try
         {
             // 当前产品代码（安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）：永远不清理自己

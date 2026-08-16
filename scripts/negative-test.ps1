@@ -49,6 +49,29 @@ if (-not $baseFull.StartsWith($tempFull, [System.StringComparison]::OrdinalIgnor
     Write-Host "[FATAL] 隔离区不在 %TEMP% 内，拒绝执行" -ForegroundColor Red; exit 2
 }
 
+# 前置清理：杀掉上次运行可能残留的、监听测试端口的 node 服务（kill 壳不会停服务，
+# 残留服务占住 39011 会让 N3 的"端口未开"分支失效）。只动测试端口，身份校验后才杀。
+function Stop-TestPortListener([int]$port) {
+    $out = netstat -ano -p tcp 2>$null
+    foreach ($line in $out) {
+        if ($line -match "LISTENING" -and $line -match ":$port ") {
+            $pid2 = ($line.Trim() -split '\s+')[-1]
+            if ($pid2 -match '^\d+$') {
+                try {
+                    $proc = Get-Process -Id ([int]$pid2) -ErrorAction Stop
+                    if ($proc.ProcessName -eq "node") { Stop-Process -Id ([int]$pid2) -Force -ErrorAction SilentlyContinue }
+                } catch { }
+            }
+        }
+    }
+}
+Stop-TestPortListener 39011
+Stop-TestPortListener 39871
+Stop-TestPortListener 39872
+Stop-TestPortListener 39874
+Stop-TestPortListener 39875
+Stop-TestPortListener 39876
+
 # 真实环境污染防护：壳启动早期若读到 HKLM AutoStartWanted=1 会把 HKCU Run 改写为测试 exe 路径——
 # 备份原值，结束恢复（不打扰真实用户的自启设置）。
 $runKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
@@ -66,7 +89,8 @@ function Start-ShellExe([string]$case, [hashtable]$env2, [int]$waitSec = 5) {
     $psi.FileName = $Exe
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
-    # 显式覆盖继承的 dsh 环境变量（本机会话可能带 DSH_WEB_URL/DSH_HOME，会污染隔离）
+    # 无 UI 测试钩子 + 显式覆盖继承的 dsh 环境变量（本机会话可能带 DSH_WEB_URL/DSH_HOME，会污染隔离）
+    $psi.EnvironmentVariables["DSH_NO_UI"] = "1"
     $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
     $psi.EnvironmentVariables["DSH_WEB_URL"] = ""   # 默认不外部托管；用例可覆盖
     $psi.EnvironmentVariables["DSH_WEB_PORT"] = ""
@@ -83,9 +107,9 @@ function Get-LogText([string]$isoHome) {
     if (Test-Path $log) { return Get-Content $log -Raw } else { return "" }
 }
 
-Write-Host "`n=== N1: 外部托管指向死端口 → E2004 弹窗 + 日志 ===" -ForegroundColor Cyan
-$r = Start-ShellExe "n1" @{ DSH_WEB_URL = "http://127.0.0.1:39871" } 6
-Assert-Neg $r.Alive "N1: 进程存活（E2004 弹窗阻塞中，符合预期）"
+Write-Host "`n=== N1: 外部托管指向死端口 → E2004 写日志 + 进程自行退出（无 UI 模式不弹窗） ===" -ForegroundColor Cyan
+$r = Start-ShellExe "n1" @{ DSH_WEB_URL = "http://127.0.0.1:39871" } 10
+Assert-Neg (-not $r.Alive) "N1: 进程自行退出（DSH_NO_UI 不弹窗、无残留）"
 Assert-Neg ((Get-LogText $r.Home) -match "E2004") "N1: 统一日志出现 E2004（可诊断）"
 Assert-Neg ((Get-LogText $r.Home) -match "39871") "N1: 日志含目标地址上下文"
 
@@ -94,7 +118,7 @@ $r = Start-ShellExe "n2" @{ DSH_WEB_URL = "http://127.0.0.1:39872" } 5
 Set-Content (Join-Path $r.Home "dsh-launcher\pending-update.json") "{broken" -Encoding UTF8
 # 先写损坏文件再启动（上一步已启动，这里重新来一次）
 $r2 = Start-ShellExe "n2b" @{ DSH_WEB_URL = "http://127.0.0.1:39872" } 5
-Assert-Neg $r2.Alive "N2: 损坏的 pending-update.json 不导致崩溃（容错返回 null）"
+Assert-Neg (-not $r2.Alive) "N2: 损坏的 pending-update.json 不导致崩溃（进程正常退出，容错返回 null）"
 
 Write-Host "`n=== N3: 僵尸 pid 文件（PID 已死）→ 启动早期清扫 ===" -ForegroundColor Cyan
 $isoHome = New-IsoHome "n3"
@@ -115,20 +139,19 @@ if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
 Assert-Neg (-not (Test-Path (Join-Path $isoHome "dsh-launcher\service-pid-39011.txt"))) "N3: 已死 PID 的 pid 文件被清扫删除"
 Assert-Neg $true "N3: 测试前提（PID 不存在=已死）成立"
 
-Write-Host "`n=== N4: 日志写入失败（DSH_HOME 被文件占位）→ 壳不崩溃 ===" -ForegroundColor Cyan
+Write-Host "`n=== N4: 日志写入失败（DSH_HOME 被文件占位）→ 壳不崩溃、正常退出 ===" -ForegroundColor Cyan
 $blocker = Join-Path $base "n4-blocker"
 Set-Content $blocker "i am a file, not a dir" -Encoding ASCII
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $Exe
 $psi.UseShellExecute = $false
 $psi.CreateNoWindow = $true
+$psi.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi.EnvironmentVariables["DSH_HOME"] = $blocker   # DSH_HOME 指向文件 → dsh.log 目录创建必然失败
 $psi.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39874"
 $p = [System.Diagnostics.Process]::Start($psi)
-Start-Sleep -Seconds 6
-$alive = -not $p.HasExited
-if ($alive) { try { $p.Kill($true) } catch { } }
-Assert-Neg $alive "N4: 日志写失败时壳仍存活（日志失败不影响启动，有意设计）"
+$p.WaitForExit(20000)
+Assert-Neg $p.HasExited "N4: 日志写失败时壳仍正常退出（日志失败不影响启动/退出，有意设计）"
 
 Write-Host "`n=== N5: --diagnose 脱敏（伪造含用户名路径的日志，完整导出无 UI 阻塞）===" -ForegroundColor Cyan
 $isoHome = New-IsoHome "n5"
@@ -157,34 +180,37 @@ if ($zip) {
     Assert-Neg $false "N5: 未找到诊断 zip（下载目录）"
 }
 
-Write-Host "`n=== N6: 单实例（首实例卡住时二次启动自行退出）===" -ForegroundColor Cyan
+Write-Host "`n=== N6: 同端口双实例 → 互斥保护、均自行退出、无残留 ===" -ForegroundColor Cyan
 $isoHome = New-IsoHome "n6"
 $psi1 = New-Object System.Diagnostics.ProcessStartInfo
 $psi1.FileName = $Exe
 $psi1.UseShellExecute = $false
 $psi1.CreateNoWindow = $true
+$psi1.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi1.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi1.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
 $psi1.EnvironmentVariables["DSH_WEB_PORT"] = ""
 $p1 = [System.Diagnostics.Process]::Start($psi1)
-Start-Sleep -Seconds 3
+Start-Sleep -Seconds 1
 $psi2 = New-Object System.Diagnostics.ProcessStartInfo
 $psi2.FileName = $Exe
 $psi2.UseShellExecute = $false
 $psi2.CreateNoWindow = $true
+$psi2.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi2.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi2.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
 $psi2.EnvironmentVariables["DSH_WEB_PORT"] = ""
 $p2 = [System.Diagnostics.Process]::Start($psi2)
 $p2.WaitForExit(30000)
-Assert-Neg $p2.HasExited "N6: 第二实例在 30s 内自行退出（单实例互斥生效）"
-if (-not $p1.HasExited) { try { $p1.Kill($true) } catch { } }
+Assert-Neg $p2.HasExited "N6: 第二实例在 30s 内自行退出（单实例互斥生效，无重复窗口）"
+if (-not $p1.HasExited) { $p1.WaitForExit(30000) }
+Assert-Neg $p1.HasExited "N6: 首实例也在 30s 内退出（E2004 无 UI 不阻塞）"
 
 Write-Host "`n=== N7: settings.json 非法 JSON → 不崩溃、无 E2011 误报 ===" -ForegroundColor Cyan
-$r = Start-ShellExe "n7" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 6
+$r = Start-ShellExe "n7" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 10
 Set-Content (Join-Path $r.Home "dsh-launcher\settings.json") "{broken json" -Encoding UTF8
-$r2 = Start-ShellExe "n7b" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 6
-Assert-Neg $r2.Alive "N7: 非法 settings.json 不导致崩溃"
+$r2 = Start-ShellExe "n7b" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 10
+Assert-Neg (-not $r2.Alive) "N7: 非法 settings.json 不导致崩溃（进程正常退出）"
 Assert-Neg ((Get-LogText $r2.Home) -notmatch "E2011") "N7: 无 serviceLifetime 键时不触发 E2011（精确判定，无子串误报）"
 
 # 清理隔离区 + 测试进程（防弹窗残留：超时/异常路径也要保证不遗留 DshWeb 测试实例）
@@ -193,6 +219,13 @@ try {
         Where-Object { $_.ExecutablePath -like "*\.neg-publish\*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 } catch { }
+# 清理测试端口可能残留的 node 服务（N3 拉起的真实 dsh 服务）
+Stop-TestPortListener 39011
+Stop-TestPortListener 39871
+Stop-TestPortListener 39872
+Stop-TestPortListener 39874
+Stop-TestPortListener 39875
+Stop-TestPortListener 39876
 Remove-Item $base -Recurse -Force -ErrorAction SilentlyContinue
 
 # 恢复真实 HKCU Run 自启值（防测试污染用户自启设置）
