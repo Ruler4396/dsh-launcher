@@ -3,9 +3,11 @@ bin/
 obj/
 dist/
 .publish-tmp/
-.neg-publish/        # headless negative-test publish output (scripts/negative-test.ps1)
-.tmp-wix/          # WiX v5 temp files generated next to the build source
-.wix/              # WiX tool cache (defensive)
+.neg-publish/
+# WiX v5 temp files generated next to the build source
+.tmp-wix/
+# WiX tool cache (defensive)
+.wix/
 
 # Test output
 TestResults/
