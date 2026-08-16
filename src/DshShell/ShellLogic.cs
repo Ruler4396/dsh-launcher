@@ -330,13 +330,12 @@ public static class ShellLogic
     }
 
     /// <summary>
-    /// 启动日志路径：默认端口 3080 用 .dsh-web.log（历史兼容），其他端口按端口隔离
-    /// （.dsh-web.&lt;port&gt;.log），避免多个 dsh 服务实例（如壳托管的 9335 与手动 3080）
-    /// 争抢同一个日志文件——被运行中服务锁定的日志会让后续启动直接失败。
-    /// start-dsh.vbs 按同一规则写入。
+    /// 统一日志路径（v0.3.0 起单一日志文件）：DSH_HOME\dsh-launcher\dsh.log。
+    /// 壳的 JSON Lines 与 dsh 服务原始输出（start-dsh.vbs 追加写入）同文件共存，
+    /// 替代旧版 shell.log 与 .dsh-web.&lt;port&gt;.log 多文件方案。
     /// </summary>
-    internal static string ResolveLogPath(int port, string userProfileDir) =>
-        Path.Combine(userProfileDir, port == 3080 ? ".dsh-web.log" : $".dsh-web.{port}.log");
+    internal static string ResolveLogPath(string dshHomeDir) =>
+        Path.Combine(dshHomeDir, "dsh-launcher", "dsh.log");
 
     /// <summary>
     /// 解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认"跟随窗口"，
@@ -359,6 +358,110 @@ public static class ShellLogic
             // 解析失败回退默认
         }
         return fallback;
+    }
+
+    /// <summary>dsh-launcher-lifetime 插件包名（dsh plugin 生态，经 profiles 的 pnpm 安装）。</summary>
+    internal const string LifetimePluginPackage = "dsh-launcher-lifetime";
+
+    /// <summary>
+    /// 检测 dsh-launcher-lifetime 插件是否物理存在（配置降级依据，v0.3.0）：
+    /// 任一 profile 的 node_modules 实体存在，或任一 profile 的 package.json
+    /// （dependencies / dsh.profile.bundles）声明了该包。dsh plugin add 经 pnpm 写入
+    /// profiles/&lt;name&gt;/package.json 并在对应 node_modules 实体化（file: 链接安装也会
+    /// 实体化，已实测）。任何读取失败一律按"未安装"处理（安全默认：宁回退不多驻）。
+    /// </summary>
+    internal static bool IsLifetimePluginInstalled(string dshHomeDir)
+    {
+        try
+        {
+            var profiles = Path.Combine(dshHomeDir, "profiles");
+            if (!Directory.Exists(profiles)) return false;
+            foreach (var profileDir in Directory.GetDirectories(profiles))
+            {
+                // 1) node_modules 实体（权威：安装必然实体化）
+                if (Directory.Exists(Path.Combine(profileDir, "node_modules", LifetimePluginPackage)))
+                    return true;
+                // 2) 清单声明（目录未实体化前的声明也算已装意图）
+                var manifest = Path.Combine(profileDir, "package.json");
+                if (!File.Exists(manifest)) continue;
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifest));
+                    var root = doc.RootElement;
+                    if (root.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                    if (root.TryGetProperty("dependencies", out var deps)
+                        && deps.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && deps.TryGetProperty(LifetimePluginPackage, out _))
+                        return true;
+                    if (root.TryGetProperty("dsh", out var dshSeg)
+                        && dshSeg.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && dshSeg.TryGetProperty("profile", out var profile)
+                        && profile.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && profile.TryGetProperty("bundles", out var bundles)
+                        && bundles.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var b in bundles.EnumerateArray())
+                        {
+                            if (b.ValueKind == System.Text.Json.JsonValueKind.String
+                                && b.GetString() == LifetimePluginPackage)
+                                return true;
+                        }
+                    }
+                }
+                catch { /* 单个 manifest 损坏跳过 */ }
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 有效服务存活模式解析（含插件降级，v0.3.0）：
+    /// - 插件缺失 → 忽略 settings.json 里的 serviceLifetime，回退 fallback（跟随窗口）；
+    ///   ShouldPurge=true 时调用方应抹除失效字段（幂等）。
+    /// - 插件存在 → 正常解析（保留用户选择）。
+    /// </summary>
+    internal static (ServiceLifetime Mode, bool ShouldPurge) ResolveEffectiveLifetime(
+        string? settingsJson, bool pluginPresent, ServiceLifetime fallback = ServiceLifetime.FollowWindow)
+    {
+        if (!pluginPresent)
+        {
+            var mentionsStale = !string.IsNullOrWhiteSpace(settingsJson)
+                && settingsJson.Contains("serviceLifetime", StringComparison.OrdinalIgnoreCase);
+            return (fallback, mentionsStale);
+        }
+        return (ParseLifetimeMode(settingsJson, fallback), false);
+    }
+
+    /// <summary>
+    /// 恢复窗口位置（多显示器容灾，v0.3.0，纯函数）：
+    /// - 目标矩形与任一屏幕工作区有 ≥120×60 可见交集 → 采用并在该工作区内整格钳制
+    ///   （任务栏移动/工作区缩小后窗口仍完全可见）；
+    /// - 完全越界（副屏拔掉等）→ 回退主屏工作区居中并钳制。
+    /// workingAreas 的坐标系与 x/y 均为同一物理像素坐标（WinForms Screen.WorkingArea）。
+    /// </summary>
+    internal static (int X, int Y) RestoreWindowPosition(
+        int x, int y, int width, int height,
+        IReadOnlyList<Rectangle> workingAreas, Rectangle primaryWorkArea)
+    {
+        var widthSafe = Math.Max(width, 1);
+        var heightSafe = Math.Max(height, 1);
+        var rect = new Rectangle(x, y, widthSafe, heightSafe);
+        foreach (var wa in workingAreas)
+        {
+            var inter = Rectangle.Intersect(rect, wa);
+            if (inter.Width >= 120 && inter.Height >= 60)
+            {
+                var cx = Math.Clamp(x, wa.X, wa.X + Math.Max(0, wa.Width - widthSafe));
+                var cy = Math.Clamp(y, wa.Y, wa.Y + Math.Max(0, wa.Height - heightSafe));
+                return (cx, cy);
+            }
+        }
+        var px = primaryWorkArea.X + (primaryWorkArea.Width - widthSafe) / 2;
+        var py = primaryWorkArea.Y + (primaryWorkArea.Height - heightSafe) / 2;
+        return (
+            Math.Clamp(px, primaryWorkArea.X, primaryWorkArea.X + Math.Max(0, primaryWorkArea.Width - widthSafe)),
+            Math.Clamp(py, primaryWorkArea.Y, primaryWorkArea.Y + Math.Max(0, primaryWorkArea.Height - heightSafe)));
     }
 
     /// <summary>
