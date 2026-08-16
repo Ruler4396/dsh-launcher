@@ -337,6 +337,22 @@ public static class ShellLogic
     internal static string ResolveLogPath(string dshHomeDir) =>
         Path.Combine(dshHomeDir, "dsh-launcher", "dsh.log");
 
+    /// <summary>读取 Evergreen WebView2 Runtime 版本（注册表 pv 值）；未安装/读取失败返回 null。
+    /// 供 WebView2 缺失兜底（静默安装 Bootstrapper）与诊断导出共用。</summary>
+    internal static string? ReadWebView2Version()
+    {
+        try
+        {
+            var v = Microsoft.Win32.Registry.GetValue(
+                @"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv", null);
+            if (v is string s && !string.IsNullOrWhiteSpace(s)) return s;
+            v = Microsoft.Win32.Registry.GetValue(
+                @"HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv", null);
+            return v as string;
+        }
+        catch { return null; }
+    }
+
     /// <summary>
     /// 解析 settings.json 中的 serviceLifetime；缺失/非法回退到 fallback（默认"跟随窗口"，
     /// 省内存：关窗即停 dsh 服务，每次启动重新拉起；想常驻请在插件设置里改）。

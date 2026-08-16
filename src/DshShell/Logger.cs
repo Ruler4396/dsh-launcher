@@ -80,6 +80,27 @@ public static class Logger
         return tooBig || tooOld;
     }
 
+    /// <summary>常驻超长会话告警（P2）：日志 >50MB 且最后写入 >24h（说明服务常驻且持续输出，
+    /// 热轮转被运行中的 node 句柄阻止）→ 写一条 Warn 提示用户重启后自动轮转。启动早段调用。</summary>
+    public static void WarnIfOversized()
+    {
+        string path;
+        lock (Sync) path = _path;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+        try
+        {
+            var info = new FileInfo(path);
+            var sizeMb = info.Length / (1024.0 * 1024.0);
+            var ageHours = (DateTime.UtcNow - info.LastWriteTimeUtc).TotalHours;
+            if (sizeMb > 50 && ageHours > 24)
+            {
+                Warn($"unified log oversized in a long-lived session; rotation happens on next restart",
+                    ctx: new { sizeMb = Math.Round(sizeMb, 1), ageHours = Math.Round(ageHours, 1), path });
+            }
+        }
+        catch { /* 告警失败忽略 */ }
+    }
+
     /// <summary>按策略滚动：dsh.log → *.1（旧 .1 → *.2），保留 ≤3 份；超 30 天的滚动旧档顺手清除。
     /// 仅壳调用（启动早段、拉起服务前）。</summary>
     public static void RotateIfNeeded()
