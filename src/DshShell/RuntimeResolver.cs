@@ -19,9 +19,12 @@ public static class RuntimeResolver
         "dsh-launcher", "env", "node");
 
     /// <summary>Node LTS 固定版本表（实现时按当时 LTS 核对；可用 DSH_NODE_VERSION 覆盖）。
-    /// 克制：不做启发式选版，只维护一个已知可用版本，随发版手动更新。</summary>
+    /// 克制：不做启发式选版，只维护一个已知可用版本，随发版手动更新。
+    /// v0.3.1：核对于 2026-08——Node 24.x 为 Active LTS（支持至 2028-04），
+    /// 当前已知最新 v24.15.0（2026-04 发布）；v22 线仍在维护期（至 2027-04），
+    /// 选用 v24 以最大化支持窗口。</summary>
     public static string NodeLtsVersion =>
-        Environment.GetEnvironmentVariable("DSH_NODE_VERSION") ?? "v22.16.0";
+        Environment.GetEnvironmentVariable("DSH_NODE_VERSION") ?? "v24.15.0";
 
     public sealed record NodeEnvironment(string? NodeExe, bool IsPortable, string? RootDir);
 
@@ -153,16 +156,20 @@ public static class RuntimeResolver
         return null;
     }
 
-    private static IEnumerable<string> BaseUrls(string version)
+    /// <summary>镜像回退链（纯函数，可单测）：自定义镜像（DSH_NODE_MIRROR）→ 上次成功源
+    /// （runtime-state.json 记忆）→ 官方 nodejs.org → npmmirror。无测速、无并发（克制）。</summary>
+    internal static IEnumerable<string> BaseUrls(string version, string? customMirror, string? lastMirror)
     {
-        var custom = Environment.GetEnvironmentVariable("DSH_NODE_MIRROR");
-        if (!string.IsNullOrWhiteSpace(custom))
-            yield return custom.TrimEnd('/');
-        var last = ReadLastMirror();
-        if (!string.IsNullOrWhiteSpace(last)) yield return last;
+        if (!string.IsNullOrWhiteSpace(customMirror))
+            yield return customMirror.TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(lastMirror))
+            yield return lastMirror;
         yield return $"https://nodejs.org/dist/{version}";
         yield return $"https://registry.npmmirror.com/-/binary/node/{version}";
     }
+
+    private static IEnumerable<string> BaseUrls(string version) =>
+        BaseUrls(version, Environment.GetEnvironmentVariable("DSH_NODE_MIRROR"), ReadLastMirror());
 
     private static async Task<(string? Base, string? ZipPath)> DownloadWithFallbackAsync(string version, CancellationToken ct)
     {

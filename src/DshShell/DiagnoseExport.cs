@@ -135,22 +135,8 @@ public static class DiagnoseExport
         {
             if (l.Contains("WindowsDesktop", StringComparison.OrdinalIgnoreCase)) sb.AppendLine("  " + l);
         }
-        sb.AppendLine("webview2: " + (ReadWebView2Version() ?? "（未检测到 Evergreen WebView2 版本注册表项）"));
+        sb.AppendLine("webview2: " + (ShellLogic.ReadWebView2Version() ?? "（未检测到 Evergreen WebView2 版本注册表项）"));
         return sb.ToString();
-    }
-
-    private static string? ReadWebView2Version()
-    {
-        try
-        {
-            var v = Microsoft.Win32.Registry.GetValue(
-                @"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv", null);
-            if (v is string s && !string.IsNullOrWhiteSpace(s)) return s;
-            v = Microsoft.Win32.Registry.GetValue(
-                @"HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", "pv", null);
-            return v as string;
-        }
-        catch { return null; }
     }
 
     private static string CollectState(string dshHomeDir)

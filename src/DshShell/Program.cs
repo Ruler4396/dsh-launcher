@@ -291,6 +291,7 @@ internal static class Program
         // v0.3.0：统一日志初始化（单一日志文件 + 启动早段轮转）
         Logger.Init(UnifiedLogPath);
         Logger.RotateIfNeeded();
+        Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
 
@@ -640,7 +641,32 @@ internal static class Program
             }
             catch (Exception ex)
             {
-                // WebView2 Runtime 缺失等初始化失败：明确提示而不是静默无窗口
+                // WebView2 Runtime 缺失等初始化失败：先尝试静默安装 Evergreen Bootstrapper
+                //（P2，v0.3.1），安装成功后重试一次初始化；重试再次失败才明确提示而不是静默无窗口。
+                if (await TryInstallWebView2Async())
+                {
+                    try
+                    {
+                        await InitWebViewAsync(web, userDataFolder);
+                        web.CoreWebView2.Navigate(Target.Url);
+                        // 页面加载失败（如端口被其他程序占用、服务异常退出）：明确提示而非白屏静默
+                        var navWarned = false;
+                        web.CoreWebView2.NavigationCompleted += (_, e) =>
+                        {
+                            if (!e.IsSuccess && !navWarned)
+                            {
+                                navWarned = true;
+                                ShowError(ErrorCodes.E2004,
+                                    $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}");
+                            }
+                        };
+                        return; // 重试初始化成功，窗口正常驻留，不弹 E1006
+                    }
+                    catch
+                    {
+                        // 重试仍失败：吞掉异常，走下方 E1006 弹窗
+                    }
+                }
                 ShowError(ErrorCodes.E1006,
                     "无法初始化 WebView2：\n" + ex.Message
                     + "\n\n请确认系统已安装 Microsoft Edge WebView2 Runtime（Windows 10/11 通常已自带）。");
@@ -666,6 +692,45 @@ internal static class Program
     {
         Logger.Error(detail, code);
         return MessageBox.Show($"[{code}] {ErrorCodes.Describe(code)}\n\n{detail}", "DeepSeek Harness", buttons, icon);
+    }
+
+    /// <summary>v0.3.1 P2：WebView2 缺失兜底——下载 Evergreen Bootstrapper（官方固定链接，
+    /// 约 2MB）静默安装后重测；任何一步失败返回 false（调用方回退 E1006 弹窗）。不内嵌 runtime。</summary>
+    private static async Task<bool> TryInstallWebView2Async()
+    {
+        try
+        {
+            if (ShellLogic.ReadWebView2Version() is not null) return true;
+            var boot = Path.Combine(Path.GetTempPath(), "dsh-wv2-bootstrapper.exe");
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
+                using var resp = await http.GetAsync("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
+                if (!resp.IsSuccessStatusCode) return false;
+                await using var fs = new FileStream(boot, FileMode.Create, FileAccess.Write);
+                await resp.Content.CopyToAsync(fs);
+            }
+            catch { return false; }
+            try
+            {
+                var psi = new ProcessStartInfo(boot, "/silent /install")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                using var p = Process.Start(psi);
+                if (p is null) return false;
+                if (!p.WaitForExit(120000)) { try { p.Kill(entireProcessTree: true); } catch { } return false; }
+                return p.ExitCode == 0 && ShellLogic.ReadWebView2Version() is not null;
+            }
+            catch { return false; }
+            finally
+            {
+                try { if (File.Exists(boot)) File.Delete(boot); } catch { }
+            }
+        }
+        catch { return false; }
     }
 
     /// <summary>v0.3.0 Node 缺失处理：一次性确认 → 状态窗期间自动下载便携 Node（可取消）。
@@ -1295,14 +1360,56 @@ internal static class Program
         catch { return false; }
     }
 
-    /// <summary>停止指定 PID：先温和 taskkill，短等待未退则强制 /f（全程限时 &lt;1s，不卡调用方）。</summary>
+    // ---- P2：SIGINT 尽力而为优雅终止（Windows 无控制台进程没有可靠 Ctrl+C 通道） ----
+    // 策略：先尝试附加目标进程的控制台并投递 CTRL_BREAK（node 映射为 SIGBREAK，若 dsh
+    // 注册了信号处理器则有机会清理）；AttachConsole 失败（wscript 隐藏启动的 node 无控制台，
+    // 常态）自动降级温和 taskkill；仍不退则 /f。绝不改变服务启动链路（不引入可见控制台窗口）。
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeConsole();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
+
+    private const uint CTRL_BREAK_EVENT = 1;
+
+    /// <summary>尽力而为：目标进程有控制台时投递 CTRL_BREAK；无控制台返回 false（走温和 taskkill）。</summary>
+    private static bool TryGracefulStop(int pid)
+    {
+        try
+        {
+            if (!AttachConsole((uint)pid)) return false;
+            try
+            {
+                SetConsoleCtrlHandler(IntPtr.Zero, true); // 本进程忽略 Ctrl 事件，避免波及自身
+                return GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0); // 发给共享该控制台的进程组
+            }
+            finally
+            {
+                FreeConsole();
+            }
+        }
+        catch { return false; }
+    }
+
+    /// <summary>停止指定 PID（v0.3.1 P2）：尽力而为优雅终止（CTRL_BREAK）→ 温和 taskkill →
+    /// 短等待未退则强制 /f（全程限时，不卡调用方）。</summary>
     private static void KillProcess(int pid)
     {
         try
         {
-            Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
-            { UseShellExecute = false, CreateNoWindow = true });
-            var deadline = DateTime.UtcNow.AddMilliseconds(900);
+            if (!TryGracefulStop(pid))
+            {
+                Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
+                { UseShellExecute = false, CreateNoWindow = true });
+            }
+            var deadline = DateTime.UtcNow.AddMilliseconds(1500);
             while (DateTime.UtcNow < deadline && IsProcessAlive(pid))
                 Thread.Sleep(100);
             if (IsProcessAlive(pid))

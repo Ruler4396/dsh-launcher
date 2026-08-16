@@ -204,6 +204,43 @@ public class V030FeaturesTests
         Assert.Null(WindowStateStore.Load());
     }
 
+    // ---------- 镜像回退链（RuntimeResolver.BaseUrls，P2） ----------
+
+    [Fact]
+    public void BaseUrls_CustomMirrorFirst()
+    {
+        var urls = RuntimeResolver.BaseUrls("v24.15.0", "https://mirror.example.com/", null).ToList();
+        Assert.Equal("https://mirror.example.com", urls[0]); // 尾部 / 被剥掉
+        Assert.Contains($"https://nodejs.org/dist/v24.15.0", urls);
+        Assert.Contains("https://registry.npmmirror.com/-/binary/node/v24.15.0", urls);
+    }
+
+    [Fact]
+    public void BaseUrls_LastMirrorSecond_NoCustom()
+    {
+        var urls = RuntimeResolver.BaseUrls("v24.15.0", null, "https://last.example.com/x").ToList();
+        Assert.Equal("https://last.example.com/x", urls[0]);
+        Assert.Equal($"https://nodejs.org/dist/v24.15.0", urls[1]);
+    }
+
+    [Fact]
+    public void BaseUrls_DefaultOrder_OfficialThenMirror()
+    {
+        var urls = RuntimeResolver.BaseUrls("v24.15.0", null, null).ToList();
+        Assert.Equal(new[]
+        {
+            "https://nodejs.org/dist/v24.15.0",
+            "https://registry.npmmirror.com/-/binary/node/v24.15.0",
+        }, urls);
+    }
+
+    [Fact]
+    public void BaseUrls_NoDuplicates_WhenCustomEqualsLast()
+    {
+        var urls = RuntimeResolver.BaseUrls("v24.15.0", "https://m.example.com", "https://m.example.com/").ToList();
+        Assert.Single(urls.Where(u => u == "https://m.example.com"));
+    }
+
     /// <summary>临时目录（自动清理）。</summary>
     private sealed class TempDir : IDisposable
     {
