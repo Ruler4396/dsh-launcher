@@ -59,7 +59,8 @@ public static class DiagnoseExport
         return null;
     }
 
-    /// <summary>按级别过滤统一日志：JSON 行按 level 字段；原始服务输出命中启动错误标志按告警计。</summary>
+    /// <summary>按级别过滤统一日志：JSON 行按 level 字段；原始服务输出命中启动错误标志按告警计。
+    /// 质量治理修复：输出行统一过 Sanitize（日志主体此前漏脱敏）。</summary>
     private static string FilterByLevel(string logPath, Logger.Level minLevel)
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
@@ -71,11 +72,11 @@ public static class DiagnoseExport
             var level = TryGetJsonLevel(line);
             if (level is not null)
             {
-                if (level >= minLevel) sb.AppendLine(line);
+                if (level >= minLevel) sb.AppendLine(Sanitize(line));
             }
             else if (minLevel <= Logger.Level.Warn && ShellLogic.LogShowsStartupError(line))
             {
-                sb.AppendLine(line);
+                sb.AppendLine(Sanitize(line));
             }
         }
         return sb.Length == 0 ? "（无告警/错误记录）" : sb.ToString();
@@ -99,7 +100,7 @@ public static class DiagnoseExport
         return null;
     }
 
-    /// <summary>日志尾部若干行（大文件不整读）。</summary>
+    /// <summary>日志尾部若干行（大文件不整读）。质量治理修复：输出行统一过 Sanitize（脱敏）。</summary>
     private static string TailLines(string logPath, int maxLines)
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
@@ -110,7 +111,7 @@ public static class DiagnoseExport
             kept.Enqueue(raw.TrimEnd());
             if (kept.Count > maxLines) kept.Dequeue();
         }
-        foreach (var l in kept) sb.AppendLine(l);
+        foreach (var l in kept) sb.AppendLine(Sanitize(l));
         return sb.ToString();
     }
 

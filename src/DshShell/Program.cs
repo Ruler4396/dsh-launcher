@@ -281,8 +281,9 @@ internal static class Program
         // 可能因先前的 MessageBox 等窗口创建而失效）。
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 
-        // v0.3.0：一键诊断导出（--diagnose [--min-level warn|error]）。不初始化 UI，
-        // 打包脱敏日志/环境/版本/错误码汇总到"下载"文件夹后直接退出。
+        // v0.3.0：一键诊断导出（--diagnose [--min-level warn|error]）。不初始化 UI、
+        // 不弹窗（CLI 工具保持无界面，可自动化/无人值守；质量治理负向测试发现模态框阻塞），
+        // 成功路径把 zip 路径打印到 stdout，失败路径写日志 + stderr。
         var args = Environment.GetCommandLineArgs();
         if (args.Any(a => string.Equals(a, "--diagnose", StringComparison.OrdinalIgnoreCase)))
         {
@@ -290,14 +291,12 @@ internal static class Program
             var zip = DiagnoseExport.Run(args, DshHomeDir, Logger.Path);
             if (zip is not null)
             {
-                MessageBox.Show(
-                    "诊断包已导出（已脱敏，不含任何密钥/会话/插件数据）：\n\n" + zip
-                    + "\n\n可随 Issue 一起上传，或在命令行以 --diagnose --min-level warn 单独导出告警/错误。",
-                    "dsh-launcher 诊断", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Console.WriteLine("dsh-launcher diagnose: " + zip);
+                Console.WriteLine("已脱敏：不含任何密钥/会话/插件数据。可随 Issue 一起上传。");
             }
             else
             {
-                ShowError(ErrorCodes.E5001, "无法生成诊断包（详见统一日志）。可手动打包 " + Logger.Path + "。");
+                Console.Error.WriteLine("dsh-launcher diagnose failed [" + ErrorCodes.E5001 + "]（详见统一日志：" + Logger.Path + "）");
             }
             return;
         }
