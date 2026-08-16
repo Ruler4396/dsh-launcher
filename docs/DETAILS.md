@@ -17,7 +17,7 @@
 | 模块 | 方案 |
 | --- | --- |
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
-| 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出重定向到日志；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
+| 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出按 `DSH_LOG` 追加到统一日志 `DSH_HOME\dsh-launcher\dsh.log`（append 模式，**不截断、不自行轮转**——轮转所有权归壳）；日志被运行中服务锁定或缺失时回退 `%TEMP%\dsh.log` 优先保证冷启动；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
 | 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
 | 开机自启 | MSI 勾选后写 `HKCU\...\Run` 直接指向 `DshWeb.exe`（登录 → 壳窗口出现 → 壳自行拉起服务）；安装器同时落 HKLM 意图标志（per-machine 提权安装直接写 HKCU 不可靠，壳首启补写兜底）；便携版：启动文件夹放置 `start-dsh.vbs` 由 `wscript` 执行，或直接放 `DshWeb.exe` 快捷方式 |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
@@ -31,10 +31,11 @@
 
 - **系统级安装（per-machine，提权）**：安装/卸载会弹一次 UAC 管理员确认，默认安装到 `%ProgramFiles%\dsh-launcher`，向导中可自定义安装目录；不注册服务、不创建计划任务。提权同时是卸载零报错的保证：Windows Installer 在卸载期对安装盘根 `Config.Msi` 里的回滚文件（.rbf）以用户身份设置安全，而该目录 ACL 硬编码为仅 SYSTEM/管理员，非提权在 ACL 异常的磁盘（如 E:\）必报 1926（详见 FAQ）
 - **卸载只删自己的文件**：MSI 卸载仅移除本应用安装的文件；目录只会在"空"时才被删除，预先存在的文件（如与 DeepSeek Harness 共用目录）绝不会被误删（已实测验证）
+- **卸载/清理的用户数据边界（v0.3.0）**：MSI 卸载会自动清理启动器自有数据——`DSH_HOME\dsh-launcher\` 整目录（settings.json 残留、统一日志 dsh.log、window-state/pending-update/service-pid 等）与旧版 `%USERPROFILE%\.dsh-web*.log`；便携版需显式运行 `uninstall-autostart.cmd -CleanData` 才清理（不带参数只清自启/快捷方式，绝不 surprise-delete）。**硬边界：两者都绝不触碰 `DSH_HOME` 下其余内容——`profiles/`、`settings.yaml`、`.credentials.yaml`、sessions、storages、插件等一切 dsh 生态数据**。
 - **自启仅当前用户（拉壳方案）**：安装器写机器级意图标志（`HKLM\Software\dsh-launcher\AutoStartWanted`，随卸载自动清除）并写当前用户 `HKCU\...\Run` 指向 `DshWeb.exe`；壳首启若发现标志存在但 Run 值缺失/格式旧（如旧版 wscript+vbs），自动以当前用户身份补写/迁移。卸载或 `uninstall-autostart.cmd` 时删除 Run 值与意图标志（防止壳自愈复活）
 - **下载校验**：每次 Release 附带 `SHA256SUMS.txt`
 - **代码签名**：安装包当前未签名，SmartScreen 可能提示"未知发布者"（正常）；正式分发建议购买代码签名证书
-- **数据本地化**：WebView2 数据在 `%LOCALAPPDATA%\DshWeb`，日志在 `%USERPROFILE%\.dsh-web.log`，无遥测
+- **数据本地化**：WebView2 数据在 `%LOCALAPPDATA%\DshWeb`；统一日志在 `~/.dsh\dsh-launcher\dsh.log`（壳的 JSON Lines 与 dsh 服务原始输出同文件共存，`DSH_LOG_LEVEL` 控级别），无遥测。**v0.3.0 起不再产生旧版的多文件日志**（`shell.log`、`%USERPROFILE%\.dsh-web*.log`）
 
 ## 发版策略 / Release policy
 

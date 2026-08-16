@@ -44,7 +44,7 @@
 - 🔔 **差错提示**：缺 Node.js / 下载失败 / 端口占用等都会**明确弹窗**说明，不再静默
 - 🎛️ **Node 服务驻留**：在 dsh 设置页（配套插件）切换"常驻 / 托盘驻留 / 跟随窗口"，决定关窗后 node 服务是继续跑还是跟着停（省内存）
 - 🌗 **主题跟随**：窗口标题栏（自绘）、窗口/任务栏图标跟随 dsh 主题即时切换（深色/浅色），不用重启
-- 📋 **日志**：dsh 服务日志 `%USERPROFILE%\.dsh-web.log`；壳启动轨迹 `DSH_HOME\dsh-launcher\shell.log`（启动异常时定位利器）
+- 📋 **统一日志**：壳启动轨迹与 dsh 服务输出合并为单一文件 `~/.dsh\dsh-launcher\dsh.log`（JSON Lines + 原始输出共存，`DSH_LOG_LEVEL` 控级别；启动异常时定位利器）
 
 ## 与 dsh 插件联动
 
@@ -57,6 +57,17 @@ dsh plugin add dsh-launcher-lifetime
 - 模式保存在 `DSH_HOME\dsh-launcher\settings.json`（默认 `~/.dsh\dsh-launcher\settings.json`，与 dsh 生态一致），启动器在关窗/托盘退出时读取执行
 - 托盘图标右键菜单保持精简（仅"退出"；窗口显示用左键单击托盘置顶），服务模式切换统一在插件的设置页里做
 - 没装插件时启动器按默认"跟随窗口"模式工作，插件只是提供图形化切换入口
+
+## v0.3.0 新特性一瞥
+
+- **统一日志**：壳决策 + dsh 服务输出合并为 `~/.dsh\dsh-launcher\dsh.log` 一份文件（`DSH_LOG_LEVEL` 可设 `INFO`/`WARN`/`ERROR` 过滤），自动轮转（>30MB 或 >3 天）。
+- **错误码 `[E####]`**：任何报错弹窗都带错误码（如 `E1001` 未检测到 Node、`E2002` 服务启动超时、`E2011` 插件缺失配置降级），与日志、诊断导出共用一套码，可直接粘贴到 Issue。
+- **便携 Node 自动补齐**：缺 Node.js 时确认一下，自动下载 LTS 便携版到 `%LOCALAPPDATA%\dsh-launcher\env\node\`（不改系统环境）。
+- **托盘按需显示**：默认隐藏；装了 dsh-launcher-lifetime 插件或有更新待通知时才出现，不打扰常驻用户。
+- **dsh 延迟更新**：点更新气泡确认后后台下载，**下次启动**才应用到服务，绝不打断当前会话。
+- **窗口容灾**：窗口位置/大小自动记忆；副屏拔掉等越界时回退主屏居中。
+- **一键诊断导出**：命令 `DshWeb.exe --diagnose`（可加 `--min-level warn|error`）把脱敏日志/环境/错误码打包 zip 到"下载"文件夹，反馈时一键携带。
+- **卸载数据边界**：MSI 卸载**自动**清理启动器自有数据（`~/.dsh\dsh-launcher\` 与旧 `.dsh-web*.log`）；便携版需显式 `uninstall-autostart.cmd -CleanData` 才清。两者都**绝不触碰** `profiles/`、`settings.yaml`、插件等 dsh 生态数据。
 
 ## 启动不了？按现象排查
 
@@ -74,7 +85,7 @@ winget install Microsoft.DotNet.DesktopRuntime.10
 
 **现象 2：弹出"未检测到 Node.js，无法启动 dsh 服务"**
 
-安装 [Node.js](https://nodejs.org) 18+（LTS 版，一路默认下一步即可），装完**重新打开** dsh-launcher。
+v0.3.0 起会弹一次性确认框，**自动下载便携版 Node.js**（LTS，SHA256 校验 + 镜像回退，装到 `%LOCALAPPDATA%\dsh-launcher\env\node\`，不改系统环境），确认即可自动补齐；想手装同效，可安装 [Node.js](https://nodejs.org) 18+（LTS 版，一路默认下一步即可），装完**重新打开** dsh-launcher。
 
 **现象 3：卡在"正在启动 dsh 服务…首次运行需要下载组件"很久**
 
@@ -90,13 +101,13 @@ npm config set registry https://registry.npmmirror.com
 
 **现象 4：弹出"dsh 服务未能就绪"或"dsh 服务不可用"**
 
-打开日志看最后几行：`%USERPROFILE%\.dsh-web.log`（记事本打开即可；用 `DSH_WEB_PORT` 换过端口则是 `.dsh-web.端口.log`）
+打开日志看最后几行：`~/.dsh\dsh-launcher\dsh.log`（记事本打开即可）
 
 - 日志里有 `npm ERR` 或网络相关报错 → **网络/代理问题**，重试或换网络
 - 日志里有 `'npx' 不是内部或外部命令` → **Node.js 没装好**，重装 Node.js（现象 2）
 - 日志里有 `EADDRINUSE` → **端口 3080 被占用**，见现象 5
 
-还查不出来 → 看**壳的启动轨迹** `DSH_HOME\dsh-launcher\shell.log`（默认 `~/.dsh\dsh-launcher\shell.log`），里面记录了单实例、端口探测、服务拉起、就绪判定、窗口显示等每个决策点，反馈问题时附上它。
+还查不出来 → 日志里的 **JSON Lines 行**（`level/info`）会记录单实例、端口探测、服务拉起、就绪判定、窗口显示等每个决策点，报错弹窗都带 `[E####]` 错误码（便于在 Issue 里精确定位）；反馈问题时附上 `~/.dsh\dsh-launcher\dsh.log`。
 
 **现象 5：端口 3080 被其他程序占用**
 
@@ -115,10 +126,10 @@ $env:DSH_WEB_URL = "http://127.0.0.1:3090"
 **看日志**：
 
 ```powershell
-Get-Content "$env:USERPROFILE\.dsh-web.log" -Tail 30
+Get-Content "$env:USERPROFILE\.dsh\dsh-launcher\dsh.log" -Tail 30
 ```
 
-日志第一行会写明本次是**用全局 dsh 还是 npx 回退**启动的，方便判断问题出在哪一环。
+日志第一行会写明本次是**用全局 dsh 还是 npx 回退**启动的（`[start-dsh] using ...`），JSON Lines 行则记录壳的每个决策点，方便判断问题出在哪一环。
 
 ## 常见问题
 
@@ -127,6 +138,9 @@ Get-Content "$env:USERPROFILE\.dsh-web.log" -Tail 30
 
 **Q：能自定义安装目录吗？卸载会误删同目录文件吗？**
 MSI 向导可自定义目录；卸载只删本应用文件，目录非空则保留（已实测验证）。
+
+**Q：卸载会清理我的日志/配置吗？会误删 dsh 数据吗？**
+MSI 卸载会**自动**清理启动器自有数据（`~/.dsh\dsh-launcher\` 与旧 `.dsh-web*.log`）；便携版需显式运行 `uninstall-autostart.cmd -CleanData` 才清理。两者都**绝不触碰** dsh 生态数据（`profiles/`、`settings.yaml`、`.credentials.yaml`、插件、sessions 等）——卸载或清理后，手动装过的 dsh 及其数据原样保留。
 
 **Q：dsh 服务一直占内存（几百 MB）？**
 dsh 是完整服务（含 Web UI），常驻是设计（秒开）。想要省内存：dsh 设置页 → **"Node 服务驻留"** → **跟随窗口**（关窗即停服务，下次启动自动拉起）。

@@ -2,6 +2,34 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - Unreleased
+
+> 底座重构版本：可观测性统一（一份日志、一套错误码、一键诊断）＋更省心的环境与生命周期（便携 Node、延迟更新、托盘按需）＋更强的稳健性（僵尸清理、窗口容灾）＋更清楚的数据边界。重构规划与验收见 [docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)。
+
+### 新增
+
+- **一键诊断导出**：`DshWeb.exe --diagnose [--min-level warn|error]` 把统一日志（可按级别过滤）、环境变量、node/dotnet/webview2 版本、错误码汇总打成**脱敏** zip（用户目录替换为 `%USER%`）放到"下载"文件夹，便于无脑汇报——绝不含 `.credentials.yaml` / 会话 / 存储 / 插件内容。
+- **Node.js 便携自动补齐**：检测不到 Node.js 时弹一次性确认框，自动下载 LTS 便携版到 `%LOCALAPPDATA%\dsh-launcher\env\node\`（SHA256 校验 + 镜像回退 nodejs.org → npmmirror，`DSH_NODE_VERSION` / `DSH_NODE_MIRROR` 可覆盖），只改进程级 PATH、不改系统环境变量与注册表。
+- **窗口位置记忆与多显示器容灾**：窗口位置/大小持久化到 `window-state.json`；副屏拔掉等越界时回退主屏工作区居中并钳制，任务栏变化时整格钳制进工作区。
+
+### 变更
+
+- **统一日志**：旧 `shell.log` 与 `%USERPROFILE%\.dsh-web*.log` 的多文件方案收敛为**单一文件** `DSH_HOME\dsh-launcher\dsh.log`（默认 `~/.dsh\dsh-launcher\dsh.log`）——壳写 JSON Lines（级别 Info/Warn/Error，`DSH_LOG_LEVEL` 控制最小级别），dsh 服务输出经 `start-dsh.vbs` 追加同文件共存；轮转由壳独家负责（>30MB 或 >3 天 → `.1/.2`，保留 ≤3 份）。旧日志路径不再产生新文件。
+- **错误码**：所有用户可见错误弹窗带 `[E####]` 码（目录见 `src/DshShell/ErrorCodes.cs`：E1001 未检测到 Node、E2002 服务启动超时、E2011 插件缺失配置降级等），与结构化日志的 `code` 字段、诊断导出的错误码汇总共用同一套码，消息可 Ctrl+C 复制。
+- **托盘按需显示**：默认隐藏；仅当检测到 dsh-launcher-lifetime 插件已安装、或本会话有待通知的更新时才显示托盘。
+- **dsh 非侵入式更新（延迟应用）**：点更新气泡 → 确认 → 后台 `npm pack` 下载到 `DataDir\staging`（不碰运行中的环境）→ 下次启动拉起服务前自动应用（`npm install -g` 固定版本，写入 `pending-update.json`）；失败不阻塞。
+- **配置自动回退（插件降级）**：dsh-launcher-lifetime 插件卸载后，壳自动忽略并抹除 `settings.json` 里残留的 `serviceLifetime`（回退"跟随窗口"），无需手动删 JSON。
+- **僵尸进程清理 + 孤儿健康校验**：启动时清理上次崩溃遗留的僵尸 Node 进程（只动 pid 文件记录的 PID、绝不按进程名批量杀）；孤儿服务健康（HTTP 就绪）才接管复用，坏状态则清理并重建。
+- **卸载清理数据边界**：MSI 卸载自动清理 `DSH_HOME\dsh-launcher\`（自身配置/统一日志/窗口状态等）与旧 `%USERPROFILE%\.dsh-web*.log`；便携版 `uninstall-autostart.cmd -CleanData`（显式可选）同边界清理。**绝不触碰** `profiles/`、`settings.yaml`、`.credentials.yaml`、sessions、插件等 dsh 生态数据。
+
+### 移除
+
+- 移除了旧的 `shell.log` 与 `%USERPROFILE%\.dsh-web*.log` 日志文件方案（统一为 `dsh.log`）；停用 `start-dsh.vbs` 的自行截断/轮转（所有权归壳）。
+
+### 说明
+
+- 被拒/降级方案见 [docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)：主题 accent 增强（dsh 无法读取自定义主题色）、镜像延迟测速、运行时静默装 .NET（技术不可能，改 MSI 链路 winget，P2 储备）、SIGINT 优雅终止（降级 P2）、自制下载管线（不建，npm 当下载器）。
+
 ## [0.2.5] - 2026-08-15
 
 ### 变更
