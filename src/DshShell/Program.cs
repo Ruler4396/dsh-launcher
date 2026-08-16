@@ -658,7 +658,9 @@ internal static class Program
             {
                 var w = Math.Max(savedWindow.WidthLogical, 800);
                 var h = Math.Max(savedWindow.HeightLogical, 600);
-                form.ClientSize = new Size((int)Math.Round(w * scale), (int)Math.Round(h * scale));
+                // v0.3.1 修复：保存的是含边框的窗口尺寸（SaveWindowState 用 Bounds），
+                // 必须赋给 Size 而非 ClientSize，否则窗口会比保存时大一圈（边框差值）。
+                form.Size = new Size((int)Math.Round(w * scale), (int)Math.Round(h * scale));
             }
             else if (Math.Abs(scale - 1.0) > 0.01)
             {
@@ -877,14 +879,17 @@ internal static class Program
         return true;
     }
 
-    /// <summary>v0.3.0 主窗口位置/大小持久化（多显示器记忆）：RestoreBounds 位置为物理像素，
-    /// 尺寸存 96dpi 逻辑值（跨 DPI 恢复时按当前 DPI 缩放）。</summary>
+    /// <summary>v0.3.0 主窗口位置/大小持久化（多显示器记忆）：位置与尺寸存 96dpi 逻辑值（跨 DPI 恢复时按当前 DPI 缩放）。
+    /// v0.3.1 修复：Normal 状态必须用 Bounds——WinForms 的 RestoreBounds 只在窗口
+    /// 最小化/最大化时更新（Normal 时恒为初始字段值 (-1,-1,初始尺寸)），此前用
+    /// RestoreBounds 导致位置记忆从未生效（每次重启回默认位置/大小）。</summary>
     private static void SaveWindowState(Form form)
     {
         try
         {
             if (form.WindowState == FormWindowState.Minimized) return;
-            var rb = form.RestoreBounds;
+            // Normal → Bounds（当前真实边界）；最小化/最大化 → RestoreBounds（还原后的边界）
+            var rb = form.WindowState == FormWindowState.Normal ? form.Bounds : form.RestoreBounds;
             if (rb.Width <= 0 || rb.Height <= 0) return;
             var scale = form.DeviceDpi / 96f;
             WindowStateStore.Save(new WindowStateStore.WindowState(

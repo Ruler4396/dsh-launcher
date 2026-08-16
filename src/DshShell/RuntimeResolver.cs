@@ -190,8 +190,8 @@ public static class RuntimeResolver
                 await resp.Content.CopyToAsync(fs, ct);
                 return (baseUrl, zipPath);
             }
-            catch (OperationCanceledException) { throw; }
-            catch { /* 换下一个镜像 */ }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* 网络错误/HttpClient 超时 → 换下一个镜像（超时不是用户取消，必须继续回退） */ }
         }
         return (null, null);
     }
