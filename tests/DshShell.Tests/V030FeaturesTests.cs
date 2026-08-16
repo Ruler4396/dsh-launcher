@@ -1,0 +1,219 @@
+using System.Drawing;
+using DshWeb;
+using Xunit;
+
+namespace DshShell.Tests;
+
+/// <summary>v0.3.0 新特性纯逻辑测试：配置降级、插件检测、多显示器窗口恢复、统一日志轮转、
+/// 延迟更新状态机、窗口状态持久化。只测纯逻辑（可注入），不触碰 UI/进程。</summary>
+public class V030FeaturesTests
+{
+    // ---------- 配置降级（ResolveEffectiveLifetime） ----------
+
+    [Fact]
+    public void ResolveEffectiveLifetime_PluginMissingWithStaleField_FallsBackAndPurges()
+    {
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: false);
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
+        Assert.True(purge, "插件缺失且存在残留 serviceLifetime 时应提示抹除");
+    }
+
+    [Theory]
+    [InlineData("{\"serviceLifetime\":0}")]
+    [InlineData("{\"serviceLifetime\":1}")]
+    [InlineData("{\"serviceLifetime\":2}")]
+    [InlineData(null)]
+    [InlineData("not json")]
+    public void ResolveEffectiveLifetime_PluginPresent_NeverPurges(string? json)
+    {
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime(json, pluginPresent: true);
+        Assert.False(purge);
+        Assert.Equal(ShellLogic.ParseLifetimeMode(json), mode);
+    }
+
+    [Fact]
+    public void ResolveEffectiveLifetime_PluginMissingWithoutField_NoPurge()
+    {
+        // 字段本来就不存在 → 无需重写文件（幂等）
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"other\":1}", pluginPresent: false);
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
+        Assert.False(purge);
+    }
+
+    // ---------- 插件物理存在检测（IsLifetimePluginInstalled） ----------
+
+    [Fact]
+    public void IsLifetimePluginInstalled_NodeModulesEntity_Detected()
+    {
+        using var tmp = new TempDir();
+        Directory.CreateDirectory(Path.Combine(tmp.Path, "profiles", "web", "node_modules", "dsh-launcher-lifetime"));
+        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+    }
+
+    [Fact]
+    public void IsLifetimePluginInstalled_ManifestDependencies_Detected()
+    {
+        using var tmp = new TempDir();
+        var profile = Path.Combine(tmp.Path, "profiles", "web");
+        Directory.CreateDirectory(profile);
+        File.WriteAllText(Path.Combine(profile, "package.json"),
+            "{\"dependencies\":{\"dsh-launcher-lifetime\":\"file:../x\"}}");
+        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+    }
+
+    [Fact]
+    public void IsLifetimePluginInstalled_ManifestBundles_Detected()
+    {
+        using var tmp = new TempDir();
+        var profile = Path.Combine(tmp.Path, "profiles", "web");
+        Directory.CreateDirectory(profile);
+        File.WriteAllText(Path.Combine(profile, "package.json"),
+            "{\"dsh\":{\"profile\":{\"bundles\":[\"@deepseek-ai/dsh-base\",\"dsh-launcher-lifetime\"]}}}");
+        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+    }
+
+    [Fact]
+    public void IsLifetimePluginInstalled_Absent_ReturnsFalse()
+    {
+        using var tmp = new TempDir();
+        Assert.False(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        // 有任何读取异常也不得误报已安装
+        Directory.CreateDirectory(Path.Combine(tmp.Path, "profiles", "web"));
+        File.WriteAllText(Path.Combine(tmp.Path, "profiles", "web", "package.json"), "{broken json");
+        Assert.False(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+    }
+
+    // ---------- 多显示器窗口恢复（RestoreWindowPosition） ----------
+
+    private static readonly Rectangle Primary = new(0, 0, 1920, 1040);
+
+    [Fact]
+    public void RestoreWindowPosition_OnSecondaryMonitor_KeepsPosition()
+    {
+        var secondary = new Rectangle(1920, 0, 1280, 1040);
+        var (x, y) = ShellLogic.RestoreWindowPosition(2000, 100, 800, 600, new[] { Primary, secondary }, Primary);
+        Assert.Equal((2000, 100), (x, y));
+    }
+
+    [Fact]
+    public void RestoreWindowPosition_NegativeCoords_LeftMonitor_Kept()
+    {
+        var left = new Rectangle(-1280, 0, 1280, 1040);
+        var (x, y) = ShellLogic.RestoreWindowPosition(-1000, 300, 800, 600, new[] { left, Primary }, Primary);
+        Assert.Equal((-1000, 300), (x, y));
+    }
+
+    [Fact]
+    public void RestoreWindowPosition_MonitorUnplugged_CentersOnPrimary()
+    {
+        // 保存位置在已不存在的副屏上 → 回退主屏居中
+        var (x, y) = ShellLogic.RestoreWindowPosition(1920 + 2000, 500, 800, 600, new[] { Primary }, Primary);
+        var cx = (1920 - 800) / 2;
+        var cy = (1040 - 600) / 2;
+        Assert.Equal((cx, cy), (x, y));
+    }
+
+    [Fact]
+    public void RestoreWindowPosition_TaskbarShrank_ClampedIntoWorkArea()
+    {
+        // 工作区底部上移（任务栏变大）：窗口底部超出 → 整窗钳制回工作区
+        var shrunk = new Rectangle(0, 0, 1920, 900);
+        var (x, y) = ShellLogic.RestoreWindowPosition(100, 500, 800, 600, new[] { shrunk, Primary }, Primary);
+        Assert.True(y <= 300, $"y={y} 应钳制到 900-600=300 以内（窗口完全可见）");
+        Assert.Equal(100, x);
+    }
+
+    [Fact]
+    public void RestoreWindowPosition_OnlyTinySliceVisible_FallsBackToCenter()
+    {
+        // 目标在屏幕上只露出 20px（<120px 可抓取门槛）→ 视为越界，主屏居中
+        var (x, y) = ShellLogic.RestoreWindowPosition(0, 1020, 800, 600, new[] { Primary }, Primary);
+        var cy = (1040 - 600) / 2;
+        Assert.Equal(cy, y);
+    }
+
+    [Fact]
+    public void RestoreWindowPosition_StraddlesTwoMonitors_KeepsOnVisibleOne()
+    {
+        // 窗口跨主屏与主屏下方的副屏，副屏上可见 560px（≥120）→ 保留并钳制到副屏工作区内
+        var below = new Rectangle(0, 1040, 1920, 600);
+        var (x, y) = ShellLogic.RestoreWindowPosition(0, 1000, 800, 600, new[] { Primary, below }, Primary);
+        Assert.Equal((0, 1040), (x, y));
+    }
+
+    // ---------- 统一日志轮转判定（Logger.ShouldRotate） ----------
+
+    [Fact]
+    public void ShouldRotate_SizeCap()
+    {
+        Assert.True(Logger.ShouldRotate(31L * 1024 * 1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
+        Assert.False(Logger.ShouldRotate(30L * 1024 * 1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
+        Assert.False(Logger.ShouldRotate(1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void ShouldRotate_AgeCap()
+    {
+        Assert.True(Logger.ShouldRotate(1024, DateTime.UtcNow.AddDays(-4), DateTime.UtcNow));
+        Assert.False(Logger.ShouldRotate(1024, DateTime.UtcNow.AddDays(-2), DateTime.UtcNow));
+    }
+
+    // ---------- 延迟更新状态机（StagedUpdate） ----------
+
+    [Fact]
+    public void StagedUpdate_RoundTrip()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        Assert.Null(StagedUpdate.ReadPendingVersion());
+        StagedUpdate.MarkPending("1.2.3");
+        Assert.Equal("1.2.3", StagedUpdate.ReadPendingVersion());
+        StagedUpdate.ClearPending();
+        Assert.Null(StagedUpdate.ReadPendingVersion());
+    }
+
+    [Fact]
+    public void StagedUpdate_CorruptFile_ReturnsNull()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"), "{broken");
+        Assert.Null(StagedUpdate.ReadPendingVersion());
+    }
+
+    // ---------- 窗口状态持久化（WindowStateStore） ----------
+
+    [Fact]
+    public void WindowStateStore_RoundTrip()
+    {
+        using var tmp = new TempDir();
+        WindowStateStore.Init(tmp.Path);
+        WindowStateStore.Save(new WindowStateStore.WindowState(100, 200, 1280, 840));
+        var loaded = WindowStateStore.Load();
+        Assert.NotNull(loaded);
+        Assert.Equal((100, 200, 1280, 840), (loaded!.X, loaded.Y, loaded.WidthLogical, loaded.HeightLogical));
+    }
+
+    [Fact]
+    public void WindowStateStore_MissingOrCorrupt_ReturnsNull()
+    {
+        using var tmp = new TempDir();
+        WindowStateStore.Init(tmp.Path);
+        Assert.Null(WindowStateStore.Load());
+        File.WriteAllText(Path.Combine(tmp.Path, "window-state.json"), "not json");
+        Assert.Null(WindowStateStore.Load());
+    }
+
+    /// <summary>临时目录（自动清理）。</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh-v030-" + Guid.NewGuid().ToString("N"));
+
+        public TempDir() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, true); } catch { }
+        }
+    }
+}
