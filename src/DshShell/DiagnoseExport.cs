@@ -65,7 +65,7 @@ public static class DiagnoseExport
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
         var sb = new StringBuilder();
-        foreach (var raw in File.ReadLines(logPath))
+        foreach (var raw in ReadLinesShared(logPath))
         {
             var line = raw.TrimEnd();
             if (line.Length == 0) continue;
@@ -100,19 +100,31 @@ public static class DiagnoseExport
         return null;
     }
 
-    /// <summary>日志尾部若干行（大文件不整读）。质量治理修复：输出行统一过 Sanitize（脱敏）。</summary>
+    /// <summary>日志尾部若干行（大文件不整读）。质量治理修复：输出行统一过 Sanitize（脱敏）。
+    /// v0.3.1 修复：必须用共享读打开——运行中的 dsh 服务（cmd >> 重定向）以独占共享模式持有
+    /// dsh.log，File.ReadLines 默认 FileShare.Read 会被拒（IOException），导致服务运行期间
+    /// --diagnose 必然失败（22 字节空 zip + E5001 写不进被锁日志）。</summary>
     private static string TailLines(string logPath, int maxLines)
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
         var sb = new StringBuilder();
         var kept = new Queue<string>(maxLines);
-        foreach (var raw in File.ReadLines(logPath))
+        foreach (var raw in ReadLinesShared(logPath))
         {
             kept.Enqueue(raw.TrimEnd());
             if (kept.Count > maxLines) kept.Dequeue();
         }
         foreach (var l in kept) sb.AppendLine(Sanitize(l));
         return sb.ToString();
+    }
+
+    /// <summary>以 FileShare.ReadWrite 共享模式逐行读取（可读被运行中服务锁定的日志文件）。</summary>
+    private static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(fs, detectEncodingFromByteOrderMarks: true);
+        string? line;
+        while ((line = reader.ReadLine()) is not null) yield return line;
     }
 
     private static string CollectEnv(string dshHomeDir)
@@ -162,7 +174,7 @@ public static class DiagnoseExport
     {
         if (!File.Exists(logPath)) return "（无日志）";
         var counts = new Dictionary<string, (int Count, string FirstMsg)>(StringComparer.Ordinal);
-        foreach (var raw in File.ReadLines(logPath))
+        foreach (var raw in ReadLinesShared(logPath))
         {
             if (!raw.TrimStart().StartsWith('{')) continue;
             try

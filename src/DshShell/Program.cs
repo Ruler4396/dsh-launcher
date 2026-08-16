@@ -681,9 +681,16 @@ internal static class Program
 
             // WebView2 user data goes to %LOCALAPPDATA%\DshWeb to keep the app dir clean
             // (固定目录：避免系统临时目录被清理导致会话/插件登录态丢失)
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DshWeb", "WebView2");
+            // DSH_WEBVIEW2_DATA 测试钩子：自动化测试必须隔离 WebView2 数据目录——多个进程
+            // 共用同一 user-data-dir 会导致互相锁死（实测：测试实例与真实实例并行初始化
+            // WebView2 时真实实例 UI 线程卡死、整窗灰色无响应）。仅测试使用。
+            var userDataFolder = Environment.GetEnvironmentVariable("DSH_WEBVIEW2_DATA");
+            if (string.IsNullOrWhiteSpace(userDataFolder))
+            {
+                userDataFolder = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DshWeb", "WebView2");
+            }
             try
             {
                 await InitWebViewAsync(web, userDataFolder);

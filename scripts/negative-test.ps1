@@ -8,6 +8,8 @@
 每个用例都满足隔离铁律：
 - DSH_HOME 一律指向 %TEMP%\dsh-neg\<case>\home（前置防护断言 GetFullPath StartsWith TEMP）；
 - 端口一律用 39xxx 高位测试端口，绝不触碰 3080；
+- **DSH_WEBVIEW2_DATA 一律指向隔离目录**（测试实例与真实实例共用 WebView2 user-data-dir
+  会导致互锁、真实启动器整窗灰死——2026-08-16 实测事故，必须隔离）；
 - 不修改任何真实用户数据（~/.dsh、注册表自启、真实服务）；
 - 每个 exe 实例限时运行，超时强制 kill 进程树，不留残留。
 
@@ -19,6 +21,7 @@ N4  日志写入失败（DSH_HOME 被文件占位）→ 壳不崩溃（日志失
 N5  --diagnose 脱敏：伪造含真实用户名/~/USERPROFILE 的日志 → zip 内不含明文用户名
 N6  单实例：首实例卡住时二次启动在限定时间内自行退出（不重复开窗）
 N7  settings.json 非法 JSON → 启动不崩溃、无 E2011 误报（无 serviceLifetime 键）
+N8  日志被服务锁定（cmd >> 重定向独占写）→ --diagnose 仍共享读导出成功（防 22 字节空 zip 回归）
 
 .EXAMPLE
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/negative-test.ps1
@@ -94,6 +97,9 @@ function Start-ShellExe([string]$case, [hashtable]$env2, [int]$waitSec = 5) {
     $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
     $psi.EnvironmentVariables["DSH_WEB_URL"] = ""   # 默认不外部托管；用例可覆盖
     $psi.EnvironmentVariables["DSH_WEB_PORT"] = ""
+    # WebView2 数据目录隔离铁律（2026-08-16 实测事故：测试与真实实例共用 user-data-dir
+    # 导致真实启动器整窗灰死）。测试实例一律用独立目录。
+    $psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base ("wv2-" + $case + "-" + [guid]::NewGuid().ToString("N")))
     foreach ($k in $env2.Keys) { $psi.EnvironmentVariables[$k] = [string]$env2[$k] }
     $p = [System.Diagnostics.Process]::Start($psi)
     Start-Sleep -Seconds $waitSec
@@ -133,6 +139,7 @@ $psi.CreateNoWindow = $true
 $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi.EnvironmentVariables["DSH_WEB_URL"] = ""      # 清除继承值，走"托管"分支
 $psi.EnvironmentVariables["DSH_WEB_PORT"] = "39011"
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n3")
 $p = [System.Diagnostics.Process]::Start($psi)
 Start-Sleep -Seconds 8
 if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
@@ -149,6 +156,7 @@ $psi.CreateNoWindow = $true
 $psi.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi.EnvironmentVariables["DSH_HOME"] = $blocker   # DSH_HOME 指向文件 → dsh.log 目录创建必然失败
 $psi.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39874"
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n4")
 $p = [System.Diagnostics.Process]::Start($psi)
 $p.WaitForExit(20000)
 Assert-Neg $p.HasExited "N4: 日志写失败时壳仍正常退出（日志失败不影响启动/退出，有意设计）"
@@ -165,6 +173,7 @@ $psi.UseShellExecute = $false
 $psi.CreateNoWindow = $true
 $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi.EnvironmentVariables["DSH_WEB_URL"] = ""
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n5")
 $p = [System.Diagnostics.Process]::Start($psi)
 Assert-Neg $p.WaitForExit(30000) "N5: --diagnose 正常退出且无 UI 阻塞（不再弹模态框）"
 $zip = Get-ChildItem (Join-Path $env:USERPROFILE "Downloads\*dsh-launcher-diagnose-*.zip") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -180,6 +189,45 @@ if ($zip) {
     Assert-Neg $false "N5: 未找到诊断 zip（下载目录）"
 }
 
+Write-Host "`n=== N8: 日志被运行中服务锁定（cmd >> 重定向）→ --diagnose 仍能共享读导出 ===" -ForegroundColor Cyan
+# 回归断言：dsh 服务运行时独占写 dsh.log（允许读共享、拒绝写），旧版 File.ReadLines
+# 必抛 IOException → 22 字节空 zip + E5001；修复后必须能正常导出（v0.3.1）。
+$isoHome = New-IsoHome "n8"
+$fakeLog = Join-Path $isoHome "dsh-launcher\dsh.log"
+Set-Content $fakeLog '{"ts":"2026-08-16 12:00:00.000","level":"ERROR","pid":1,"code":"E2004","msg":"locked-log test"}' -Encoding UTF8
+# 模拟服务持有句柄：允许他人读（FileShare.Read）、拒绝写——与 cmd >> 重定向语义一致
+$lockFs = [System.IO.File]::Open($fakeLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
+try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = "--diagnose"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
+    $psi.EnvironmentVariables["DSH_WEB_URL"] = ""
+    $psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n8")
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+    Assert-Neg $p.WaitForExit(30000) "N8: --diagnose 退出（不挂起）"
+    Assert-Neg ($se.Result -notmatch "E5001") "N8: 日志锁定时不报 E5001（共享读生效）"
+    Assert-Neg ($so.Result -match 'dsh-launcher diagnose: .+\.zip') "N8: stdout 给出 zip 路径"
+    $zip = Get-ChildItem (Join-Path $env:USERPROFILE "Downloads\*dsh-launcher-diagnose-*.zip") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($zip) {
+        Assert-Neg ($zip.Length -gt 200) "N8: zip 非空（含日志主体，非 22 字节空壳）"
+        $extract = Join-Path $base "n8-zip"
+        Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
+        $fullTxt = Get-Content (Join-Path $extract "log-full.txt") -Raw
+        Assert-Neg ($fullTxt -match "locked-log test") "N8: 日志主体导出成功（含被锁文件的原文）"
+        Remove-Item $zip.FullName -Force -ErrorAction SilentlyContinue
+    } else {
+        Assert-Neg $false "N8: 未找到诊断 zip"
+    }
+} finally {
+    $lockFs.Dispose()
+}
+
 Write-Host "`n=== N6: 同端口双实例 → 互斥保护、均自行退出、无残留 ===" -ForegroundColor Cyan
 $isoHome = New-IsoHome "n6"
 $psi1 = New-Object System.Diagnostics.ProcessStartInfo
@@ -190,6 +238,7 @@ $psi1.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi1.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi1.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
 $psi1.EnvironmentVariables["DSH_WEB_PORT"] = ""
+$psi1.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n6a")
 $p1 = [System.Diagnostics.Process]::Start($psi1)
 Start-Sleep -Seconds 1
 $psi2 = New-Object System.Diagnostics.ProcessStartInfo
@@ -200,6 +249,7 @@ $psi2.EnvironmentVariables["DSH_NO_UI"] = "1"
 $psi2.EnvironmentVariables["DSH_HOME"] = $isoHome
 $psi2.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
 $psi2.EnvironmentVariables["DSH_WEB_PORT"] = ""
+$psi2.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n6b")
 $p2 = [System.Diagnostics.Process]::Start($psi2)
 $p2.WaitForExit(30000)
 Assert-Neg $p2.HasExited "N6: 第二实例在 30s 内自行退出（单实例互斥生效，无重复窗口）"
