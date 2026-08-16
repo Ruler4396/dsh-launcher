@@ -73,7 +73,14 @@ public static class StagedUpdate
                 : 0;
             return (version, fail);
         }
-        catch { return (null, 0); }
+        catch
+        {
+            // P1-4（质量治理）：损坏不静默——待应用更新记录失效要可诊断（此前静默按"无待应用"处理，
+            // 用户"说好的自动更新去哪了"无从查证；按无记录处理不影响功能，仅补诊断）。
+            Logger.Warn("pending-update.json is corrupt or unreadable; treating as no pending update",
+                ctx: new { path = _pendingPath });
+            return (null, 0);
+        }
     }
 
     /// <summary>读取待应用版本；无记录/损坏返回 null（兼容旧调用）。</summary>
