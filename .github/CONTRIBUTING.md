@@ -11,7 +11,7 @@
 ## 本地构建
 
 ```powershell
-# 一键构建发布包（产出 dist/dsh-launcher-windows.zip）
+# 一键构建发布包（产出 dist/dsh-launcher-windows-<版本>.zip 与 dsh-launcher-<版本>.msi）
 ./scripts/build-release.ps1
 
 # 或手动 publish
