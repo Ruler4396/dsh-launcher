@@ -196,6 +196,9 @@
         <File Source="$(var.SourceDir)\dsh-web.cmd" />
       </Component>
       <Component Directory="INSTALLFOLDER" Guid="*">
+        <File Source="$(var.SourceDir)\check-prereq.cmd" />
+      </Component>
+      <Component Directory="INSTALLFOLDER" Guid="*">
         <File Source="$(var.SourceDir)\uninstall-autostart.cmd" />
       </Component>
     </ComponentGroup>

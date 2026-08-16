@@ -28,23 +28,54 @@ public static class RuntimeResolver
 
     public sealed record NodeEnvironment(string? NodeExe, bool IsPortable, string? RootDir);
 
-    /// <summary>解析当前可用的 Node 环境（不安装、不下载）。主版本 ≥18 才算可用。</summary>
+    /// <summary>解析当前可用的 Node 环境（不安装、不下载）。主版本 ≥18 才算可用。
+    /// 质量治理：找不到/不可用的原因记日志（此前静默回退，用户困惑"为何要下载便携版"）。</summary>
     public static NodeEnvironment ResolveExisting()
     {
         try
         {
             var onPath = FindOnPath("node.exe");
-            if (onPath is not null && IsUsableNode(onPath))
-                return new NodeEnvironment(onPath, false, Path.GetDirectoryName(onPath));
+            if (onPath is not null)
+            {
+                if (IsUsableNode(onPath))
+                    return new NodeEnvironment(onPath, false, Path.GetDirectoryName(onPath));
+                Logger.Warn($"node.exe on PATH is unusable (version <18 or broken): {onPath}");
+            }
             var viaRegistry = FindViaRegistry();
-            if (viaRegistry is not null && IsUsableNode(viaRegistry))
-                return new NodeEnvironment(viaRegistry, false, Path.GetDirectoryName(viaRegistry));
+            if (viaRegistry is not null)
+            {
+                if (IsUsableNode(viaRegistry))
+                    return new NodeEnvironment(viaRegistry, false, Path.GetDirectoryName(viaRegistry));
+                Logger.Warn($"node.exe via registry is unusable (version <18 or broken): {viaRegistry}");
+            }
             var portable = Path.Combine(PortableNodeDir, "node.exe");
-            if (File.Exists(portable) && IsUsableNode(portable))
-                return new NodeEnvironment(portable, true, PortableNodeDir);
+            if (File.Exists(portable))
+            {
+                if (IsUsableNode(portable))
+                    return new NodeEnvironment(portable, true, PortableNodeDir);
+                Logger.Warn($"portable node.exe is unusable (version <18 or broken): {portable}");
+            }
+            Logger.Info("no usable Node.js found (PATH/registry/portable); portable download will be offered");
         }
         catch { /* 解析失败按缺失处理 */ }
         return new NodeEnvironment(null, false, null);
+    }
+
+    /// <summary>Node 缺失原因（供确认框文案区分）：返回 "not-found"（完全未安装）、
+    /// "too-old"（存在但版本 &lt;18 或损坏）、null（有可用 Node）。</summary>
+    internal static string? NodeMissingReason()
+    {
+        try
+        {
+            var onPath = FindOnPath("node.exe");
+            if (onPath is not null) return IsUsableNode(onPath) ? null : "too-old";
+            var viaRegistry = FindViaRegistry();
+            if (viaRegistry is not null) return IsUsableNode(viaRegistry) ? null : "too-old";
+            var portable = Path.Combine(PortableNodeDir, "node.exe");
+            if (File.Exists(portable)) return IsUsableNode(portable) ? null : "too-old";
+            return "not-found";
+        }
+        catch { return "not-found"; }
     }
 
     /// <summary>把便携 Node 目录前插到进程级 PATH（wscript → cmd → dsh/npm 自动继承）。</summary>
