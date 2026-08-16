@@ -301,6 +301,8 @@ internal static class Program
             var zip = DiagnoseExport.Run(args, DshHomeDir, Logger.Path);
             if (zip is not null)
             {
+                // v0.3.1：zip 路径同时落日志（GUI 用户无控制台时也能事后在 dsh.log 找到产物位置）
+                Logger.Info("diagnostic export written: " + zip);
                 Console.WriteLine("dsh-launcher diagnose: " + zip);
                 Console.WriteLine("已脱敏：不含任何密钥/会话/插件数据。可随 Issue 一起上传。");
             }
@@ -325,6 +327,7 @@ internal static class Program
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
+        CleanupStagingCache(); // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包（防无限增长）
 
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
         MigrateLegacyData(); // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME（settings.json 保留、旧目录清理）
@@ -710,6 +713,20 @@ internal static class Program
             }
             catch (Exception ex)
             {
+                // 质量治理（实测事故）：WebView2 数据目录被另一实例占用时 native 返回
+                // 0x800700B7 (ERROR_ALREADY_EXISTS)——真实多开共用 %LOCALAPPDATA%\DshWeb\WebView2
+                // 会互锁（整窗灰死）。此时给专属提示，避免用户误以为 Runtime 缺失（E1006 泛化）。
+                if (ex.Message.Contains("0x800700B7", StringComparison.OrdinalIgnoreCase))
+                {
+                    Logger.Error("webview2 user-data-dir locked by another instance: " + ex.Message,
+                        ErrorCodes.E1006, new { hint = "another-dsh-launcher-running" });
+                    ShowError(ErrorCodes.E1006,
+                        "无法初始化 WebView2：WebView2 数据目录正被另一个 dsh-launcher 实例占用。\n\n"
+                        + "请先关闭其他 dsh-launcher 窗口（或检查任务管理器中是否有其他 DshWeb.exe），再重新打开。");
+                    form.Close();
+                    return;
+                }
+
                 // WebView2 Runtime 缺失等初始化失败：先尝试静默安装 Evergreen Bootstrapper
                 //（P2，v0.3.1），安装成功后重试一次初始化；重试再次失败才明确提示而不是静默无窗口。
                 if (await TryInstallWebView2Async())
@@ -860,7 +877,11 @@ internal static class Program
             return false;
         }
         var ask = MessageBox.Show(
-            "未检测到 Node.js（dsh 服务运行必需）。\n\n是否自动下载便携版 Node.js 到用户目录？\n" +
+            "检测到 Node.js 问题（dsh 服务运行必需）。\n\n" +
+            (RuntimeResolver.NodeMissingReason() == "too-old"
+                ? "系统 Node.js 版本过低或不可用（需要 18 或更高版本）。\n"
+                : "未检测到 Node.js。\n") +
+            "是否自动下载便携版 Node.js 到用户目录？\n" +
             "（约 30MB，仅用于本启动器，不改动系统环境；版本采用 LTS 固定版）",
             "dsh-launcher - 需要 Node.js", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (ask != DialogResult.Yes)
@@ -904,7 +925,11 @@ internal static class Program
                 (int)Math.Round(rb.Width / scale),
                 (int)Math.Round(rb.Height / scale)));
         }
-        catch { /* 保存失败不影响退出 */ }
+        catch (Exception ex)
+        {
+            // 质量治理：窗口位置保存失败此前静默（用户配置的位置丢失无诊断入口）
+            Logger.Warn("window state save failed; position memory unavailable this session", ctx: new { error = ex.Message });
+        }
     }
 
     /// <summary>
@@ -950,11 +975,50 @@ internal static class Program
                 if (!string.IsNullOrWhiteSpace(latest) && !string.IsNullOrWhiteSpace(local)
                     && UpdateChecker.CompareVersions(latest, local) > 0)
                 {
+                    // v0.3.1：用户拒绝过的版本跳过（新版本 > 跳过版本时重新提示）
+                    var skipped = ReadSkippedDshVersion();
+                    if (skipped is not null && UpdateChecker.CompareVersions(latest, skipped) <= 0)
+                    {
+                        Trace($"dsh update {latest} skipped by user (skipped={skipped})");
+                        return;
+                    }
                     form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, latest, local));
                 }
             }
             catch { /* 检测失败静默 */ }
         });
+    }
+
+    /// <summary>用户拒绝过的 dsh 版本记录路径（DataDir\skipped-update.json）。</summary>
+    private static string SkippedUpdatePath => Path.Combine(DataDir, "skipped-update.json");
+
+    private static void MarkSkippedDshVersion(string version)
+    {
+        try
+        {
+            Directory.CreateDirectory(DataDir);
+            File.WriteAllText(SkippedUpdatePath, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                version,
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            }));
+            Logger.Info($"user skipped dsh update {version}; won't re-prompt until a newer version appears");
+        }
+        catch { /* 记录失败：下次启动可能再提示（可接受） */ }
+    }
+
+    private static string? ReadSkippedDshVersion()
+    {
+        try
+        {
+            if (!File.Exists(SkippedUpdatePath)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(SkippedUpdatePath));
+            return doc.RootElement.TryGetProperty("version", out var v)
+                && v.ValueKind == System.Text.Json.JsonValueKind.String
+                ? v.GetString()
+                : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：托盘气泡告知落盘位置，
@@ -993,11 +1057,20 @@ internal static class Program
     }
 
     /// <summary>质量治理 P1-6/P1-8："已下载待应用"更新的一次性气泡提示（无点击行为）。
-    /// 触发条件：pending-update.json 存在（服务健康跳过应用，或应用失败保留）。</summary>
+    /// 触发条件：pending-update.json 存在（服务健康跳过应用，或应用失败保留）。
+    /// v0.3.1 降噪：应用失败达到 MaxNotifyFailures 次后不再每次启动弹气泡
+    /// （持续失败会重复打扰），降级为仅日志（手动 npm 命令提示保留在日志文案）。</summary>
     private static void NotifyPendingApply(string version)
     {
         try
         {
+            var (_, failCount) = StagedUpdate.ReadPending();
+            if (failCount >= StagedUpdate.MaxNotifyFailures)
+            {
+                Logger.Warn($"staged dsh update {version} kept failing to apply ({failCount} tries); " +
+                    "suppressing balloon. Manual: npm install -g @deepseek-ai/dsh@" + version);
+                return;
+            }
             if (_pendingForm is null) return;
             EnsureTrayIcon(_pendingForm, force: true); // 无插件/无待通知更新时也临时建托盘提示
             if (_trayIcon is null) return;
@@ -1024,14 +1097,19 @@ internal static class Program
     }
 
     /// <summary>点击气泡后：确认 → 后台下载 dsh 新版（npm pack，不碰运行中的环境）→
-    /// 写 pending-update.json，下次启动时自动应用（延迟应用，v0.3.0，绝不打断当前会话）。</summary>
+    /// 写 pending-update.json，下次启动时自动应用（延迟应用，v0.3.0，绝不打断当前会话）。
+    /// v0.3.1：用户拒绝 → 持久化跳过该版本（下次启动不再提示，除非检测到更新的版本）。</summary>
     private static void PromptDshUpdate(Form form, string latest, string local)
     {
         var r = MessageBox.Show(
             $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台下载并安排更新？\n" +
             "（下载完成不打扰当前会话；下次启动 dsh-launcher 时自动应用新版本）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        if (r != DialogResult.Yes) return;
+        if (r != DialogResult.Yes)
+        {
+            MarkSkippedDshVersion(latest); // 用户拒绝：跳过此版本，避免每次启动重复提示
+            return;
+        }
         _ = Task.Run(() => DownloadDshUpdateStaged(form, latest));
     }
 
@@ -1085,13 +1163,40 @@ internal static class Program
         if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail))
         {
             StagedUpdate.ClearPending();
+            CleanupStagingCache(); // 应用成功：清空 staging（下载缓存不留残余）
             Logger.Info($"staged dsh update applied: {version}");
         }
         else
         {
+            StagedUpdate.MarkApplyFailed(); // v0.3.1：累计失败次数，持续失败降级为仅日志
             Logger.Warn("staged dsh update apply failed; continuing with current version", ErrorCodes.E4002,
                 new { version, tail = errorTail });
         }
+    }
+
+    /// <summary>下载缓存管理：清理 DataDir\staging 中修改时间超过 7 天的文件。
+    /// 下载中的当前包（刚写入）不受影响；应用成功后调用方再整体清空。</summary>
+    private static void CleanupStagingCache()
+    {
+        try
+        {
+            var staging = Path.Combine(DataDir, "staging");
+            if (!Directory.Exists(staging)) return;
+            var cutoff = DateTime.UtcNow - TimeSpan.FromDays(7);
+            foreach (var file in Directory.GetFiles(staging))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff)
+                    {
+                        File.Delete(file);
+                        Logger.Info("staging cache cleaned (expired)", ctx: new { file = Path.GetFileName(file) });
+                    }
+                }
+                catch { /* 单文件清理失败跳过 */ }
+            }
+        }
+        catch { /* 清理失败不影响启动 */ }
     }
 
     /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：最多等 120s；输出重定向避免死锁。</summary>
@@ -1387,6 +1492,23 @@ internal static class Program
             catch { /* 旧路径不可读按默认执行 */ }
         }
         var pluginPresent = ShellLogic.IsLifetimePluginInstalled(DshHomeDir);
+        // 质量治理：settings.json 存在但非法 JSON / 非对象 → 记 Warn（此前静默回退默认模式，
+        // 用户"常驻"配置为何失效无法诊断）。仅在文件内容非空且非合法 JSON 对象时告警。
+        if (!string.IsNullOrWhiteSpace(json) && !ShellLogic.HasServiceLifetimeKey(json))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    Logger.Warn("settings.json is not a JSON object; lifetime defaults apply",
+                        ctx: new { path = SettingsPath });
+            }
+            catch
+            {
+                Logger.Warn("settings.json is not valid JSON; lifetime defaults apply",
+                    ctx: new { path = SettingsPath });
+            }
+        }
         var (mode, shouldPurge) = ShellLogic.ResolveEffectiveLifetime(json, pluginPresent);
         if (shouldPurge)
         {

@@ -77,7 +77,7 @@ if (Test-Path $zipPath) {
     $names = $entries.Entries | ForEach-Object FullName
     $entries.Dispose()
     foreach ($need in "DshWeb.exe", "WebView2Loader.dll", "runtimes/win-x64/native/WebView2Loader.dll",
-        "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-autostart.cmd") {
+        "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-autostart.cmd", "check-prereq.cmd") {
         Assert-T ($names -contains $need) "zip 含 $need"
     }
 }

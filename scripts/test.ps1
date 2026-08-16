@@ -60,6 +60,17 @@ Assert-True ($vbs -notmatch '\.dsh-web\.log') "start-dsh.vbs 不再写旧式 .ds
 Assert-True ($vbs -match 'Chr\(34\)') "start-dsh.vbs 日志重定向加引号（防用户名含空格/元字符注入，S5）"
 Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
 
+# v0.3.1：check-prereq.cmd 便携版环境自检（纯 cmd，零依赖）
+$prereq = Get-Content (Join-Path $root "scripts\check-prereq.cmd") -Raw
+Assert-True ($prereq -match 'WindowsDesktop\.App') "check-prereq.cmd 检测 .NET Desktop Runtime"
+Assert-True ($prereq -match 'webview2|WebView2') "check-prereq.cmd 检测 WebView2 Runtime"
+Assert-True ($prereq -match 'node --version') "check-prereq.cmd 检测 Node.js 18+"
+Assert-True ($prereq -match '--diagnose') "check-prereq.cmd 指引 --diagnose 诊断导出"
+$prereqBytes = [System.IO.File]::ReadAllBytes((Join-Path $root "scripts\check-prereq.cmd"))
+$crCount = ($prereqBytes | Where-Object { $_ -eq 13 } | Measure-Object).Count
+$lfCount = ($prereqBytes | Where-Object { $_ -eq 10 } | Measure-Object).Count
+Assert-True ($crCount -eq $lfCount -and $crCount -gt 0) "check-prereq.cmd 使用 CRLF 换行（cmd 批处理硬性要求）"
+
 # 自启=拉壳（Run 项直接指向 DshWeb.exe，壳自行拉起服务）：
 # 壳源码 EnsureAutoStartRequested 写 DshWeb.exe（不再 wscript+vbs）
 $shellSrc = Get-Content (Join-Path $root "src\DshShell\Program.cs") -Raw

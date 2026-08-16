@@ -88,6 +88,8 @@ winget install Microsoft.DotNet.DesktopRuntime.10
 装完再双击。仍不行 → 看下方"看日志"。
 
 > 提示：**MSI 安装时**的前置检查已在缺 .NET 时提供「自动安装(A)」按钮，一键 winget 装好后继续，无需手动进 PowerShell。
+>
+> 提示：**便携版 zip** 解压目录里附带 `check-prereq.cmd`（纯 cmd、零依赖），双击运行即可一次检测 .NET / WebView2 / Node 三项前置，缺失时直接给出安装命令与下载链接——双击 exe 无反应时先用它定位。
 
 **现象 2：弹出"未检测到 Node.js，无法启动 dsh 服务"**
 

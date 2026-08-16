@@ -2,12 +2,12 @@
 
 > 本文档是 dsh-launcher 的**测试治理方案**（A8 交付物）：不修改产品代码，只定义"怎么推导、怎么排优先级、测什么、自动化边界、CI 怎么做"。全部测试方向**以真实代码行为为唯一依据**（读 `src/DshShell/*.cs`、`scripts/start-dsh.vbs`、`scripts/uninstall-autostart.cmd`、`tests/DshShell.Tests/*.cs`、`.github/workflows/build.yml` 之后撰写），不臆造不存在的功能。
 >
-> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 255 单测（
+> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 262 单测（
 > ShellLogicTests / V030FeaturesTests / UpdateCheckerTests / DiagnoseExportTests / LoggerTests /
-> SecurityBoundaryTests，按主题拆分），`scripts/test.ps1` 含 27+ 静态断言与 uninstall/-CleanData
-> 隔离行为测试；`scripts/negative-test.ps1` 8 用例 20 断言（预期失败/隔离铁律）；`scripts/e2e-test.ps1`
-> 7 段 37 断言（发布产物 → 解压部署 → 真实 GUI → 窗口记忆 → 诊断导出 → 卸载 → 数据边界）。
-> CI `build.yml` 跑 `dotnet test` + `test.ps1`。
+> SecurityBoundaryTests，按主题拆分；含 StagedUpdate 失败计数、Node 缺失原因等 v0.3.1 新增用例），
+> `scripts/test.ps1` 含 27+ 静态断言与 uninstall/-CleanData 隔离行为测试；`scripts/negative-test.ps1`
+> 8 用例 20 断言（预期失败/隔离铁律）；`scripts/e2e-test.ps1` 7 段 37 断言（发布产物 → 解压部署 →
+> 真实 GUI → 窗口记忆 → 诊断导出 → 卸载 → 数据边界）。CI `build.yml` 跑 `dotnet test` + `test.ps1`。
 
 ---
 

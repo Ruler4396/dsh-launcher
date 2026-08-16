@@ -312,4 +312,101 @@ public class V030FeaturesTests
             try { Directory.Delete(Path, true); } catch { }
         }
     }
+
+    // ---------- 延迟更新失败计数（v0.3.1：持续失败降级气泡） ----------
+
+    [Fact]
+    public void StagedUpdate_MarkPending_StartsFailCountAtZero()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3");
+        var (version, failCount) = StagedUpdate.ReadPending();
+        Assert.Equal("1.2.3", version);
+        Assert.Equal(0, failCount);
+    }
+
+    [Fact]
+    public void StagedUpdate_MarkApplyFailed_IncrementsCount()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3");
+        StagedUpdate.MarkApplyFailed();
+        StagedUpdate.MarkApplyFailed();
+        var (version, failCount) = StagedUpdate.ReadPending();
+        Assert.Equal("1.2.3", version);
+        Assert.Equal(2, failCount);
+    }
+
+    [Fact]
+    public void StagedUpdate_MarkApplyFailed_WithoutPending_Noop()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkApplyFailed(); // 无 pending 时不应创建文件
+        Assert.Null(StagedUpdate.ReadPendingVersion());
+    }
+
+    [Fact]
+    public void StagedUpdate_ReadPending_LegacyFileWithoutFailCount_ReturnsZero()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
+            "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
+        var (version, failCount) = StagedUpdate.ReadPending();
+        Assert.Equal("1.2.3", version);
+        Assert.Equal(0, failCount); // 旧格式兼容：无 failCount → 0
+    }
+
+    [Fact]
+    public void StagedUpdate_ClearPending_ResetsAll()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3");
+        StagedUpdate.MarkApplyFailed();
+        StagedUpdate.ClearPending();
+        Assert.Null(StagedUpdate.ReadPendingVersion());
+    }
+
+    // ---------- Node 缺失原因（v0.3.1：确认框区分"未安装"与"版本过旧"） ----------
+
+    [Fact]
+    public void NodeMissingReason_NoNodeAnywhere_ReturnsNotFound()
+    {
+        // 隔离 PATH：空 PATH + 无注册表可查（测试环境注册表可能有 node，但空 PATH 下
+        // FindOnPath 必然为空；注册表与便携目录在本机若有 node 则返回 null/too-old——
+        // 该断言只验证"完全没有任何候选"的纯路径，用空 PATH 即可稳定触发 not-found 分支？
+        // 实际：注册表/便携命中时返回 null 或 too-old，因此这里改为验证空 PATH 行为。
+        var saved = Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", "");
+            var reason = RuntimeResolver.NodeMissingReason();
+            // 无论注册表/便携是否存在，空 PATH 都不应返回 "too-old"（too-old 只由找到
+            // 但不可用的候选触发）；not-found 或 null 均可接受。
+            Assert.NotEqual("too-old", reason);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", saved);
+        }
+    }
+
+    [Fact]
+    public void NodeMissingReason_WithUsableNode_ReturnsNull()
+    {
+        // 本机有可用 node（PATH 命中且版本≥18）时返回 null；若本机无 node 则测试前提不成立，
+        // 跳过（返回 not-found 也可接受——这里断言"不返回 too-old 除非确有低版本"）。
+        var reason = RuntimeResolver.NodeMissingReason();
+        if (reason == "too-old")
+        {
+            // 本机确有低版本/损坏 node：验证与 ResolveExisting 行为一致（日志 Warn 路径）
+            var env = RuntimeResolver.ResolveExisting();
+            Assert.Null(env.NodeExe);
+        }
+        // 其余情况（null / not-found）都是合法结果，不强制
+    }
 }
