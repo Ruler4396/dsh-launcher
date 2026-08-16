@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+> 质量治理批次（下一阶段：稳定/诊断/契约/测试收敛，无新用户可见功能）。
+
+### 修复
+
+- **启动中途取消不再产生无主服务（P0-1）**：取消启动时若服务已在后台下载/启动，已监听则记录服务 PID 供下次启动接管（此前无 pid 文件 → `TryAdoptOrphanService` 无法认领，服务永久无主占端口）；"取消"从内部错误 E9001 改为独立码 **E2006**。
+- **崩溃留痕（P0-2）**：挂未处理异常钩子（UI 线程 `Application.ThreadException` + 全局 `AppDomain.UnhandledException`），任何崩溃先写 E9001 日志（含异常全文）再退出——此前崩溃零留痕，无法诊断。
+- **进程杀灭加固（P1-3）**：taskkill 加 `/T`（子进程树一并清理）；杀前校验 PID 确在监听目标端口（防 PID 复用误杀无关 node；`SweepStaleServicePid` 对"活着但不监听"的记录改为只清 pid 文件不误杀）。
+- **状态文件损坏告警（P1-4）**：window-state.json / pending-update.json 损坏不再静默回退，补 Warn 日志（对齐 settings.json 治理）。
+- **主题轮询降频（P1-2）**：settings.yaml 按 mtime 缓存重读 + 轮询 500ms→2s——主窗打开期间不再持续全量读磁盘文件（watcher 仍是主通道）。
+
+### 测试
+
+- **契约防线（P1-6）**：抽出 HTTP 就绪 / TCP 端口探测 / Node 版本门槛三个契约纯函数并新增契约测试（`ContractTests`，FakeHttpMessageHandler / 环回 socket，不碰网络）——防上游 dsh 行为变更无声破坏；`IsLikelyDshService` 负向分支补单测。
+- **测试资产清洗（P1-1）**：删除 2 个依赖真实环境的"永真假绿灯"测试与 2 个恒真/子集测试；合并 `CompareVersions`/`ResolveTarget`/`IsSafeToOpen`/`ShouldRotate` 跨文件重复；`ReadLogTail`/`TailLines` 双实现合一（共享读）；新增 `LoggerState` 串行集合（消除静态 Logger 状态跨类并行串扰隐患）。
+- **负向套件 +1（N9）**：`DSH_TEST_CRASH=1` 触发未捕获异常 → 断言 E9001 崩溃留痕生效。
+
+### 变更
+
+- **CI 去冗余（P1-5）**：`test.ps1` 成为唯一测试入口（此前 build.yml 独立步骤 + test.ps1 内部双跑 dotnet test）；`git rm --cached` 移除误追踪且 0 引用的 WiX Util 扩展 DLL。
+
 ## [0.3.1] - 2026-08-16
 
 > **重要更新（SECURITY 标记）**：本轮包含多项安全与稳健性修复——诊断包脱敏与共享读、WebView2 数据目录互锁防护、更新降噪与下载缓存管理、便携环境自检、窗口记忆与镜像回退修复；建议所有旧版本用户更新。
@@ -54,6 +76,8 @@
 
 ## [0.3.0] - Unreleased
 
+> **注**：v0.3.0 未单独发 tag，其全部内容随 [0.3.1] 一并发布（2026-08-16）。
+>
 > 底座重构版本：可观测性统一（一份日志、一套错误码、一键诊断）＋更省心的环境与生命周期（便携 Node、延迟更新、托盘按需）＋更强的稳健性（僵尸清理、窗口容灾）＋更清楚的数据边界。重构规划与验收见 [docs/v0.3.0-plan.md](docs/v0.3.0-plan.md)。
 
 ### 新增

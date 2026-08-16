@@ -57,6 +57,7 @@
 | E2003 | dsh 服务启动日志出现错误（npm/权限/依赖问题） |
 | E2004 | dsh 服务不可用（端口无 HTTP 响应） |
 | E2005 | 检测到上次崩溃遗留的异常服务进程，已清理 |
+| E2006 | 启动已取消（服务可能仍在后台下载/启动，下次启动可接管） |
 | E2011 | dsh-launcher-lifetime 插件已卸载，已忽略残留的常驻配置并按默认模式运行 |
 | E4001 | dsh 新版本下载失败 |
 | E4002 | dsh 延迟更新应用失败，将继续使用当前版本 |
@@ -77,11 +78,12 @@
 
 - **严重问题/安全修补** → 立即打补丁版本 tag（`vX.Y.Z+1`）发版，CHANGELOG 同步更新
 - **新功能** → 升次版本号发版
-- 每次 tag 推送，CI 自动：跑单测 → 构建 zip + MSI + SHA256 校验和 → 从 CHANGELOG 生成 Release 说明并发布
+- 每次 tag 推送，CI 自动：跑单测 + 脚本回归（`test.ps1`）→ 构建 zip + MSI + SHA256 校验和（附 Release body）→ 从 CHANGELOG 生成 Release 说明并发布
 
 ## 版本兼容性 / Version compatibility
 
 - 只调用 `dsh web` 的 CLI（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，dsh 升级一般无需重新编译壳；壳的目标地址可用环境变量 `DSH_WEB_URL` 覆盖（默认 `http://127.0.0.1:3080`）
+- **运行时身份假设（P1-8 人工调研结论）**：dsh 服务目前以 `node` 进程名监听目标端口（`IsLikelyDshService` 身份校验依据）；若上游更换运行时（非 node），需同步调整该判定，否则"跟随窗口"关闭时无法停服务（宁可拒绝杀，也不误杀无关进程）。Node 可用门槛：主版本 ≥18（`IsUsableNodeVersion` 单一判定点；`DSH_NODE_VERSION` 可覆盖便携版版本）
 - `npm update -g @deepseek-ai/dsh` 后重启服务即可
 - dsh 处于开发者预览阶段，若官方变更启动参数或默认端口：壳侧设置 `DSH_WEB_URL` 即可免重建；自启脚本需同步修改 `start-dsh.vbs`、`dsh-web.cmd` 两处
 - 本工具不锁定 dsh 版本，始终跟随本地最新版
@@ -94,7 +96,7 @@
 git clone https://github.com/Ruler4396/dsh-launcher.git
 cd dsh-launcher
 dotnet tool install --global wix --version 5.0.2   # 一次性
-./scripts/build-release.ps1 -Version 0.1.8          # zip + MSI + SHA256
+./scripts/build-release.ps1 -Version 0.3.1          # zip + MSI + SHA256（zip 带版本号命名）
 ```
 
 **方式二：只需源码编译（无需 WiX）**——只编译壳 + 复制部署脚本：
@@ -143,8 +145,10 @@ dsh-launcher/
 ├── scripts/                   # 部署脚本（发布包内与 DshWeb.exe 同目录）
 │   ├── start-dsh.vbs          # 静默启动服务（壳拉起服务用）
 │   ├── start-dsh.cmd / dsh-web.cmd  # 调试启动 / 一键入口
+│   ├── check-prereq.cmd       # 便携版环境自检（.NET/WebView2/Node，随发布包分发）
 │   ├── uninstall-autostart.cmd      # 清理自启与快捷方式
-│   ├── test.ps1 / build-release.ps1 # 测试与打包（仅开发用）
+│   ├── test.ps1 / negative-test.ps1 / e2e-test.ps1 # 测试（仅开发用）
+│   └── build-release.ps1      # 打包（仅开发用）
 ├── src/
 │   └── DshShell/              # 壳应用源码（C# WinForms + WebView2）
 └── tests/

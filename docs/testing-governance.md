@@ -2,12 +2,13 @@
 
 > 本文档是 dsh-launcher 的**测试治理方案**（A8 交付物）：不修改产品代码，只定义"怎么推导、怎么排优先级、测什么、自动化边界、CI 怎么做"。全部测试方向**以真实代码行为为唯一依据**（读 `src/DshShell/*.cs`、`scripts/start-dsh.vbs`、`scripts/uninstall-autostart.cmd`、`tests/DshShell.Tests/*.cs`、`.github/workflows/build.yml` 之后撰写），不臆造不存在的功能。
 >
-> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 262 单测（
+> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 256 单测（
 > ShellLogicTests / V030FeaturesTests / UpdateCheckerTests / DiagnoseExportTests / LoggerTests /
-> SecurityBoundaryTests，按主题拆分；含 StagedUpdate 失败计数、Node 缺失原因等 v0.3.1 新增用例），
+> SecurityBoundaryTests / ContractTests，按主题拆分；含 StagedUpdate 失败计数、Node 缺失原因等 v0.3.1
+> 新增用例；P1-1 清洗后删除了永真假绿灯与跨文件重复，P1-6 新增上游契约测试），
 > `scripts/test.ps1` 含 27+ 静态断言与 uninstall/-CleanData 隔离行为测试；`scripts/negative-test.ps1`
-> 8 用例 20 断言（预期失败/隔离铁律）；`scripts/e2e-test.ps1` 7 段 37 断言（发布产物 → 解压部署 →
-> 真实 GUI → 窗口记忆 → 诊断导出 → 卸载 → 数据边界）。CI `build.yml` 跑 `dotnet test` + `test.ps1`。
+> 9 用例 23 断言（预期失败/隔离铁律，N9 崩溃留痕）；`scripts/e2e-test.ps1` 7 段 37 断言（发布产物 → 解压部署 →
+> 真实 GUI → 窗口记忆 → 诊断导出 → 卸载 → 数据边界）。CI `build.yml` 跑 `test.ps1`（唯一测试入口，内部含 dotnet test）。
 
 ---
 
@@ -87,7 +88,7 @@
 
 ## 3. 测试矩阵（推导产物）
 
-> 按【用户旅程 × 故障域 × 状态机】组织；每行 1 句概要 + 风险级。**"回归防线 ✓"** = 现有 255 单测、负向 20 断言、E2E 37 断言或 test.ps1 已覆盖；未标注 = 缺口，其风险级即需要补的优先级。标注均对照真实代码核查。
+> 按【用户旅程 × 故障域 × 状态机】组织；每行 1 句概要 + 风险级。**"回归防线 ✓"** = 现有 256 单测、负向 23 断言、E2E 37 断言或 test.ps1 已覆盖；未标注 = 缺口，其风险级即需要补的优先级。标注均对照真实代码核查。
 
 ### 3.1 冷启动 / 服务拉起（P0 重灾区）
 
@@ -323,7 +324,7 @@
 - **崩溃恢复循环无上限**：`ProcessFailed` 用 10s 节流（`_lastReloadTick`），有上限但无"连续 N 次后放弃"；极端崩溃仍是重载循环。风险 P0 边界，人工确认是否需熔断（设计建议）。
 - **配置损坏静默回退**：settings/pending/window/runtime-state 损坏一律 try/catch 回退，安全但**静默**——仅 `ResolveEffectiveLifetime` 走 `Logger.Warn(E2011)`，window-state/pending 损坏无告警。风险 P1（可诊断性），建议已实现。
 - **下载无重试**：便携 Node 镜像链是**静态回退链**（无重试），`DownloadDshUpdateStaged` 也是失败即报 E4001。符合"克制、不常驻重试"哲学，但弱网一次失败即需用户重按。风险 P2（有意设计，文档明确）。
-- **错误码疑似死码（确认属实）**：`E1001`（无 Node）在 `ErrorCodes.cs` 定义但**无任何发射点**（Node 缺失走 `TryEnsureNodeAsync`→取消 E1002 / 失败 E1003/E1004/E1005）；`E3001`（端口被占）定义但**无发射点**（端口占用实际走 E2004/服务不可用或 E2005 清理）；`E9001`（内部未分类）**唯一发射点**是 `waitResult` switch 的 `_` 分支，而该分支当前只承接"用户取消"（`canceled`）——即"取消启动"被错误归为内部错误 E9001（应给独立码或复用 E2002 类语义）。建议（不改代码，供后续）：要么补发射点，要么从目录移除/改用途；至少为 `canceled` 补一个明确码避免混淆。风险 P2。
+- **错误码疑似死码（已清理，v0.3.1+ 修订）**：`E1001`（无 Node）与 `E3001`（端口被占）在 0.3.0 已随死码清理删除（见 CHANGELOG 0.3.0"删除死码"），本段旧表述作废；`E9001`（内部未分类）此前唯一发射点是 `waitResult` switch 兜底分支且"取消启动"被错误归入——P1-1 质量治理已改：`canceled` 使用独立码 **E2006**（启动已取消），E9001 仅保留给真正的内部未分类异常（含 P0-2 崩溃留痕钩子）。风险 P2。
 
 ---
 
