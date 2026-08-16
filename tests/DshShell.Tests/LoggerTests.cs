@@ -6,10 +6,19 @@ using Xunit;
 namespace DshShell.Tests;
 
 /// <summary>
+/// 串行集合（P1-4 起）：触碰进程级静态 Logger 状态（Logger._path/_minLevel）的测试类
+/// 必须加入本集合，避免 xunit 类间默认并行导致跨类写路径串扰（结构性 flaky 隐患治理）。
+/// 当前成员：LoggerTests、V030FeaturesTests（WindowStateStore/StagedUpdate 损坏告警测试写 Logger）。
+/// </summary>
+[CollectionDefinition("LoggerState", DisableParallelization = true)]
+public class LoggerStateCollection { }
+
+/// <summary>
 /// 统一日志单测（用户高频：所有运行诊断都依赖 dsh.log 的结构正确、级别过滤合理）。
 /// 覆盖：级别阈值（DSH_LOG_LEVEL）、JSON 结构、错误码字段、写失败静默（日志失败
 /// 绝不能影响启动——N4 负向已测进程级，这里测函数级）。
 /// </summary>
+[Collection("LoggerState")]
 public class LoggerTests : IDisposable
 {
     private readonly string _tmp;
@@ -122,19 +131,19 @@ public class LoggerTests : IDisposable
         Assert.Null(ex);
     }
 
-    [Fact]
-    public void ShouldRotate_ExactlyAtCap_DoesNotRotate()
+    [Theory]
+    [InlineData(31L * 1024 * 1024, 0, true)]           // 超 30MB → 轮转
+    [InlineData(30L * 1024 * 1024, 0, false)]          // 恰好 30MB → 不轮转（严格大于）
+    [InlineData(30L * 1024 * 1024 + 1, 0, true)]
+    [InlineData(1024, 0, false)]
+    [InlineData(1024, 4, true)]                        // 超 3 天 → 轮转
+    [InlineData(1024, 3, false)]                       // 恰好 3 天 → 不轮转（严格大于）
+    [InlineData(1024, 3.00001, true)]                  // 略超 3 天 → 轮转
+    [InlineData(1024, 2, false)]
+    public void ShouldRotate_Thresholds(long lengthBytes, double ageDays, bool expected)
     {
-        // 30MB 阈值：刚好 30MB 不滚动（严格大于才滚）
-        Assert.False(Logger.ShouldRotate(30L * 1024 * 1024, DateTime.UtcNow, DateTime.UtcNow));
-        Assert.True(Logger.ShouldRotate(30L * 1024 * 1024 + 1, DateTime.UtcNow, DateTime.UtcNow));
-    }
-
-    [Fact]
-    public void ShouldRotate_AgeExactly3Days_DoesNotRotate()
-    {
+        // now 只取一次：两次 DateTime.UtcNow 之间相差几个 tick，会让"恰好 3 天"误判为超时
         var now = DateTime.UtcNow;
-        Assert.False(Logger.ShouldRotate(1, now.AddDays(-3), now));
-        Assert.True(Logger.ShouldRotate(1, now.AddDays(-3).AddSeconds(-1), now));
+        Assert.Equal(expected, Logger.ShouldRotate(lengthBytes, now.AddDays(-ageDays), now));
     }
 }

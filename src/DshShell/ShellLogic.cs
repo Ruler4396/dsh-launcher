@@ -299,8 +299,44 @@ public static class ShellLogic
         return false;
     }
 
-    /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；大文件不整读（流式 + 受限队列，
-    /// 参照 DiagnoseExport.TailLines 的实现模式）；读取失败返回空列表。</summary>
+    /// <summary>
+    /// 服务就绪契约（C3，P1-6）：端口有 HTTP 应答即视为就绪。**任何** HTTP 响应（含 4xx/5xx）
+    /// 都算"有服务在应答"——dsh 前端监听后可能还需数十秒才提供 HTTP，只探 TCP 会提前"成功"
+    /// 导致主窗白屏（历史"要二次点击"根因）；网络异常/超时/拒绝连接 → 未就绪。
+    /// 契约测试锁定此语义，防上游 dsh 行为变更无声破坏（FakeHttpMessageHandler 注入，不碰网络）。
+    /// </summary>
+    internal static bool IsHttpReady(string url, System.Net.Http.HttpClient http)
+    {
+        try
+        {
+            using var resp = http.GetAsync(url).GetAwaiter().GetResult();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>端口可连（TCP）契约（C3 前半段）：connect 成功即 true；失败/超时 false。</summary>
+    internal static bool PortOpen(string host, int port)
+    {
+        try
+        {
+            using var c = new System.Net.Sockets.TcpClient();
+            c.Connect(host, port);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；大文件不整读（流式 + 受限队列）。
+    /// 读取失败返回空列表。P1-1（质量治理）：改用 FileShare.ReadWrite 共享读——运行中的 dsh 服务以
+    /// cmd >> 重定向持有 dsh.log（独占写共享），默认 FileShare.Read 会被拒（--diagnose 曾因此失败）；
+    /// 与 <see cref="ReadLinesShared"/> 共用同一读取实现，消除与 DiagnoseExport.TailLines 的双实现。</summary>
     internal static List<string> ReadLogTail(string logPath, int maxLines)
     {
         var result = new List<string>();
@@ -308,9 +344,9 @@ public static class ShellLogic
         {
             if (!File.Exists(logPath)) return result;
             var kept = new Queue<string>(maxLines);
-            foreach (var raw in File.ReadLines(logPath))
+            foreach (var raw in ReadLinesShared(logPath))
             {
-                kept.Enqueue(raw);
+                kept.Enqueue(raw.TrimEnd());
                 if (kept.Count > maxLines) kept.Dequeue();
             }
             while (kept.Count > 0)
@@ -321,6 +357,16 @@ public static class ShellLogic
             // 读取失败不阻断流程
         }
         return result;
+    }
+
+    /// <summary>以 FileShare.ReadWrite 共享模式逐行读取（可读被运行中服务锁定的日志文件）。
+    /// 统一读取实现（P1-1）：DiagnoseExport 的 FilterByLevel/SummarizeErrors 同用此实现。</summary>
+    internal static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(fs, detectEncodingFromByteOrderMarks: true);
+        string? line;
+        while ((line = reader.ReadLine()) is not null) yield return line;
     }
 
     /// <summary>dsh 服务的停留模式（由 dsh-launcher-lifetime 插件写入 settings.json，壳执行）。</summary>

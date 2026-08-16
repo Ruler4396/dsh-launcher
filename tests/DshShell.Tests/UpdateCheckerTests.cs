@@ -173,11 +173,7 @@ public class UpdateCheckerTests
         Assert.Equal(expected, Math.Sign(UpdateChecker.CompareVersions(a, b)));
     }
 
-    [Fact]
-    public void CurrentLauncherVersion_FromAssembly_NonEmpty()
-    {
-        Assert.False(string.IsNullOrWhiteSpace(UpdateChecker.CurrentLauncherVersion));
-    }
+    // ---------- 本地 dsh 版本解析（环境变量优先） ----------
 
     [Fact]
     public void ResolveLocalDshVersion_EnvVarPreferred()

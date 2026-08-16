@@ -5,7 +5,9 @@ using Xunit;
 namespace DshShell.Tests;
 
 /// <summary>v0.3.0 新特性纯逻辑测试：配置降级、插件检测、多显示器窗口恢复、统一日志轮转、
-/// 延迟更新状态机、窗口状态持久化。只测纯逻辑（可注入），不触碰 UI/进程。</summary>
+/// 延迟更新状态机、窗口状态持久化。只测纯逻辑（可注入），不触碰 UI/进程。
+/// 注意：本类含写 Logger 的用例（P1-4 损坏告警），已加入 LoggerState 串行集合。</summary>
+[Collection("LoggerState")]
 public class V030FeaturesTests
 {
     // ---------- 配置降级（ResolveEffectiveLifetime） ----------
@@ -172,22 +174,8 @@ public class V030FeaturesTests
         Assert.Equal((0, 1040), (x, y));
     }
 
-    // ---------- 统一日志轮转判定（Logger.ShouldRotate） ----------
-
-    [Fact]
-    public void ShouldRotate_SizeCap()
-    {
-        Assert.True(Logger.ShouldRotate(31L * 1024 * 1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
-        Assert.False(Logger.ShouldRotate(30L * 1024 * 1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
-        Assert.False(Logger.ShouldRotate(1024, DateTime.UtcNow.AddHours(-1), DateTime.UtcNow));
-    }
-
-    [Fact]
-    public void ShouldRotate_AgeCap()
-    {
-        Assert.True(Logger.ShouldRotate(1024, DateTime.UtcNow.AddDays(-4), DateTime.UtcNow));
-        Assert.False(Logger.ShouldRotate(1024, DateTime.UtcNow.AddDays(-2), DateTime.UtcNow));
-    }
+    // ---------- 统一日志轮转判定（Logger.ShouldRotate，阈值归口 LoggerTests） ----------
+    // （P1-1 去重：轮转阈值断言已合并至 LoggerTests.ShouldRotate_Thresholds）
 
     // ---------- 延迟更新状态机（StagedUpdate） ----------
 
@@ -371,42 +359,35 @@ public class V030FeaturesTests
         Assert.Null(StagedUpdate.ReadPendingVersion());
     }
 
+    // ---------- 状态文件损坏告警（P1-4：不静默回退，补 Warn 可诊断） ----------
+
+    [Fact]
+    public void WindowStateStore_CorruptFile_Warns()
+    {
+        using var tmp = new TempDir();
+        var log = Path.Combine(tmp.Path, "dsh.log");
+        Logger.Init(log);
+        WindowStateStore.Init(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "window-state.json"), "{broken");
+        Assert.Null(WindowStateStore.Load()); // 容错回退保持不变
+        Assert.Contains("window-state.json is corrupt", File.ReadAllText(log)); // 但必须留痕
+    }
+
+    [Fact]
+    public void StagedUpdate_CorruptFile_Warns()
+    {
+        using var tmp = new TempDir();
+        var log = Path.Combine(tmp.Path, "dsh.log");
+        Logger.Init(log);
+        StagedUpdate.Init(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"), "{broken");
+        var (version, failCount) = StagedUpdate.ReadPending();
+        Assert.Null(version);          // 容错按无记录处理
+        Assert.Equal(0, failCount);
+        Assert.Contains("pending-update.json is corrupt", File.ReadAllText(log)); // 但必须留痕
+    }
+
     // ---------- Node 缺失原因（v0.3.1：确认框区分"未安装"与"版本过旧"） ----------
-
-    [Fact]
-    public void NodeMissingReason_NoNodeAnywhere_ReturnsNotFound()
-    {
-        // 隔离 PATH：空 PATH + 无注册表可查（测试环境注册表可能有 node，但空 PATH 下
-        // FindOnPath 必然为空；注册表与便携目录在本机若有 node 则返回 null/too-old——
-        // 该断言只验证"完全没有任何候选"的纯路径，用空 PATH 即可稳定触发 not-found 分支？
-        // 实际：注册表/便携命中时返回 null 或 too-old，因此这里改为验证空 PATH 行为。
-        var saved = Environment.GetEnvironmentVariable("PATH");
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", "");
-            var reason = RuntimeResolver.NodeMissingReason();
-            // 无论注册表/便携是否存在，空 PATH 都不应返回 "too-old"（too-old 只由找到
-            // 但不可用的候选触发）；not-found 或 null 均可接受。
-            Assert.NotEqual("too-old", reason);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", saved);
-        }
-    }
-
-    [Fact]
-    public void NodeMissingReason_WithUsableNode_ReturnsNull()
-    {
-        // 本机有可用 node（PATH 命中且版本≥18）时返回 null；若本机无 node 则测试前提不成立，
-        // 跳过（返回 not-found 也可接受——这里断言"不返回 too-old 除非确有低版本"）。
-        var reason = RuntimeResolver.NodeMissingReason();
-        if (reason == "too-old")
-        {
-            // 本机确有低版本/损坏 node：验证与 ResolveExisting 行为一致（日志 Warn 路径）
-            var env = RuntimeResolver.ResolveExisting();
-            Assert.Null(env.NodeExe);
-        }
-        // 其余情况（null / not-found）都是合法结果，不强制
-    }
+    // （P1-1 清洗：NodeMissingReason 依赖真实 PATH/注册表/便携目录，两个"永真假绿灯"测试已删除——
+    // 该行为由 negative 套件进程级覆盖，Node 版本门槛契约测试见 ContractTests.IsUsableNodeVersion）
 }
