@@ -34,6 +34,13 @@ public static class WindowStateStore
         {
             return JsonSerializer.Deserialize<WindowState>(File.ReadAllText(_path));
         }
-        catch { return null; }
+        catch
+        {
+            // P1-4（质量治理）：损坏不静默——位置记忆失效要可诊断（对齐 settings.json 治理：
+            // 此前损坏静默回退默认位置，用户"窗口怎么又回到中间了"无从查证）。
+            Logger.Warn("window-state.json is corrupt or unreadable; window position memory unavailable",
+                ctx: new { path = _path });
+            return null;
+        }
     }
 }

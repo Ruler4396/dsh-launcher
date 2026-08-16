@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing;
-using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -488,16 +487,12 @@ internal static class Program
                     }
                     if (PortOpen(Target.Port))
                     {
-                        try
+                        if (ShellLogic.IsHttpReady(Target.Url, http)) // 契约纯函数（P1-6）
                         {
-                            using var resp = http.GetAsync(Target.Url).GetAwaiter().GetResult();
                             Trace("poll: ready (tcp + http)");
                             return "ready"; // TCP + HTTP 都已就绪
                         }
-                        catch
-                        {
-                            // HTTP 尚未就绪（前端还在启动），继续等
-                        }
+                        // HTTP 尚未就绪（前端还在启动），继续等
                     }
                     if (logErrorSeen && DateTime.Now - logErrorSince >= TimeSpan.FromSeconds(15))
                     {
@@ -1479,8 +1474,7 @@ internal static class Program
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            using var resp = http.GetAsync(Target.Url).GetAwaiter().GetResult();
-            return true;
+            return ShellLogic.IsHttpReady(Target.Url, http); // 契约纯函数（P1-6，可注入测试）
         }
         catch
         {
@@ -1651,9 +1645,11 @@ internal static class Program
             }
             if (FindPidListeningOn(Target.Port) != pid)
             {
-                Logger.Warn($"stale service pid={pid} alive but not listening; killing", ErrorCodes.E2005,
-                    new { port = Target.Port });
-                if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
+                // P1-3（质量治理）：记录过但未监听目标端口的 node 大概率是 PID 复用（无关进程）——
+                // 不杀（KillProcess 的端口校验也会拒绝），只清 pid 文件；进程本身不是我们管理的服务。
+                Logger.Warn($"stale service pid={pid} alive but not listening on port {Target.Port}; clearing pid file (possible PID reuse)",
+                    ErrorCodes.E2005, new { port = Target.Port });
+                ClearServicePidFile();
             }
         }
         catch { /* 清扫失败不影响启动 */ }
@@ -1726,9 +1722,18 @@ internal static class Program
                     ErrorCodes.E2005, new { pid });
                 return false;
             }
+            // P1-3（质量治理）：端口归属校验——记录过的 PID 必须正在监听目标端口。
+            // "node 进程但不在监听"几乎必然是 PID 复用给了无关 node（我们的服务就绪时才写
+            // pid 文件，就绪即监听；进程活着却丢监听不符合 dsh 运行特征），拒绝误杀。
+            if (FindPidListeningOn(Target.Port) != pid)
+            {
+                Logger.Warn($"refusing to kill pid={pid}: not listening on port {Target.Port} (possible PID reuse)",
+                    ErrorCodes.E2005, new { pid, port = Target.Port });
+                return false;
+            }
             if (!TryGracefulStop(pid))
             {
-                Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
+                Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid + " /T")
                 { UseShellExecute = false, CreateNoWindow = true });
             }
             var deadline = DateTime.UtcNow.AddMilliseconds(1500);
@@ -1736,7 +1741,7 @@ internal static class Program
                 Thread.Sleep(100);
             if (IsProcessAlive(pid))
             {
-                Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
+                Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid + " /T")
                 { UseShellExecute = false, CreateNoWindow = true });
                 // 质量治理 P2-10：强杀后确认；仍活则不删 pid 文件，留待下次启动认领
                 var hardDeadline = DateTime.UtcNow.AddMilliseconds(500);
@@ -3043,18 +3048,28 @@ internal static class Program
 
     /// <summary>
     /// 主题实时刷新（无感切换）：dsh 前端写 settings.yaml 时 FileSystemWatcher 立即触发
-    /// （Changed + Renamed 都监听——dsh 可能原子替换写文件），500ms 轮询兜底
+    /// （Changed + Renamed 都监听——dsh 可能原子替换写文件），2s 轮询兜底
     /// （watcher 漏事件也能 2 个周期内赶上）。两路共用同一去抖状态：
     /// 主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
+    /// P1-2（质量治理）：按 settings.yaml 的 mtime 缓存——文件未变且系统主题事件未触发时，
+    /// 轮询 tick 不再重读文件/注册表（旧实现每 500ms 全量 ReadAllLines，主窗打开期间持续磁盘 IO）。
     /// 质量治理 P2-7：订阅句柄存字段，真实退出时由 ReleaseThemeWatcher 统一释放。
     /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
+        var settingsYamlPath = Path.Combine(DshHomeDir, "settings.yaml");
+        var lastYamlMtime = SafeFileMtime(settingsYamlPath);
         var lastDark = ResolveDarkMode();
+        var systemDirty = false; // 系统主题事件触发后置脏：settings.yaml 未变也要重估
+
         void ApplyIfThemeChanged()
         {
             try
             {
+                var mtime = SafeFileMtime(settingsYamlPath);
+                if (mtime == lastYamlMtime && !systemDirty) return; // 文件未变、系统未变 → 不重读
+                lastYamlMtime = mtime;
+                systemDirty = false;
                 var nowDark = ResolveDarkMode();
                 if (nowDark != lastDark)
                 {
@@ -3074,7 +3089,10 @@ internal static class Program
             UserPreferenceChangedEventHandler handler = (_, e) =>
             {
                 if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
+                {
+                    systemDirty = true; // 系统主题变化：绕过 mtime 门立即重估
                     ApplyIfThemeChanged();
+                }
             };
             _themeEventsHandler = handler;
             SystemEvents.UserPreferenceChanged += handler;
@@ -3104,10 +3122,17 @@ internal static class Program
             // 文件监听失败不影响启动（轮询兜底）
         }
 
-        var timer = new System.Windows.Forms.Timer { Interval = 500 };
+        var timer = new System.Windows.Forms.Timer { Interval = 2000 }; // P1-2：500ms→2s（watcher 已是主通道）
         timer.Tick += (_, _) => ApplyIfThemeChanged();
         timer.Start();
         _themeTimer = timer;
+    }
+
+    /// <summary>settings.yaml 的最后写入时间（不存在/读取失败 → MinValue，视为"未变"）。</summary>
+    private static DateTime SafeFileMtime(string path)
+    {
+        try { return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue; }
+        catch { return DateTime.MinValue; }
     }
 
     /// <summary>质量治理 P2-7：真实退出路径释放主题监听（SystemEvents/FSW/轮询 Timer），
@@ -3123,17 +3148,5 @@ internal static class Program
         _themeTimer = null;
     }
 
-    private static bool PortOpen(int port)
-    {
-        try
-        {
-            using var c = new TcpClient();
-            c.Connect("127.0.0.1", port);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    private static bool PortOpen(int port) => ShellLogic.PortOpen("127.0.0.1", port); // 契约纯函数（P1-6）
 }
