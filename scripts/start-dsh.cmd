@@ -11,6 +11,7 @@ if not errorlevel 1 (
 if errorlevel 1 (
   echo.
   echo [ERROR] dsh failed to start. Install globally with: npm install -g @deepseek-ai/dsh
-  echo Log: %USERPROFILE%\.dsh-web.log
+  rem v0.3.0 unified log: DSH_HOME\dsh-launcher\dsh.log (default ~/.dsh\dsh-launcher\dsh.log)
+  if defined DSH_HOME (echo Log: %DSH_HOME%\dsh-launcher\dsh.log) else (echo Log: %USERPROFILE%\.dsh\dsh-launcher\dsh.log)
   pause
 )
