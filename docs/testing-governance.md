@@ -2,7 +2,12 @@
 
 > 本文档是 dsh-launcher 的**测试治理方案**（A8 交付物）：不修改产品代码，只定义"怎么推导、怎么排优先级、测什么、自动化边界、CI 怎么做"。全部测试方向**以真实代码行为为唯一依据**（读 `src/DshShell/*.cs`、`scripts/start-dsh.vbs`、`scripts/uninstall-autostart.cmd`、`tests/DshShell.Tests/*.cs`、`.github/workflows/build.yml` 之后撰写），不臆造不存在的功能。
 >
-> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 140 单测（ShellLogicTests.cs 418 行 + V030FeaturesTests.cs 256 行 ≈ 文中"140"），`scripts/test.ps1` 还含 27+ 静态断言与 uninstall/-CleanData 隔离行为测试；CI `build.yml` 当前只跑 `dotnet test`。
+> 现状基线：v0.3.0 全部 P0 + v0.3.1 六项 P2 已完成；`tests/DshShell.Tests` 共 255 单测（
+> ShellLogicTests / V030FeaturesTests / UpdateCheckerTests / DiagnoseExportTests / LoggerTests /
+> SecurityBoundaryTests，按主题拆分），`scripts/test.ps1` 含 27+ 静态断言与 uninstall/-CleanData
+> 隔离行为测试；`scripts/negative-test.ps1` 8 用例 20 断言（预期失败/隔离铁律）；`scripts/e2e-test.ps1`
+> 7 段 37 断言（发布产物 → 解压部署 → 真实 GUI → 窗口记忆 → 诊断导出 → 卸载 → 数据边界）。
+> CI `build.yml` 跑 `dotnet test` + `test.ps1`。
 
 ---
 
@@ -82,13 +87,13 @@
 
 ## 3. 测试矩阵（推导产物）
 
-> 按【用户旅程 × 故障域 × 状态机】组织；每行 1 句概要 + 风险级。**"回归防线 ✓"** = 现有 140 单测 或 test.ps1 已覆盖；未标注 = 缺口，其风险级即需要补的优先级。标注均对照真实代码核查。
+> 按【用户旅程 × 故障域 × 状态机】组织；每行 1 句概要 + 风险级。**"回归防线 ✓"** = 现有 255 单测、负向 20 断言、E2E 37 断言或 test.ps1 已覆盖；未标注 = 缺口，其风险级即需要补的优先级。标注均对照真实代码核查。
 
 ### 3.1 冷启动 / 服务拉起（P0 重灾区）
 
 | 用户旅程 | 推导方向（真实代码依据） | 风险级 | 状态 |
 | --- | --- | --- | --- |
-| 冷启动无服务 | 端口探测→僵尸清扫→延迟更新→Node 解析→vbs 拉起→状态窗等 HTTP 就绪 | P0 | **缺口**（无进程级 e2e；test.ps1 冒烟需 3080 已开才跑） |
+| 冷启动无服务 | 端口探测→僵尸清扫→延迟更新→Node 解析→vbs 拉起→状态窗等 HTTP 就绪 | P0 | ✓ E2E E3（真实 GUI 首启，隔离服务）；负向 N3（僵尸清扫） |
 | 连续冷启动 | 本次 PID 写入 `service-pid-<port>.txt`，下次接管/清理 | P0 | **缺口** |
 | 二次启动 | 单实例 Mutex→FindWindowEx→SW_RESTORE→前台 | P1 | 部分 ✓（test.ps1 冒烟断言第二进程退出） |
 | 端口占用 | 端口开但 HTTP 不通→状态窗等待→E2002/E2003/E2004 | P0 | ✓ 单测 `LogShowsStartupError` / `ReadLogTail`；**缺口**：进程级端口冲突 |
@@ -119,6 +124,13 @@
 
 | 推导方向 | 真实代码依据 | 风险级 | 状态 |
 | --- | --- | --- | --- |
+| GitHub/npm 版本拉取（JSON 解析/失败静默/限流） | `UpdateChecker.FetchLatest*` | P1 | ✓ 单测 UpdateCheckerTests（FakeHttpMessageHandler 注入，16 条） |
+| 安全/重要更新判定（SECURITY/-sec 标记） | `FetchLatestLauncherReleaseAsync` | P1 | ✓ 单测 UpdateCheckerTests（body/tag 两种标记、普通版不误报） |
+| 语义化版本比较（防误报打扰用户） | `CompareVersions` | P1 | ✓ 单测 UpdateCheckerTests（10 条边界，含非法值按 0.0.0） |
+| 本地 dsh 版本解析（环境变量优先） | `ResolveLocalDshVersion` | P2 | ✓ 单测 UpdateCheckerTests |
+
+| 推导方向 | 真实代码依据 | 风险级 | 状态 |
+| --- | --- | --- | --- |
 | MarkPending/Read/Clearn 往返与损坏文件 | `StagedUpdate` 单测 | P1 | ✓ 单测 V030FeaturesTests |
 | 下载成功写 pending，下次启动应用成功清记录 | `DownloadDshUpdateStaged` + `ApplyPendingDshUpdate` | P0 | **缺口**（e2e：真实 npm pack/install） |
 | 应用失败(挂 pending)→下次重试、不阻塞启动 | `ApplyPendingDshUpdate` 失败→`Logger.Warn(E4002)`，`ClearPending` 不执行 | P0 | **缺口** |
@@ -139,6 +151,7 @@
 | 推导方向 | 真实代码依据 | 风险级 | 状态 |
 | --- | --- | --- | --- |
 | 多显示器位置恢复（越界居中/钳制/负坐标） | `RestoreWindowPosition` 纯函数 | P1 | ✓ 单测 V030FeaturesTests 7 条 |
+| 窗口位置/大小记忆（关闭写回、重启恢复） | `SaveWindowState`/`WindowStateStore` | P1 | ✓ E2E E4（真实 GUI 移动→关闭→重启恢复一致）|
 | `SplitLParam` 负坐标不抛 Overflow | `SplitLParam` | P1 | ✓ 单测（4+1 条，含 B1 回归） |
 | WebView2 渲染崩溃自动重载（10s 节流，防死循环） | `ProcessFailed`+`Interlocked` 节流 | P0 | **缺口** |
 | 长隐藏(>5min)恢复强制重载防白屏 | `ShowMainWindow` longHidden | P1 | **缺口** |
@@ -149,22 +162,22 @@
 
 | 推导方向 | 真实代码依据 | 风险级 | 状态 |
 | --- | --- | --- | --- |
-| 下载文件名推导/清理/Windows 保留名 | `SuggestDownloadName`+`SanitizeFileName` | P1 | ✓ 单测（90 条左右 Theory） |
-| 可执行面不自动打开（S2） | `IsSafeToOpen` | P1 | ✓ 单测（15 条） |
+| 下载文件名推导/清理/Windows 保留名 | `SuggestDownloadName`+`SanitizeFileName` | P1 | ✓ 单测（90 条左右 Theory + SecurityBoundaryTests 边界） |
+| 可执行面不自动打开（S2） | `IsSafeToOpen` | P1 | ✓ 单测（15 条 + SecurityBoundaryTests 22 条可执行面全拒绝） |
 | 弹窗分类 外链/同源/blob | `ClassifyPopup` | P1 | ✓ 单测（13 条） |
 | 内部弹窗共享会话/登录态 | `NewWindowRequested`+`CreatePopupForm` | P1 | **缺口** |
-| 权限自动放行白名单 | `IsAutoGrantedPermission` | P1 | ✓ 单测（12 条） |
+| 权限自动放行白名单 | `IsAutoGrantedPermission` | P1 | ✓ 单测（12 条 + SecurityBoundaryTests 全枚举精确匹配） |
 | 导航白名单 S3（外部导航转浏览器） | `NavigationStarting` 取消外链 | P0 | **缺口**（安全，建议优先） |
 
 ### 3.8 日志 / 诊断 / 数据边界（A5 ∩ 日志不可导出 P0）
 
 | 推导方向 | 真实代码依据 | 风险级 | 状态 |
 | --- | --- | --- | --- |
-| 统一日志单文件、append(8)、旧路径不再产生 | `Logger` + test.ps1 静态断言 | P1 | ✓（脚本静态断言多行） |
-| 轮转判定（30MB/>3天，保留≤3） | `Logger.ShouldRotate` 纯函数 | P1 | ✓ 单测 V030FeaturesTests（4 条） |
-| Write 失败静默不影响启动 | `Logger.Write` try/catch | P0 | ✓（代码保证，人工抽查） |
-| `--diagnose` 生成脱敏 zip、无凭据 | `DiagnoseExport` 白名单/Sanitize | P0 | **缺口**（进程级） |
-| `--min-level warn/error` 过滤 | `DiagnoseExport.FilterByLevel` | P1 | **缺口** |
+| 统一日志单文件、append(8)、旧路径不再产生 | `Logger` + test.ps1 静态断言 | P1 | ✓（脚本静态断言多行 + LoggerTests 结构/级别/静默） |
+| 轮转判定（30MB/>3天，保留≤3） | `Logger.ShouldRotate` 纯函数 | P1 | ✓ 单测（V030FeaturesTests 4 条 + LoggerTests 阈值边界） |
+| Write 失败静默不影响启动 | `Logger.Write` try/catch | P0 | ✓（LoggerTests 路径阻塞不抛 + 负向 N4 进程级） |
+| `--diagnose` 生成脱敏 zip、无凭据 | `DiagnoseExport` 白名单/Sanitize | P0 | ✓ 单测 DiagnoseExportTests（Sanitize/Tail/汇总）+ 负向 N5/N8 + E2E E5（进程级全链路） |
+| `--min-level warn/error` 过滤 | `DiagnoseExport.FilterByLevel` | P1 | ✓ 单测 DiagnoseExportTests（级别过滤/错误标志/参数解析） |
 | 卸载数据边界（只清自有、不动生态） | `uninstall-autostart.cmd -CleanData` | P0 | ✓ test.ps1 §3.5 隔离测试 |
 | 升级旧版清理/孤儿快捷方式/自启 不误删他人 | `PickOldInstalls`+`IsOurShortcutTarget` | P0 | ✓ 单测（PickOld 8 条 + shortcut 3 条）；**缺口**：真实注册表场景 |
 
@@ -212,6 +225,9 @@
 1. **纯逻辑单测**：`ShellLogic` 全部静态函数（弹窗分类/文件名/权限/窗口恢复/旧版卸载选择/lifetime 解析/日志轮转/镜像链）。**已 140 单测覆盖**。
 2. **进程级脚本断言**：diagnose 产物存在与内容、错误码契约、进程残留/端口监听、pid 清理、单实例、@%TEMP% 隔离的 uninstall/-CleanData 行为。
 3. **隔离伪造环境**：用临时目录 + 隐藏系统 Node + stub npm/伪造 SHASUMS256 逆推 E1003/E1004、关窗停服务、stale pid 清理。
+4. **WebView2 数据目录隔离铁律**：测试实例必须设置 `DSH_WEBVIEW2_DATA` 指向隔离目录——多个进程共用
+   同一 user-data-dir 会互锁，导致真实启动器 UI 线程卡死、整窗灰色无响应（2026-08-16 实测事故，负向/
+   E2E 全部用例已强制隔离）。
 4. **Portable/Mock 服务**：`--diagnose`/端口冲突可用内存 HTTP stub 测 E2004/状态窗等待，不依赖真 dsh 服务。
 
 ### 5.2 需人工（真实环境才能成立，自动化会误报或伤害环境）

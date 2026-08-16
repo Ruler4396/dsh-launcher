@@ -17,6 +17,8 @@
 - **插件弹窗崩溃不再污染主窗口恢复标志（质量治理）**：弹窗崩溃不再误触主窗口的崩溃恢复标记。
 - **"已下载待应用"更新启动时气泡提示一次（质量治理）**：服务健康跳过应用、或应用失败时都不再静默，附手动 `npm` 命令供用户自行处理。
 - **错误码 E1007 + 测试与 CI 纳入（质量治理）**：新增 E1007（渲染进程反复崩溃）；CI 纳入 `scripts/test.ps1`（无 `-Smoke`）作为 PR gate；新增错误码契约单元测试（R02）。
+- **测试体系扩大（质量治理，单测 147→255）**：新增 `UpdateCheckerTests`（版本拉取 JSON 解析/安全更新判定/比较边界，FakeHttpMessageHandler 注入不碰网络）、`DiagnoseExportTests`（脱敏/级别过滤/错误汇总/参数解析）、`LoggerTests`（级别阈值/JSON 结构/写失败静默）、`SecurityBoundaryTests`（可执行面绝不自动打开 22 条/权限白名单全枚举/下载命名边界）；`DiagnoseExport` 纯函数改 internal 供单测。
+- **E2E 全旅程测试（scripts/e2e-test.ps1，37 断言）**：发布产物完整性 → 免安装 zip 解压部署 → 真实 GUI 首启（探针带进程身份+类名校验，绝不误操作真实窗口）→ 窗口记忆端到端 → 服务锁定下诊断导出 → 卸载清理 → `-CleanData` 数据边界。负向套件新增 N8（日志锁定共享读）。
 
 ### 变更
 
@@ -28,6 +30,8 @@
 
 - **便携 Node 镜像路由去重**：`BaseUrls` 重构为纯函数（`DSH_NODE_MIRROR` → 上次成功源 → nodejs.org → npmmirror，`Distinct` 去重），消除返回链重复的可能，新增 4 个单元测试。
 - **错误日志级别失真（质量治理）**：用户取消/拒绝被记为 Error 污染错误汇总、E4001 双写 → `ShowError` 支持级别参数与去重。
+- **--diagnose 服务运行时失败（质量治理，发版前实测发现）**：dsh 服务经 `cmd >>` 重定向独占写 dsh.log，`File.ReadLines` 默认共享模式被拒 → 22 字节空 zip + E5001 写不进被锁日志；改为 `FileShare.ReadWrite` 共享读（TailLines/FilterByLevel/SummarizeErrors 统一）。
+- **WebView2 数据目录测试隔离（质量治理，实测事故）**：测试实例与真实实例共用 `%LOCALAPPDATA%\DshWeb\WebView2` user-data-dir 会互锁导致真实启动器整窗灰死；新增 `DSH_WEBVIEW2_DATA` 测试钩子，负向/E2E 全部用例强制隔离。
 - **E1006 兜底失败无诊断日志（质量治理）**：WebView2 静默安装兜底改为区分下载/安装/超时三阶段记录。
 - **删除死码（质量治理）**：移除废弃错误码 E1001/E3001 与 `ShellLogic.ResolveLogPath`；`ReadLogTail` 改流式读取（大日志不整读）。
 - **WebView2 共享环境互斥（质量治理）**：共享环境创建加锁，消除并发弹窗的创建竞态。
