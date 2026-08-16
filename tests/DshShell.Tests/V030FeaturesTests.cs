@@ -272,6 +272,34 @@ public class V030FeaturesTests
         Assert.Single(urls.Where(u => u == "https://m.example.com"));
     }
 
+    // ---------- 错误码契约（质量治理 R02 防线：码有专属描述、无重复值） ----------
+
+    [Fact]
+    public void ErrorCodes_AllDeclaredCodesHaveSpecificDescription()
+    {
+        var codes = typeof(ErrorCodes).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(string))
+            .Select(f => (string)f.GetValue(null)!)
+            .ToList();
+        Assert.NotEmpty(codes);
+        foreach (var code in codes)
+        {
+            if (code == ErrorCodes.E9001) continue; // "内部未分类"码本身允许回退到"未分类错误"
+            Assert.False(ErrorCodes.Describe(code).StartsWith("未分类", StringComparison.Ordinal),
+                $"错误码 {code} 的 Describe 回退到了'未分类错误'——缺少专属描述");
+        }
+    }
+
+    [Fact]
+    public void ErrorCodes_NoDuplicateCodeValues()
+    {
+        var codes = typeof(ErrorCodes).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(string))
+            .Select(f => (string)f.GetValue(null)!)
+            .ToList();
+        Assert.Equal(codes.Count, codes.Distinct().Count());
+    }
+
     /// <summary>临时目录（自动清理）。</summary>
     private sealed class TempDir : IDisposable
     {
