@@ -49,7 +49,9 @@ $runKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $origRunValue = (Get-ItemProperty -Path $runKeyPath -Name "dsh-launcher" -ErrorAction SilentlyContinue)."dsh-launcher"
 
 $dist = Join-Path $root "dist"
-$zipPath = Join-Path $dist "dsh-launcher-windows.zip"
+# v0.3.1：zip 命名带版本号（dsh-launcher-windows-<ver>.zip）
+$zipPath = (Get-ChildItem (Join-Path $dist "dsh-launcher-windows-*.zip") -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
 $exe = ""
 
 function Stop-TestPort([int]$port) {
@@ -69,10 +71,10 @@ function Stop-TestPort([int]$port) {
 
 Write-Host "=== E1: 发布产物完整性 ===" -ForegroundColor Cyan
 $msiPath = Get-ChildItem (Join-Path $dist "dsh-launcher-*.msi") -ErrorAction SilentlyContinue | Select-Object -First 1
-Assert-T (Test-Path $zipPath) "免安装 zip 存在: dsh-launcher-windows.zip"
+Assert-T ($null -ne $zipPath) "免安装 zip 存在: dsh-launcher-windows-<版本>.zip"
 Assert-T ($null -ne $msiPath) "MSI 存在: $($msiPath.Name)"
 Assert-T (Test-Path (Join-Path $dist "SHA256SUMS.txt")) "校验和文件存在"
-if (Test-Path $zipPath) {
+if ($zipPath -and (Test-Path $zipPath)) {
     $entries = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
     $names = $entries.Entries | ForEach-Object FullName
     $entries.Dispose()

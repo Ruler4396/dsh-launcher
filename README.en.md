@@ -19,10 +19,13 @@
 
 It is not an official product and does not bundle dsh; the installer is **~1.4MB**, and runtime dependencies are filled on demand (missing Node.js? it downloads a portable copy to your user directory without touching system settings).
 
+## Design philosophy
+
+**Restraint.** dsh-launcher does one thing: give you the original dsh experience (the same Web UI, the same data, the same plugins) and handle the desktop plumbing — launching, lifecycle, error diagnostics. Nothing else gets added: no built-in file manager, no built-in terminal, no custom frontend. It is a shell, not a platform; the ~1.4MB installer is the result of that restraint.
+
 ## Non-goals
 
 - **Not an official product** — not affiliated with DeepSeek / DeepSeek AI (see the disclaimer at the bottom).
-- **Not cross-platform** — Windows 10/11 only (a deliberate choice for the WebView2 window).
 - **Not a desktop IDE** — no file panel, no built-in terminal. It is a shell that starts dsh, manages its lifecycle, and keeps failures diagnosable.
 
 ## Install
@@ -36,7 +39,7 @@ It is not an official product and does not bundle dsh; the installer is **~1.4MB
 
 **Option 2: portable ZIP**
 
-1. Download `dsh-launcher-windows.zip` and extract anywhere
+1. Download `dsh-launcher-windows-<version>.zip` (e.g. `dsh-launcher-windows-0.3.1.zip`) and extract anywhere
 2. Run `DshWeb.exe`
 3. Uninstall: delete the folder (use `uninstall-autostart.cmd` to remove autostart/shortcuts)
 
@@ -134,6 +137,9 @@ Yes to custom folder; uninstall only removes the app's own files and keeps a non
 
 **Q: The dsh service keeps using hundreds of MB of memory?**
 dsh is a full service (with web UI); staying resident is by design (instant open). To save memory: dsh settings page → **"Node 服务驻留 / Node service lifetime"** → **follow-window** (service stops on window close and is auto-restarted next time).
+
+**Q: Which dsh versions are supported?**
+The launcher does not pin a dsh version — it follows the version you have installed locally (or the latest pulled via npx). The shell only calls the stable `dsh web` CLI interface, so dsh upgrades generally need no launcher update; if upstream changes the start arguments or default port, the `DSH_WEB_URL` env var covers it without a rebuild (see [docs/DETAILS.md](docs/DETAILS.md) → Version compatibility).
 
 ## More
 
