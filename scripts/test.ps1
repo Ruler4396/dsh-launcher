@@ -48,6 +48,8 @@ Assert-True ($uninstall -match 'dsh-autostart\.vbs') "uninstall 同时清理旧�
 Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方式"
 Assert-True ($uninstall -match '-CleanData') "uninstall 提供显式 -CleanData 数据清理开关"
 Assert-True ($uninstall -match 'rmdir /s /q "%DSH_HOME_P%\\dsh-launcher"') "uninstall -CleanData 只清 DSH_HOME\dsh-launcher"
+Assert-True ($uninstall -match '!DSH_HOME_P!') "uninstall -CleanData 使用延迟扩展（防解析期空值误删盘根，历史事故回归断言）"
+Assert-True ($uninstall -match 'EnableDelayedExpansion') "uninstall 启用延迟扩展"
 
 $vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
 Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port " & port') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
@@ -104,6 +106,43 @@ try {
 }
 finally {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "`n== 3.5. -CleanData 数据清理行为测试（DSH_HOME/USERPROFILE 均隔离到 %TEMP%） ==" -ForegroundColor Cyan
+$tmp2 = Join-Path $env:TEMP ("dsh-clean-" + [guid]::NewGuid().ToString("N"))
+try {
+    $fakeHome = Join-Path $tmp2 "dshhome"
+    $dataDir = Join-Path $fakeHome "dsh-launcher"
+    $profileDir = Join-Path $fakeHome "profiles\web"
+    New-Item -ItemType Directory -Force -Path $dataDir, $profileDir | Out-Null
+    Set-Content (Join-Path $dataDir "dsh.log") "fake log"
+    Set-Content (Join-Path $dataDir "service-pid-99999.txt") "99999"
+    Set-Content (Join-Path $profileDir "package.json") '{"keep":true}'
+
+    # 防护断言：伪造 DSH_HOME 必须落在 %TEMP% 内才允许执行脚本（防误删真实数据）
+    $fakeHomeFull = [System.IO.Path]::GetFullPath($fakeHome)
+    $tempFull = [System.IO.Path]::GetFullPath($env:TEMP)
+    Assert-True ($fakeHomeFull.StartsWith($tempFull, [System.StringComparison]::OrdinalIgnoreCase)) "伪造 DSH_HOME 必须位于 %TEMP% 内"
+
+    $oldDshHome = $env:DSH_HOME; $oldUp2 = $env:USERPROFILE
+    try {
+        $env:DSH_HOME = $fakeHome
+        $env:USERPROFILE = (Join-Path $tmp2 "Profile")
+        # 1) 不带 -CleanData：数据目录必须保留（默认不删数据）
+        cmd /c "`"$(Join-Path $root 'scripts\uninstall-autostart.cmd')`" < nul" | Out-Null
+        Assert-True (Test-Path (Join-Path $dataDir "dsh.log")) "默认运行不删除数据目录"
+
+        # 2) 带 -CleanData：数据目录被清、profiles 里的"用户文件"保留
+        cmd /c "`"$(Join-Path $root 'scripts\uninstall-autostart.cmd')`" -CleanData < nul" | Out-Null
+        Assert-True (-not (Test-Path $dataDir)) "-CleanData 删除 DSH_HOME\dsh-launcher"
+        Assert-True (Test-Path (Join-Path $profileDir "package.json")) "-CleanData 不触碰 profiles/ 插件数据"
+    }
+    finally {
+        $env:DSH_HOME = $oldDshHome; $env:USERPROFILE = $oldUp2
+    }
+}
+finally {
+    Remove-Item $tmp2 -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($Smoke) {
