@@ -299,17 +299,22 @@ public static class ShellLogic
         return false;
     }
 
-    /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；读取失败返回空列表。</summary>
+    /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；大文件不整读（流式 + 受限队列，
+    /// 参照 DiagnoseExport.TailLines 的实现模式）；读取失败返回空列表。</summary>
     internal static List<string> ReadLogTail(string logPath, int maxLines)
     {
         var result = new List<string>();
         try
         {
             if (!File.Exists(logPath)) return result;
-            var lines = File.ReadAllLines(logPath);
-            var start = Math.Max(0, lines.Length - maxLines);
-            for (var i = start; i < lines.Length; i++)
-                result.Add(lines[i]);
+            var kept = new Queue<string>(maxLines);
+            foreach (var raw in File.ReadLines(logPath))
+            {
+                kept.Enqueue(raw);
+                if (kept.Count > maxLines) kept.Dequeue();
+            }
+            while (kept.Count > 0)
+                result.Add(kept.Dequeue());
         }
         catch
         {
@@ -329,13 +334,19 @@ public static class ShellLogic
         FollowWindow = 2,
     }
 
-    /// <summary>
-    /// 统一日志路径（v0.3.0 起单一日志文件）：DSH_HOME\dsh-launcher\dsh.log。
-    /// 壳的 JSON Lines 与 dsh 服务原始输出（start-dsh.vbs 追加写入）同文件共存，
-    /// 替代旧版 shell.log 与 .dsh-web.&lt;port&gt;.log 多文件方案。
-    /// </summary>
-    internal static string ResolveLogPath(string dshHomeDir) =>
-        Path.Combine(dshHomeDir, "dsh-launcher", "dsh.log");
+    /// <summary>PID 身份校验（防复用误杀，质量治理 P1-2）：pid 文件里的 PID 可能被系统
+    /// 复用给无关进程——杀进程前必须确认该 PID 确为 dsh 服务（node 进程）。
+    /// dsh 服务由 wscript→cmd→node 链路拉起，监听端口的进程名是 node（便携/系统均为）。
+    /// 校验失败（进程不存在/名字不符）返回 false，调用方不得执行 taskkill。</summary>
+    internal static bool IsLikelyDshService(int pid)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return string.Equals(p.ProcessName, "node", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
 
     /// <summary>读取 Evergreen WebView2 Runtime 版本（注册表 pv 值）；未安装/读取失败返回 null。
     /// 供 WebView2 缺失兜底（静默安装 Bootstrapper）与诊断导出共用。</summary>
@@ -432,21 +443,56 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 判断 settings.json 顶层对象是否含有名为 "serviceLifetime" 的键（精确键判定，质量治理 P2-4）。
+    /// 仅当能成功解析为 JSON 对象且顶层恰好存在该键时返回 true；解析失败/键不存在返回 false。
+    /// 避免旧子串 Contains 判定在"别的键名/键值含 serviceLifetime 子串"时误报。
+    /// </summary>
+    internal static bool HasServiceLifetimeKey(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("serviceLifetime", out _);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// 判断 settings.json 顶层 "serviceLifetime" 的值是否为合法枚举（0/1/2）。仅当键存在且
+    /// 值可解析为合法的 ServiceLifetime 时返回 true；键缺失/解析失败/越界返回 false。
+    /// </summary>
+    internal static bool IsValidLifetimeValue(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            return root.ValueKind == System.Text.Json.JsonValueKind.Object
+                && root.TryGetProperty("serviceLifetime", out var value) && value.TryGetInt32(out var n)
+                && Enum.IsDefined(typeof(ServiceLifetime), n);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
     /// 有效服务存活模式解析（含插件降级，v0.3.0）：
     /// - 插件缺失 → 忽略 settings.json 里的 serviceLifetime，回退 fallback（跟随窗口）；
-    ///   ShouldPurge=true 时调用方应抹除失效字段（幂等）。
-    /// - 插件存在 → 正常解析（保留用户选择）。
+    ///   ShouldPurge=true 时调用方应抹除失效字段（幂等）。插件缺失且顶层含该键（无论合法与否）都标记清理。
+    /// - 插件存在 → 正常解析（保留用户选择）；仅当顶层键存在但值非法/越界导致回退时才标记清理（A4 R2）。
+    ///   合法值（含与 fallback 不同的 0/1）不清理——保留用户选择。
     /// </summary>
     internal static (ServiceLifetime Mode, bool ShouldPurge) ResolveEffectiveLifetime(
         string? settingsJson, bool pluginPresent, ServiceLifetime fallback = ServiceLifetime.FollowWindow)
     {
         if (!pluginPresent)
-        {
-            var mentionsStale = !string.IsNullOrWhiteSpace(settingsJson)
-                && settingsJson.Contains("serviceLifetime", StringComparison.OrdinalIgnoreCase);
-            return (fallback, mentionsStale);
-        }
-        return (ParseLifetimeMode(settingsJson, fallback), false);
+            return (fallback, HasServiceLifetimeKey(settingsJson));
+        var mode = ParseLifetimeMode(settingsJson, fallback);
+        // 值合法则保留（不 purge）；键在但值非法/越界 → 回退并提示清理。
+        var shouldPurge = HasServiceLifetimeKey(settingsJson) && !IsValidLifetimeValue(settingsJson);
+        return (mode, shouldPurge);
     }
 
     /// <summary>

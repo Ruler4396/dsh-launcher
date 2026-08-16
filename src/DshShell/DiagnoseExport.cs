@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace DshWeb;
 
@@ -199,14 +200,39 @@ public static class DiagnoseExport
         catch (Exception ex) { return "（读取失败: " + ex.Message + "）"; }
     }
 
-    /// <summary>脱敏：把用户目录替换为 %USER%（日志里常见路径泄漏用户名）。</summary>
+    /// <summary>脱敏：把用户目录及可推导的用户相关信息替换为占位符，避免日志/路径泄漏用户名。
+    /// 顺序（均 OrdinalIgnoreCase）：
+    ///   1) 当前用户目录全路径 → %USER%（保留原文覆盖）；
+    ///   2) %USERPROFILE% 字面量 → %USER%（环境变量形式出现的路径）；
+    ///   3) 波浪号缩写 "~\" → "%USER%\"（仅替换反斜杠后缀形式，避免误伤普通波浪号文本；
+    ///      独立 "~" token 不替换，因其可能是正常文本中与路径无关的波浪号）；
+    ///   4) 反斜杠分隔的 "…\用户名\" 路径片段 → "…\USERNAME\"（正则只在反斜杠之后才匹
+    ///      配用户名，且要求其后紧跟反斜杠，故只命中路径上下文，防过度替换普通文本中的
+    ///      用户名单词）。</summary>
     private static string Sanitize(string? s)
     {
         if (string.IsNullOrEmpty(s)) return s ?? "";
         try
         {
             var up = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrWhiteSpace(up)) s = s.Replace(up, "%USER%", StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(up))
+            {
+                // 1) 全路径 — 覆盖默认形式 C:\Users\xxx
+                s = s.Replace(up, "%USER%", StringComparison.OrdinalIgnoreCase);
+                // 2) 环境变量字面量形式
+                s = s.Replace("%USERPROFILE%", "%USER%", StringComparison.OrdinalIgnoreCase);
+                // 3) 波浪号缩写形式（仅 "~\"，保守安全）
+                s = s.Replace("~\\", "%USER%\\", StringComparison.OrdinalIgnoreCase);
+                // 4) 用户名路径片段：仅 \用户名\ 上下文（用户名可能出现在 profile 名/短路径
+                //    等未被全路径替换覆盖到的位置）。用户名取用户目录最后一段。
+                var userName = Path.GetFileName(up.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (!string.IsNullOrEmpty(userName))
+                {
+                    // 模式：反斜杠 + 用户名 +（后随反斜杠，用前瞻保留它）；OrdinalIgnoreCase。
+                    s = Regex.Replace(s, "\\\\" + Regex.Escape(userName) + "(?=\\\\)", "\\\\USERNAME",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                }
+            }
         }
         catch { }
         return s;
