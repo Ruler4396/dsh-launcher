@@ -34,7 +34,7 @@
 |---|---|---|
 | **Node.js 18+** | required to run the dsh service (a global dsh install is optional — the launcher falls back to `npx -y @deepseek-ai/dsh`) | https://nodejs.org (LTS, default install) |
 | **.NET Desktop Runtime 10** | required to run the shell | if double-click does nothing, run `winget install Microsoft.DotNet.DesktopRuntime.10` |
-| **WebView2 Runtime** | renders the window | usually preinstalled on Windows 10/11 |
+| **WebView2 Runtime** | renders the window | usually preinstalled on Windows 10/11; if missing the launcher auto-installs it silently on startup (E1006 only if that fails) |
 
 ## Features
 
@@ -59,6 +59,8 @@ winget install Microsoft.DotNet.DesktopRuntime.10
 ```
 
 Then double-click again. Still nothing → see "View the log" below.
+
+> Tip: during **MSI install** the prerequisite check offers an "Auto-install (A)" button that runs winget to install .NET for you.
 
 **Symptom 2: dialog "Node.js not detected, cannot start the dsh service"**
 
