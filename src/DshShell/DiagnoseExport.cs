@@ -46,7 +46,7 @@ public static class DiagnoseExport
         }
     }
 
-    private static Logger.Level? ParseMinLevel(string[] args)
+    internal static Logger.Level? ParseMinLevel(string[] args)
     {
         for (var i = 0; i < args.Length - 1; i++)
         {
@@ -61,7 +61,7 @@ public static class DiagnoseExport
 
     /// <summary>按级别过滤统一日志：JSON 行按 level 字段；原始服务输出命中启动错误标志按告警计。
     /// 质量治理修复：输出行统一过 Sanitize（日志主体此前漏脱敏）。</summary>
-    private static string FilterByLevel(string logPath, Logger.Level minLevel)
+    internal static string FilterByLevel(string logPath, Logger.Level minLevel)
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
         var sb = new StringBuilder();
@@ -82,7 +82,7 @@ public static class DiagnoseExport
         return sb.Length == 0 ? "（无告警/错误记录）" : sb.ToString();
     }
 
-    private static Logger.Level? TryGetJsonLevel(string line)
+    internal static Logger.Level? TryGetJsonLevel(string line)
     {
         if (!line.StartsWith('{')) return null;
         try
@@ -104,7 +104,7 @@ public static class DiagnoseExport
     /// v0.3.1 修复：必须用共享读打开——运行中的 dsh 服务（cmd >> 重定向）以独占共享模式持有
     /// dsh.log，File.ReadLines 默认 FileShare.Read 会被拒（IOException），导致服务运行期间
     /// --diagnose 必然失败（22 字节空 zip + E5001 写不进被锁日志）。</summary>
-    private static string TailLines(string logPath, int maxLines)
+    internal static string TailLines(string logPath, int maxLines)
     {
         if (!File.Exists(logPath)) return "（统一日志不存在：" + logPath + "）";
         var sb = new StringBuilder();
@@ -119,7 +119,7 @@ public static class DiagnoseExport
     }
 
     /// <summary>以 FileShare.ReadWrite 共享模式逐行读取（可读被运行中服务锁定的日志文件）。</summary>
-    private static IEnumerable<string> ReadLinesShared(string path)
+    internal static IEnumerable<string> ReadLinesShared(string path)
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = new StreamReader(fs, detectEncodingFromByteOrderMarks: true);
@@ -170,7 +170,7 @@ public static class DiagnoseExport
     }
 
     /// <summary>按错误码汇总错误目录中出现的错误：每个码出现次数 + 首条消息（诊断排序依据）。</summary>
-    private static string SummarizeErrors(string logPath)
+    internal static string SummarizeErrors(string logPath)
     {
         if (!File.Exists(logPath)) return "（无日志）";
         var counts = new Dictionary<string, (int Count, string FirstMsg)>(StringComparer.Ordinal);
@@ -222,7 +222,7 @@ public static class DiagnoseExport
     ///   4) 反斜杠分隔的 "…\用户名\" 路径片段 → "…\USERNAME\"（正则只在反斜杠之后才匹
     ///      配用户名，且要求其后紧跟反斜杠，故只命中路径上下文，防过度替换普通文本中的
     ///      用户名单词）。</summary>
-    private static string Sanitize(string? s)
+    internal static string Sanitize(string? s)
     {
         if (string.IsNullOrEmpty(s)) return s ?? "";
         try
