@@ -158,9 +158,10 @@ finally {
 
 if ($Smoke) {
     Write-Host "`n== 4. 冒烟测试 ==" -ForegroundColor Cyan
-    $zip = Join-Path $root "dist\dsh-launcher-windows.zip"
-    Assert-True (Test-Path $zip) "dist\dsh-launcher-windows.zip 存在（先运行 ./scripts/build-release.ps1）"
-    if (Test-Path $zip) {
+    $zip = (Get-ChildItem (Join-Path $root "dist\dsh-launcher-windows-*.zip") -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+    Assert-True ($null -ne $zip) "dist\dsh-launcher-windows-<版本>.zip 存在（先运行 ./scripts/build-release.ps1）"
+    if ($zip -and (Test-Path $zip)) {
         $smokeDir = Join-Path $env:TEMP ("dsh-smoke-" + [guid]::NewGuid().ToString("N"))
         try {
             Expand-Archive -Path $zip -DestinationPath $smokeDir -Force

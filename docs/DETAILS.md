@@ -14,6 +14,19 @@
 
 ## 技术实现 / How it works
 
+```text
+┌─────────────┐   HTTP    ┌──────────────────────────────┐
+│  DshWeb.exe │ ────────► │  dsh 服务（node 进程）        │
+│  (壳, 单文件) │  127.0.0.1│  dsh web --host 127.0.0.1    │
+│  WinForms +  │ ◄──────── │      --port 3080             │
+│  WebView2    │  Web UI   │  数据/插件/会话都在 DSH_HOME  │
+└──────┬──────┘            └──────────────────────────────┘
+       │ 启动/停止/就绪探测（端口+HTTP）/PID 记录
+       │ start-dsh.vbs（wscript 静默拉起，输出 append 统一日志）
+       ▼
+   统一日志 ~/.dsh/dsh-launcher/dsh.log（JSON Lines + 服务输出共存）
+```
+
 | 模块 | 方案 |
 | --- | --- |
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
@@ -26,6 +39,29 @@
 | 崩溃自愈 | 渲染进程崩溃/无响应自动重载（10 秒节流） |
 | 单实例 | 按目标端口隔离的互斥锁：重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
 | 安装包 | WiX v5 per-machine MSI（安装/卸载需 UAC 提权）：默认 `%ProgramFiles%\dsh-launcher` 可自定义，无服务、无计划任务，可卸载 |
+
+## 错误码表 / Error codes
+
+弹窗、统一日志的 `code` 字段、`--diagnose` 汇总共用同一套码（目录见 `src/DshShell/ErrorCodes.cs`）。
+
+| 码 | 含义 |
+| --- | --- |
+| E1002 | 用户拒绝自动安装便携 Node.js |
+| E1003 | 便携 Node.js 下载失败（网络或镜像问题） |
+| E1004 | 便携 Node.js 校验和不匹配，已拒绝使用（防供应链篡改） |
+| E1005 | 便携 Node.js 解压失败 |
+| E1006 | 缺少 WebView2 Runtime（Edge WebView2），无法渲染窗口 |
+| E1007 | 渲染进程反复崩溃，已停止自动重载（可通过托盘唤窗或重新打开恢复） |
+| E2001 | 缺少 start-dsh.vbs，无法自动拉起 dsh 服务 |
+| E2002 | dsh 服务启动超时（下载较慢或网络/代理问题） |
+| E2003 | dsh 服务启动日志出现错误（npm/权限/依赖问题） |
+| E2004 | dsh 服务不可用（端口无 HTTP 响应） |
+| E2005 | 检测到上次崩溃遗留的异常服务进程，已清理 |
+| E2011 | dsh-launcher-lifetime 插件已卸载，已忽略残留的常驻配置并按默认模式运行 |
+| E4001 | dsh 新版本下载失败 |
+| E4002 | dsh 延迟更新应用失败，将继续使用当前版本 |
+| E5001 | 诊断日志导出失败 |
+| E9001 | 内部未分类错误 |
 
 ## 安全说明 / Security
 

@@ -5,7 +5,7 @@ Builds the dsh-launcher Windows release package.
 .DESCRIPTION
 Publishes the WebView2 shell app as a single-file executable, assembles the
 deployable files (exe + native loader + all runtime scripts), creates
-dsh-launcher-windows.zip, builds a per-machine MSI installer (WiX v5) and writes
+dsh-launcher-windows-<version>.zip, builds a per-machine MSI installer (WiX v5) and writes
 SHA256 checksums for both artifacts.
 
 .EXAMPLE
@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $publishDir = Join-Path $root ".publish-tmp"
 $distDir = Join-Path $root "$OutputDir\dsh-launcher-windows"
-$zipPath = Join-Path $root "$OutputDir\dsh-launcher-windows.zip"
+$zipPath = Join-Path $root "$OutputDir\dsh-launcher-windows.zip"  # 占位，Version 解析后重命名
 
 # version: explicit argument, or derived from the latest git tag (strip leading 'v')
 if (-not $Version) {
@@ -30,6 +30,8 @@ if (-not $Version) {
 }
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be x.y.z, got: $Version" }
 $msiPath = Join-Path $root "$OutputDir\dsh-launcher-$Version.msi"
+# v0.3.1：zip 命名带版本号（与 MSI 一致，多版本并存时可辨识）
+$zipPath = Join-Path $root "$OutputDir\dsh-launcher-windows-$Version.zip"
 $sumsPath = Join-Path $root "$OutputDir\SHA256SUMS.txt"
 
 # 1. publish single-file exe

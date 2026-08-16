@@ -12,7 +12,7 @@ dist/
 # Test output
 TestResults/
 
-# Archived stale content (old releases, build artifacts)
+# Archived stale content (old releases, build artifacts, archived docs)
 archive/
 
 # IDE
