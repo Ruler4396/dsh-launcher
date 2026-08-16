@@ -1,11 +1,14 @@
 # dsh-launcher
 
+<p align="center">
 [English](docs/README.en.md) · [简体中文](README.md)
+</p>
 
+<p align="center">
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
-[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
+</p>
 
 > DeepSeek Harness 的 Windows 轻量启动器：双击即用，不用敲命令。
 
@@ -40,7 +43,7 @@
 安装 [dsh-launcher-lifetime](https://github.com/Ruler4396/dsh-launcher-lifetime) 后，拥有三种node.js的驻留模式（随窗口驻留、常驻、随托盘驻留），可在 dsh 设置页“Node服务驻留”中切换：
 
 ```sh
-dsh plugin add dsh-launcher-lifetime
+dsh plugin --profile web add dsh-launcher-lifetime
 ```
 
 ## 常见问题
@@ -62,3 +65,10 @@ dsh plugin add dsh-launcher-lifetime
 ## 许可证
 
 [MIT](LICENSE) © dsh-launcher contributors
+
+## 友情链接
+
+<p align="center">
+[![dsh.so](https://www.dsh.so/badges/dsh-launcher.svg)](https://www.dsh.so/artifact/dsh-launcher/)
+[![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
+</p>
