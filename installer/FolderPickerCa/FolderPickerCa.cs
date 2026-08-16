@@ -193,7 +193,9 @@ public static class FolderPickerCa
     /// dsh.log、window-state/pending-update/service-pid 等）与旧版 %USERPROFILE%\.dsh-web*.log。
     /// 硬边界：绝不触碰 DSH_HOME 下其余内容（profiles/、settings.yaml、.credentials.yaml、
     /// sessions、storages、插件等一切 dsh 生态数据）。同时杀死 pid 文件记录、仍存活的服务
-    /// 进程（只动我们记录的 PID，绝不按进程名批量杀）。任何失败跳过，不阻断卸载。</summary>
+    /// 进程（只动我们记录的 PID，绝不按进程名批量杀）；并在 taskkill 前校验该 PID 确为
+    /// node 进程，仅当 pid 文件记录、且当前确为 node 进程时才杀（防 PID 复用误杀无辜进程）。
+    /// 任何失败跳过，不阻断卸载。</summary>
     [CustomAction]
     public static ActionResult CleanUserData(Session session)
     {
@@ -219,12 +221,36 @@ public static class FolderPickerCa
                         int pid;
                         if (int.TryParse(File.ReadAllText(pf).Trim(), out pid) && pid > 0)
                         {
+                            // 身份校验：仅当该 PID 当前确为 node 进程才杀，防 PID 被系统复用
+                            // 时误杀无辜进程。进程不存在 → 跳过不杀；进程名非 node → 跳过不杀。
+                            bool isNode = false;
+                            try
+                            {
+                                using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById(pid))
+                                {
+                                    string name = p.ProcessName;
+                                    if (!string.IsNullOrEmpty(name)
+                                        && string.Equals(name, "node", StringComparison.OrdinalIgnoreCase))
+                                        isNode = true;
+                                }
+                            }
+                            catch (ArgumentException) { /* 进程已退出/不存在 → isNode 保持 false */ }
+                            catch (System.ComponentModel.Win32Exception) { /* 无权限访问 → 保持 false */ }
+                            catch (InvalidOperationException) { /* 进程已退出 → 保持 false */ }
+
+                            if (!isNode)
+                            {
+                                try { session.Log("CleanUserData: pid " + pid + " 非 node 进程或已不存在，跳过"); }
+                                catch { }
+                                continue;
+                            }
+
                             try
                             {
                                 System.Diagnostics.Process.Start("taskkill", "/pid " + pid);
                                 System.Threading.Thread.Sleep(500);
                                 System.Diagnostics.Process.Start("taskkill", "/f /pid " + pid);
-                                session.Log("CleanUserData: asked taskkill for pid " + pid);
+                                session.Log("CleanUserData: asked taskkill for node pid " + pid);
                             }
                             catch (Exception ex) { try { session.Log("CleanUserData: kill failed: " + ex.Message); } catch { } }
                         }

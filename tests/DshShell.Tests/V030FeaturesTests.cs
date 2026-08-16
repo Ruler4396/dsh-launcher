@@ -40,6 +40,37 @@ public class V030FeaturesTests
         Assert.False(purge);
     }
 
+    [Theory]
+    [InlineData("{\"x_serviceLifetime_note\":\"abc\"}")] // 键名带子串，顶层无 serviceLifetime
+    [InlineData("{\"other\":{\"serviceLifetime\":1}}")]   // 值带子串，顶层无 serviceLifetime
+    public void ResolveEffectiveLifetime_PluginMissing_SubstringOnlyKey_NoPurge(string json)
+    {
+        // 质量治理 P2-4：旧 Contains 判定会误报，精确键判定下这些都不该清理。
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime(json, pluginPresent: false);
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
+        Assert.False(purge);
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(-1)]
+    public void ResolveEffectiveLifetime_PluginPresent_OutOfRangeValue_Purges(int n)
+    {
+        // 插件在但值越界（3/-1 非法）→ 回退 FollowWindow 且标记清理（A4 R2）。
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime($"{{\"serviceLifetime\":{n}}}", pluginPresent: true);
+        Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
+        Assert.True(purge, "越界值应被清理");
+    }
+
+    [Fact]
+    public void ResolveEffectiveLifetime_PluginPresent_ValidValue_NoPurge()
+    {
+        // 插件在且值合法 → 保留用户选择，不清理（显式断言）。
+        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: true);
+        Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, mode);
+        Assert.False(purge);
+    }
+
     // ---------- 插件物理存在检测（IsLifetimePluginInstalled） ----------
 
     [Fact]

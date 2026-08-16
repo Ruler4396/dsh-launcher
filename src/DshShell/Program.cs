@@ -51,6 +51,16 @@ internal static class Program
     /// 崩溃事件可能在浏览器进程线程上触发，跨线程读写一律经 Interlocked（v0.3.0）。
     private static long _lastReloadTick;
 
+    /// 连续崩溃计数与窗口起始（质量治理 P1-3）：10s 窗口内 ≥3 次 → 停止自动重载循环，
+    /// 仅保留手动恢复入口（托盘唤窗/重开）；NavigationCompleted 成功时复位。
+    private static int _crashCount;
+    private static long _lastCrashTick;
+
+    /// 主题监听句柄（质量治理 P2-7）：真实退出时由 ReleaseThemeWatcher 统一释放。
+    private static System.Windows.Forms.Timer? _themeTimer;
+    private static FileSystemWatcher? _themeWatcher;
+    private static UserPreferenceChangedEventHandler? _themeEventsHandler;
+
     /// 主窗口的 WebView2 控件（托盘恢复窗口时需要检查/恢复渲染）。
     private static WebView2? _mainWeb;
 
@@ -209,6 +219,9 @@ internal static class Program
     /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
     private static CoreWebView2Environment? _sharedEnvironment;
 
+    /// 质量治理 P2-3：环境创建互斥（无锁懒初始化在并发弹窗下会重复创建环境对象）。
+    private static readonly SemaphoreSlim SharedEnvLock = new(1, 1);
+
     /// <summary>
     /// 创建（或复用）共享 WebView2 环境。
     /// AdditionalBrowserArguments 放行无手势自动播放：WebView2 在当前 SDK 中不会为
@@ -217,16 +230,25 @@ internal static class Program
     /// </summary>
     private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync(string userDataFolder)
     {
-        if (_sharedEnvironment is null)
+        if (_sharedEnvironment is not null) return _sharedEnvironment;
+        await SharedEnvLock.WaitAsync();
+        try
         {
-            var options = new CoreWebView2EnvironmentOptions
+            if (_sharedEnvironment is null)
             {
-                AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required",
-            };
-            // 内部续延只做字段赋值/返回，无 UI 依赖：ConfigureAwait(false) 避免无谓的
-            // UI 线程回跳（v0.3.0 后台代码纪律）；调用方 InitWebViewAsync 仍保留 UI 续延。
-            _sharedEnvironment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options)
-                .ConfigureAwait(false);
+                var options = new CoreWebView2EnvironmentOptions
+                {
+                    AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required",
+                };
+                // 内部续延只做字段赋值/返回，无 UI 依赖：ConfigureAwait(false) 避免无谓的
+                // UI 线程回跳（v0.3.0 后台代码纪律）；调用方 InitWebViewAsync 仍保留 UI 续延。
+                _sharedEnvironment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options)
+                    .ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            SharedEnvLock.Release();
         }
         return _sharedEnvironment;
     }
@@ -392,8 +414,8 @@ internal static class Program
             // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）
             // 结束等待（有 15 秒宽限期，避免启动过程中的良性告警误判）。
             var logPath = UnifiedLogPath;
-            using var status = CreateStartupStatusForm();
             var cts = new CancellationTokenSource();
+            using var status = CreateStartupStatusForm(onCancel: () => cts.Cancel());
             var pollTask = Task.Run(() =>
             {
                 var lastLogCheck = DateTime.MinValue;
@@ -465,9 +487,12 @@ internal static class Program
                     if (pid > 0)
                     {
                         Logger.Warn("service failed to become ready; cleaning up", ErrorCodes.E2005, new { pid });
-                        KillProcess(pid);
+                        if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
                     }
-                    ClearServicePidFile();
+                    else
+                    {
+                        ClearServicePidFile();
+                    }
                 }
                 var tail = ShellLogic.ReadLogTail(logPath, 12);
                 var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
@@ -484,7 +509,9 @@ internal static class Program
                     "timeout" => ErrorCodes.E2002,
                     _ => ErrorCodes.E9001,
                 };
-                ShowError(code, "dsh 服务未能就绪。\n\n" + body);
+                // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总
+                ShowError(code, "dsh 服务未能就绪。\n\n" + body,
+                    level: waitResult == "canceled" ? Logger.Level.Info : Logger.Level.Error);
                 return;
             }
 
@@ -578,6 +605,9 @@ internal static class Program
             // v0.3.0：主窗口位置/大小持久化（多显示器记忆，真实退出时写回）
             SaveWindowState(form);
 
+            // 质量治理 P2-7：真实退出释放主题监听（SystemEvents/FSW/轮询 Timer）
+            ReleaseThemeWatcher();
+
             if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
             {
                 // 跟随窗口：关窗即停服务（只停壳本次拉起的）
@@ -631,6 +661,7 @@ internal static class Program
                 var navWarned = false;
                 web.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
+                    if (e.IsSuccess) Interlocked.Exchange(ref _crashCount, 0); // P1-3：页面恢复后复位崩溃计数
                     if (!e.IsSuccess && !navWarned)
                     {
                         navWarned = true;
@@ -653,6 +684,7 @@ internal static class Program
                         var navWarned = false;
                         web.CoreWebView2.NavigationCompleted += (_, e) =>
                         {
+                            if (e.IsSuccess) Interlocked.Exchange(ref _crashCount, 0); // P1-3：页面恢复后复位崩溃计数
                             if (!e.IsSuccess && !navWarned)
                             {
                                 navWarned = true;
@@ -686,16 +718,25 @@ internal static class Program
     private static Form? _pendingForm;
 
     /// <summary>统一出错弹窗（v0.3.0 显式差错控制）：正文含 [错误码]，错误一并写入结构化日志；
-    /// 消息文本可 Ctrl+C 复制，便于粘贴到 Issue。</summary>
+    /// 消息文本可 Ctrl+C 复制，便于粘贴到 Issue。
+    /// 质量治理 P1-7：可指定日志级别——"用户取消/拒绝"类非故障（如 E1002）传 Info，
+    /// 避免污染错误码汇总；log 参数供"显式 Logger 已写过"的场景去重（如 E4001 双写）。</summary>
     private static DialogResult ShowError(string code, string detail,
-        MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.Warning)
+        MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.Warning,
+        Logger.Level level = Logger.Level.Error, bool log = true)
     {
-        Logger.Error(detail, code);
+        if (log)
+        {
+            if (level == Logger.Level.Error) Logger.Error(detail, code);
+            else if (level == Logger.Level.Warn) Logger.Warn(detail, code);
+            else Logger.Info(detail, code);
+        }
         return MessageBox.Show($"[{code}] {ErrorCodes.Describe(code)}\n\n{detail}", "DeepSeek Harness", buttons, icon);
     }
 
     /// <summary>v0.3.1 P2：WebView2 缺失兜底——下载 Evergreen Bootstrapper（官方固定链接，
-    /// 约 2MB）静默安装后重测；任何一步失败返回 false（调用方回退 E1006 弹窗）。不内嵌 runtime。</summary>
+    /// 约 2MB）静默安装后重测；任何一步失败返回 false（调用方回退 E1006 弹窗）。不内嵌 runtime。
+    /// 质量治理 P1-5：各失败分支写入结构化日志（区分 已装/下载失败/安装失败/超时），不再静默。</summary>
     private static async Task<bool> TryInstallWebView2Async()
     {
         try
@@ -707,11 +748,20 @@ internal static class Program
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
                 using var resp = await http.GetAsync("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
-                if (!resp.IsSuccessStatusCode) return false;
+                if (!resp.IsSuccessStatusCode)
+                {
+                    Logger.Error($"webview2 bootstrapper download failed: HTTP {(int)resp.StatusCode}",
+                        ErrorCodes.E1006, new { stage = "download" });
+                    return false;
+                }
                 await using var fs = new FileStream(boot, FileMode.Create, FileAccess.Write);
                 await resp.Content.CopyToAsync(fs);
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                Logger.Error("webview2 bootstrapper download error: " + ex.Message, ErrorCodes.E1006, new { stage = "download" });
+                return false;
+            }
             try
             {
                 var psi = new ProcessStartInfo(boot, "/silent /install")
@@ -720,17 +770,38 @@ internal static class Program
                     CreateNoWindow = true,
                 };
                 using var p = Process.Start(psi);
-                if (p is null) return false;
-                if (!p.WaitForExit(120000)) { try { p.Kill(entireProcessTree: true); } catch { } return false; }
-                return p.ExitCode == 0 && ShellLogic.ReadWebView2Version() is not null;
+                if (p is null)
+                {
+                    Logger.Error("webview2 bootstrapper failed to start", ErrorCodes.E1006, new { stage = "install" });
+                    return false;
+                }
+                if (!p.WaitForExit(120000))
+                {
+                    try { p.Kill(entireProcessTree: true); } catch { }
+                    Logger.Error("webview2 bootstrapper install timed out", ErrorCodes.E1006, new { stage = "install", timeout = 120000 });
+                    return false;
+                }
+                var ok = p.ExitCode == 0 && ShellLogic.ReadWebView2Version() is not null;
+                if (!ok)
+                    Logger.Error($"webview2 bootstrapper install failed: exit={p.ExitCode}",
+                        ErrorCodes.E1006, new { stage = "install", exitCode = p.ExitCode });
+                return ok;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                Logger.Error("webview2 bootstrapper install error: " + ex.Message, ErrorCodes.E1006, new { stage = "install" });
+                return false;
+            }
             finally
             {
                 try { if (File.Exists(boot)) File.Delete(boot); } catch { }
             }
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            Logger.Error("webview2 fallback install error: " + ex.Message, ErrorCodes.E1006, new { stage = "unknown" });
+            return false;
+        }
     }
 
     /// <summary>v0.3.0 Node 缺失处理：一次性确认 → 状态窗期间自动下载便携 Node（可取消）。
@@ -743,11 +814,12 @@ internal static class Program
             "dsh-launcher - 需要 Node.js", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (ask != DialogResult.Yes)
         {
-            ShowError(ErrorCodes.E1002, "未安装 Node.js，dsh 服务无法启动。可安装 Node.js 18+ 后重新打开。");
+            ShowError(ErrorCodes.E1002, "未安装 Node.js，dsh 服务无法启动。可安装 Node.js 18+ 后重新打开。",
+                level: Logger.Level.Info); // 用户主动拒绝，非错误（P1-7）
             return false;
         }
-        using var status = CreateStartupStatusForm("正在下载并安装便携 Node.js…（约 30MB，请稍候）");
         var cts = new CancellationTokenSource();
+        using var status = CreateStartupStatusForm("正在下载并安装便携 Node.js…（约 30MB，请稍候）", onCancel: () => cts.Cancel());
         var task = RuntimeResolver.EnsurePortableNodeAsync(cts.Token);
         _ = task.ContinueWith(_ =>
         {
@@ -795,7 +867,17 @@ internal static class Program
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                // 质量治理 P1-6：存在"已下载待应用"的 dsh 更新（pending-update.json 未被清除
+                // = 服务健康跳过应用或应用失败）→ 气泡提示一次（不打断会话），重启后生效。
+                // 不依赖网络，先于 GitHub/npm 检查执行。
+                var pendingVersion = StagedUpdate.ReadPendingVersion();
+                if (!string.IsNullOrWhiteSpace(pendingVersion))
+                {
+                    var v = pendingVersion;
+                    form.BeginInvoke(() => NotifyPendingApply(v));
+                }
+
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) }; // P2-9：弱网放宽 8s→15s
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
 
                 // 1) launcher 安全更新优先（安全修复比功能更新重要）
@@ -856,6 +938,22 @@ internal static class Program
         catch { /* 气泡提示失败忽略 */ }
     }
 
+    /// <summary>质量治理 P1-6/P1-8："已下载待应用"更新的一次性气泡提示（无点击行为）。
+    /// 触发条件：pending-update.json 存在（服务健康跳过应用，或应用失败保留）。</summary>
+    private static void NotifyPendingApply(string version)
+    {
+        try
+        {
+            if (_pendingForm is null) return;
+            EnsureTrayIcon(_pendingForm, force: true); // 无插件/无待通知更新时也临时建托盘提示
+            if (_trayIcon is null) return;
+            _trayIcon.ShowBalloonTip(15000, "dsh 更新待应用",
+                $"已下载 dsh {version}，重启 dsh-launcher 后自动应用（或手动执行：npm install -g @deepseek-ai/dsh@{version}）。",
+                ToolTipIcon.Info);
+        }
+        catch { /* 气泡提示失败忽略 */ }
+    }
+
     private static void OnPendingBalloonClicked(object? s, EventArgs e)
     {
         var f = _pendingForm;
@@ -908,8 +1006,10 @@ internal static class Program
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
                 try
                 {
+                    // log:false —— 显式 Logger.Error 已写（窗体可能已关闭，日志不能丢），弹窗不再重复写（P1-7）
                     form.BeginInvoke(() => ShowError(ErrorCodes.E4001,
-                        $"dsh {latest} 下载失败。\n\n可稍后重试，或在命令行手动执行：\nnpm install -g @deepseek-ai/dsh@{latest}"));
+                        $"dsh {latest} 下载失败。\n\n可稍后重试，或在命令行手动执行：\nnpm install -g @deepseek-ai/dsh@{latest}",
+                        log: false));
                 }
                 catch { /* 窗体已关闭 */ }
             }
@@ -917,7 +1017,7 @@ internal static class Program
         catch (Exception ex)
         {
             Logger.Error("staged dsh update download error: " + ex.Message, ErrorCodes.E4001);
-            try { form.BeginInvoke(() => ShowError(ErrorCodes.E4001, ex.Message)); } catch { /* 窗体已关闭 */ }
+            try { form.BeginInvoke(() => ShowError(ErrorCodes.E4001, ex.Message, log: false)); } catch { /* 窗体已关闭 */ }
         }
     }
 
@@ -1310,8 +1410,7 @@ internal static class Program
                 {
                     Logger.Warn($"orphan service pid={pid} unhealthy (no HTTP); killing", ErrorCodes.E2005,
                         new { port = Target.Port });
-                    KillProcess(pid);
-                    ClearServicePidFile();
+                    if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
                 }
             }
         }
@@ -1342,8 +1441,7 @@ internal static class Program
             {
                 Logger.Warn($"stale service pid={pid} alive but not listening; killing", ErrorCodes.E2005,
                     new { port = Target.Port });
-                KillProcess(pid);
-                ClearServicePidFile();
+                if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
             }
         }
         catch { /* 清扫失败不影响启动 */ }
@@ -1398,12 +1496,24 @@ internal static class Program
         catch { return false; }
     }
 
-    /// <summary>停止指定 PID（v0.3.1 P2）：尽力而为优雅终止（CTRL_BREAK）→ 温和 taskkill →
-    /// 短等待未退则强制 /f（全程限时，不卡调用方）。</summary>
-    private static void KillProcess(int pid)
+    /// <summary>停止指定 PID（v0.3.1 P2 优雅终止 + 质量治理 P1-2/P2-10）：
+    /// ① 杀前身份校验（防 PID 复用误杀无辜进程）：非 node 进程/进程不存在 → 不杀，返回 false；
+    /// ② 尽力而为优雅终止（CTRL_BREAK，无控制台自动降级温和 taskkill）；
+    /// ③ 短等待未退则强制 /f，强杀后短暂确认；仍活 → 返回 false
+    ///   （调用方保留 pid 文件，下次启动由 SweepStaleServicePid 认领，避免无主残留）。
+    /// 全程限时，不卡调用方。</summary>
+    private static bool KillProcess(int pid)
     {
         try
         {
+            // 质量治理 P1-2：PID 复用防护——pid 文件/端口反查得到的 PID 可能已被系统
+            // 复用给无关进程，杀前必须确认它是 dsh 服务（node）进程。
+            if (!ShellLogic.IsLikelyDshService(pid))
+            {
+                Logger.Warn($"refusing to kill pid={pid}: not a dsh (node) process (possible PID reuse)",
+                    ErrorCodes.E2005, new { pid });
+                return false;
+            }
             if (!TryGracefulStop(pid))
             {
                 Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid)
@@ -1416,9 +1526,20 @@ internal static class Program
             {
                 Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid)
                 { UseShellExecute = false, CreateNoWindow = true });
+                // 质量治理 P2-10：强杀后确认；仍活则不删 pid 文件，留待下次启动认领
+                var hardDeadline = DateTime.UtcNow.AddMilliseconds(500);
+                while (DateTime.UtcNow < hardDeadline && IsProcessAlive(pid))
+                    Thread.Sleep(100);
+                if (IsProcessAlive(pid))
+                {
+                    Logger.Warn($"process pid={pid} still alive after force kill; pid file kept for next-start sweep",
+                        ErrorCodes.E2005, new { pid });
+                    return false;
+                }
             }
+            return true;
         }
-        catch { /* 停服务失败不影响流程 */ }
+        catch { return false; }
     }
 
     /// <summary>
@@ -1439,8 +1560,7 @@ internal static class Program
                 ClearServicePidFile();
                 return;
             }
-            KillProcess(pid);
-            ClearServicePidFile();
+            if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件，下次启动认领
         }
         catch
         {
@@ -1485,11 +1605,12 @@ internal static class Program
     }
 
     /// <summary>创建托盘图标（按策略懒加载，幂等）；左键切换窗口，右键菜单为退出。
-    /// 服务停留模式改由 dsh-launcher-lifetime 插件在 Harness 设置页里配置（不再放托盘菜单）。</summary>
-    private static void EnsureTrayIcon(Form form)
+    /// 服务停留模式改由 dsh-launcher-lifetime 插件在 Harness 设置页里配置（不再放托盘菜单）。
+    /// force=true 时无视按需策略（用于"待应用更新"等一次性通知，质量治理 P1-6）。</summary>
+    private static void EnsureTrayIcon(Form form, bool force = false)
     {
         if (_trayIcon is not null) return;
-        if (!IsTrayWanted()) return;
+        if (!force && !IsTrayWanted()) return;
         try
         {
             var tray = new NotifyIcon
@@ -1507,9 +1628,10 @@ internal static class Program
             };
             _trayIcon = tray;
         }
-        catch
+        catch (Exception ex)
         {
-            // 托盘创建失败不影响壳主流程
+            // 质量治理 P2-8：托盘创建失败不再静默——记录原因（更新/待应用通知会因此丢失）
+            Logger.Warn("tray icon creation failed; balloon notifications will be lost", ctx: new { error = ex.Message });
         }
     }
 
@@ -1906,7 +2028,7 @@ internal static class Program
     /// 便携 Node 下载进度文案），可取消。由外部任务完成后调用 Close() 自动关闭；
     /// 取消按钮设 DialogResult.Cancel 并关闭。
     /// </summary>
-    private static Form CreateStartupStatusForm(string? caption = null)
+    private static Form CreateStartupStatusForm(string? caption = null, Action? onCancel = null)
     {
         var f = new Form
         {
@@ -1944,6 +2066,9 @@ internal static class Program
         {
             f.DialogResult = DialogResult.Cancel;
             f.Close();
+            // 质量治理 P1-1：取消必须同时撤销后台轮询/下载任务（此前仅关窗，
+            // "canceled" 分支不可达，UI 线程仍同步等待最长 180s 造成假死）。
+            try { onCancel?.Invoke(); } catch { /* 取消回调失败不影响关窗 */ }
         };
         f.Controls.Add(label);
         f.Controls.Add(bar);
@@ -2071,10 +2196,35 @@ internal static class Program
                 or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
                 or CoreWebView2ProcessFailedKind.GpuProcessExited)
             {
+                // 质量治理 P1-4：非主窗实例（插件弹窗）崩溃只记录，不污染主窗恢复标志、
+                // 不参与主窗 reload 节流。
+                if (!ReferenceEquals(web, _mainWeb))
+                {
+                    Trace("webview process failed on a non-main instance; main recovery state untouched");
+                    return;
+                }
+
+                // 质量治理 P1-3：连续崩溃计数（10s 窗口）——确定性崩溃页面不再无限崩→重载
+                // 循环；达到上限停止自动重载（仍置 recovery 标志，保留托盘唤窗/重开的手动恢复入口）。
+                var now = Environment.TickCount64;
+                var lastCrash = Interlocked.Read(ref _lastCrashTick);
+                if (now - lastCrash > 10_000)
+                    Interlocked.Exchange(ref _crashCount, 1);
+                else
+                    Interlocked.Increment(ref _crashCount);
+                Interlocked.Exchange(ref _lastCrashTick, now);
+
+                if (Volatile.Read(ref _crashCount) >= 3)
+                {
+                    Logger.Error($"renderer keeps crashing ({Volatile.Read(ref _crashCount)} crashes in window); auto-reload stopped, manual recovery via tray/show remains",
+                        ErrorCodes.E1007, new { kind = e.ProcessFailedKind.ToString() });
+                    _webviewRecoveryNeeded = true;
+                    return;
+                }
+
                 _webviewRecoveryNeeded = true;
                 if (_mainWeb is { Visible: true, IsDisposed: false })
                 {
-                    var now = Environment.TickCount64;
                     var last = Interlocked.Read(ref _lastReloadTick);
                     if (now - last > 10_000
                         && Interlocked.CompareExchange(ref _lastReloadTick, now, last) == last)
@@ -2700,6 +2850,7 @@ internal static class Program
     /// （Changed + Renamed 都监听——dsh 可能原子替换写文件），500ms 轮询兜底
     /// （watcher 漏事件也能 2 个周期内赶上）。两路共用同一去抖状态：
     /// 主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
+    /// 质量治理 P2-7：订阅句柄存字段，真实退出时由 ReleaseThemeWatcher 统一释放。
     /// </summary>
     private static void RegisterThemeWatcher(Form form)
     {
@@ -2724,11 +2875,13 @@ internal static class Program
 
         try
         {
-            SystemEvents.UserPreferenceChanged += (_, e) =>
+            UserPreferenceChangedEventHandler handler = (_, e) =>
             {
                 if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
                     ApplyIfThemeChanged();
             };
+            _themeEventsHandler = handler;
+            SystemEvents.UserPreferenceChanged += handler;
         }
         catch
         {
@@ -2747,6 +2900,7 @@ internal static class Program
                 };
                 watcher.Changed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
                 watcher.Renamed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
+                _themeWatcher = watcher;
             }
         }
         catch
@@ -2757,6 +2911,20 @@ internal static class Program
         var timer = new System.Windows.Forms.Timer { Interval = 500 };
         timer.Tick += (_, _) => ApplyIfThemeChanged();
         timer.Start();
+        _themeTimer = timer;
+    }
+
+    /// <summary>质量治理 P2-7：真实退出路径释放主题监听（SystemEvents/FSW/轮询 Timer），
+    /// 消除"关窗后、进程退出前"的毫秒级竞态窗口（此前仅靠 try/catch 吞异常）。
+    /// 托盘驻留隐藏路径不调用（隐藏不退出，主题监听需保留）。</summary>
+    private static void ReleaseThemeWatcher()
+    {
+        try { if (_themeEventsHandler is not null) SystemEvents.UserPreferenceChanged -= _themeEventsHandler; } catch { }
+        _themeEventsHandler = null;
+        try { _themeWatcher?.Dispose(); } catch { }
+        _themeWatcher = null;
+        try { _themeTimer?.Stop(); _themeTimer?.Dispose(); } catch { }
+        _themeTimer = null;
     }
 
     private static bool PortOpen(int port)
