@@ -1772,13 +1772,16 @@ internal static class Program
         return 0;
     }
 
-    /// <summary>v0.3.0 托盘按需策略：默认隐藏；仅当装了 dsh-launcher-lifetime 插件
-    ///（常驻/托盘驻留模式需要唤窗入口），或本会话存在待通知的更新时才创建托盘。
-    /// 未装插件时默认"跟随窗口"，关闭即全退，托盘无存在意义。</summary>
+    /// <summary>v0.3.0 托盘按需策略：默认隐藏；仅当需要时创建。
+    /// v0.3.1 修复：托盘只在**托盘驻留**模式下常驻显示（关窗藏到托盘，必须靠托盘唤窗）；
+    /// "常驻"模式关窗即退出壳（服务保留，下次启动自动开窗），"跟随窗口"关窗全退，
+    /// 两者都不需要托盘。另有待通知的更新时临时创建（更新气泡依赖托盘）。
+    /// 未装插件时默认"跟随窗口"，托盘无存在意义。</summary>
     private static bool IsTrayWanted()
     {
         if (_pendingUpdate != PendingUpdate.None) return true;
-        return ShellLogic.IsLifetimePluginInstalled(DshHomeDir);
+        return ShellLogic.IsLifetimePluginInstalled(DshHomeDir)
+            && ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray;
     }
 
     /// <summary>创建托盘图标（按策略懒加载，幂等）；左键切换窗口，右键菜单为退出。
@@ -2980,7 +2983,6 @@ internal static class Program
     ///   深色鲸鱼看不清）
     /// - **窗口标题栏**：自绘鲸鱼图标跟随主题（深色 → 白色鲸鱼，浅色 → 深色鲸鱼），
     ///   标题栏背景用 DWM 沉浸式深色/浅色（DwmSetWindowAttribute）
-    /// - 主题状态写入 <c>theme.json</c>（插件设置页可读取显示当前情况）
     /// </summary>
     private static void ApplyThemeIcon(Form form)
     {
@@ -3001,24 +3003,6 @@ internal static class Program
         if (_trayIcon is not null)
         {
             try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
-        }
-        WriteThemeState(dark);
-    }
-
-    /// <summary>把壳当前的主题判定写入 theme.json，供插件设置页显示诊断（"现在是什么情况"）。</summary>
-    private static void WriteThemeState(bool dark)
-    {
-        try
-        {
-            var state = "{\"preference\":" + System.Text.Json.JsonSerializer.Serialize(ReadDshThemePreference())
-                + ",\"resolved\":\"" + (dark ? "dark" : "light")
-                + "\",\"at\":\"" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\"}";
-            Directory.CreateDirectory(DataDir);
-            File.WriteAllText(Path.Combine(DataDir, "theme.json"), state);
-        }
-        catch
-        {
-            // 状态写入失败不影响功能
         }
     }
 
