@@ -1,5 +1,5 @@
 ' DeepSeek Harness silent launcher (no window). Used by autostart / one-click entry.
-' Starts `dsh web` and writes log to %USERPROFILE%\.dsh-web.log
+' Starts `dsh web` and writes log to the unified log file.
 ' Prefers a globally installed `dsh`; falls back to `npx -y @deepseek-ai/dsh` so the
 ' service still starts for users who never ran `npm install -g @deepseek-ai/dsh`.
 '
@@ -9,28 +9,27 @@
 ' Port passthrough: the dsh-launcher shell sets DSH_PORT (process env var)
 ' before spawning us; children inherit it. Unset -> default 3080.
 '
-' Log file: per-port (3080 -> .dsh-web.log, others -> .dsh-web.<port>.log) so
-' parallel instances (e.g. shell-managed 9335 next to a manual 3080) do not
-' fight over one file. If the log is locked by a running service (orphaned or
-' still starting), fall back to %TEMP% so the service still starts: a dead
-' cold start is worse than a missing log.
+' v0.3.0 unified log: the shell sets DSH_LOG to DSH_HOME\dsh-launcher\dsh.log
+' (single log file shared with the shell's JSON Lines; append mode 8 - the shell
+' owns rotation, this script never truncates or rolls over).
+' If the log is locked by a running service or missing, fall back to %TEMP% so the
+' service still starts: a dead cold start is worse than a missing log.
 Set sh = CreateObject("WScript.Shell")
 port = "3080"
 Set env = sh.Environment("PROCESS")
 If env("DSH_PORT") <> "" Then port = env("DSH_PORT")
 
 Set fso = CreateObject("Scripting.FileSystemObject")
-If port = "3080" Then
-    logname = ".dsh-web.log"
-Else
-    logname = ".dsh-web." & port & ".log"
+logfile = env("DSH_LOG")
+If logfile = "" Then
+    If env("DSH_HOME") <> "" Then dshhome = env("DSH_HOME") Else dshhome = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\.dsh"
+    logfile = dshhome & "\dsh-launcher\dsh.log"
 End If
-logfile = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\" & logname
 On Error Resume Next
-Set f = fso.OpenTextFile(logfile, 2, True)
+Set f = fso.OpenTextFile(logfile, 8, True)
 If f Is Nothing Then
-    logfile = sh.ExpandEnvironmentStrings("%TEMP%") & "\" & logname
-    Set f = fso.OpenTextFile(logfile, 2, True)
+    logfile = sh.ExpandEnvironmentStrings("%TEMP%") & "\dsh.log"
+    Set f = fso.OpenTextFile(logfile, 8, True)
 End If
 On Error GoTo 0
 If Not (f Is Nothing) Then

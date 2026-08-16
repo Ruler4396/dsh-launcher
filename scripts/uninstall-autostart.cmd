@@ -1,6 +1,12 @@
 @echo off
 setlocal
 
+rem v0.3.0: optional -CleanData switch removes launcher-Owned user data
+rem (DSH_HOME\dsh-launcher\ and legacy %USERPROFILE%\.dsh-web*.log).
+rem NOT enabled by default: uninstall should not surprise-delete user data.
+set "CLEANDATA="
+for %%A in (%*) do if /I "%%~A"=="-CleanData" set "CLEANDATA=1"
+
 rem Remove autostart entries and shortcuts created by dsh-launcher
 rem (covers both the portable ZIP layout and the MSI installer).
 
@@ -59,6 +65,24 @@ rem 4) Start Menu folder created by the MSI installer (removed only when empty)
 if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\dsh-launcher" (
   rmdir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\dsh-launcher" 2>nul
   echo [OK] Removed Start Menu folder (if empty).
+)
+
+if defined CLEANDATA (
+  echo.
+  echo Cleaning launcher user data ^(v0.3.0 -CleanData^)...
+  set "DSH_HOME_P=%DSH_HOME%"
+  if not defined DSH_HOME_P set "DSH_HOME_P=%USERPROFILE%\.dsh"
+  if exist "%DSH_HOME_P%\dsh-launcher" (
+    rmdir /s /q "%DSH_HOME_P%\dsh-launcher"
+    echo [OK] Removed launcher data: "%DSH_HOME_P%\dsh-launcher"
+  ) else (
+    echo [SKIP] No launcher data dir found.
+  )
+  del /q "%USERPROFILE%\.dsh-web*.log" >nul 2>&1
+  echo [DONE] Launcher data cleaned ^(dsh ecosystem data untouched^).
+) else (
+  echo.
+  echo Tip: add -CleanData to also remove launcher user data ^(logs/config^).
 )
 
 echo.
