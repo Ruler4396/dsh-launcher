@@ -216,6 +216,23 @@ internal static class Program
     /// </summary>
     private static void Trace(string message) => Logger.Info(message);
 
+    /// <summary>
+    /// P0-2（质量治理）：崩溃留痕钩子。未捕获异常先写日志（E9001 + 异常全文）再终止。
+    /// - UI 线程异常（async void 事件处理器等）经 Application.ThreadException；
+    /// - 主线程/后台线程未捕获异常经 AppDomain.UnhandledException（钩子执行完进程即终止，
+    ///   Logger.Write 为同步 AppendAllText，写盘先于进程结束）。
+    /// 克制：只加诊断、不加恢复逻辑（恢复 = 用户重新打开）。
+    /// </summary>
+    private static void RegisterCrashHooks()
+    {
+        Application.ThreadException += (_, e) =>
+            Logger.Error("unhandled UI-thread exception: " + e.Exception, ErrorCodes.E9001,
+                new { ex = e.Exception.ToString() });
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            Logger.Error("unhandled exception: " + e.ExceptionObject, ErrorCodes.E9001,
+                new { ex = e.ExceptionObject?.ToString() });
+    }
+
     /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
     private static CoreWebView2Environment? _sharedEnvironment;
 
@@ -325,6 +342,15 @@ internal static class Program
         Logger.Init(UnifiedLogPath);
         Logger.RotateIfNeeded();
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
+
+        // P0-2（质量治理）：崩溃留痕——任何未捕获异常（UI 线程/后台线程/主线程）先写一条
+        // E9001 日志再终止，杜绝"窗口突然消失但 dsh.log 无记录"的静默崩溃。只加诊断，不加恢复。
+        RegisterCrashHooks();
+
+        // 测试钩子（DSH_TEST_CRASH=1）：验证崩溃留痕钩子生效（negative N9），仅测试使用。
+        if (Environment.GetEnvironmentVariable("DSH_TEST_CRASH") == "1")
+            throw new InvalidOperationException("test crash hook (DSH_TEST_CRASH=1)");
+
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
         CleanupStagingCache(); // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包（防无限增长）
@@ -517,6 +543,14 @@ internal static class Program
                         ClearServicePidFile();
                     }
                 }
+                // P0-1（质量治理）：用户取消 ≠ 放弃服务——后台下载/启动可能仍在进行（与取消文案一致），
+                // 但服务必须可被下次启动接管：已监听则记录 PID（此前无 pid 文件 → TryAdoptOrphanService
+                // 永远无法认领，服务成为永久无主孤儿，占住端口无人管理）。
+                else if (waitResult == "canceled" && _serviceStartedByShell && PortOpen(Target.Port))
+                {
+                    RecordServicePid();
+                    Trace("canceled: service left running; pid recorded for next-start adoption");
+                }
                 var tail = ShellLogic.ReadLogTail(logPath, 12);
                 var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
                 var body = waitResult switch
@@ -530,6 +564,7 @@ internal static class Program
                 {
                     "logerror" => ErrorCodes.E2003,
                     "timeout" => ErrorCodes.E2002,
+                    "canceled" => ErrorCodes.E2006, // P0-1：取消不是内部错误（此前误归 E9001）
                     _ => ErrorCodes.E9001,
                 };
                 // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总

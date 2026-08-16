@@ -19,6 +19,7 @@ public static class ErrorCodes
     public const string E2003 = "E2003"; // dsh 服务启动日志报错
     public const string E2004 = "E2004"; // dsh 服务不可用（端口无 HTTP 响应）
     public const string E2005 = "E2005"; // 清理僵尸/异常孤儿服务
+    public const string E2006 = "E2006"; // 启动已取消（服务可能仍在后台下载/启动）
     public const string E2011 = "E2011"; // 插件缺失，serviceLifetime 配置已忽略并抹除
     public const string E4001 = "E4001"; // dsh 更新下载（npm pack）失败
     public const string E4002 = "E4002"; // dsh 延迟更新应用失败
@@ -39,6 +40,7 @@ public static class ErrorCodes
         E2003 => "dsh 服务启动日志出现错误（npm/权限/依赖问题）。",
         E2004 => "dsh 服务不可用（端口无 HTTP 响应）。",
         E2005 => "检测到上次崩溃遗留的异常服务进程，已清理。",
+        E2006 => "启动已取消。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
         E2011 => "dsh-launcher-lifetime 插件已卸载，已忽略残留的常驻配置并按默认模式运行。",
         E4001 => "dsh 新版本下载失败。",
         E4002 => "dsh 延迟更新应用失败，将继续使用当前版本。",

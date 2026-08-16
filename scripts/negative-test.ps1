@@ -22,6 +22,7 @@ N5  --diagnose 脱敏：伪造含真实用户名/~/USERPROFILE 的日志 → zip
 N6  单实例：首实例卡住时二次启动在限定时间内自行退出（不重复开窗）
 N7  settings.json 非法 JSON → 启动不崩溃、无 E2011 误报（无 serviceLifetime 键）
 N8  日志被服务锁定（cmd >> 重定向独占写）→ --diagnose 仍共享读导出成功（防 22 字节空 zip 回归）
+N9  未处理异常（DSH_TEST_CRASH 测试钩子）→ 崩溃留痕钩子写 E9001 日志后再退出（防静默崩溃零留痕）
 
 .EXAMPLE
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/negative-test.ps1
@@ -262,6 +263,13 @@ Set-Content (Join-Path $r.Home "dsh-launcher\settings.json") "{broken json" -Enc
 $r2 = Start-ShellExe "n7b" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 10
 Assert-Neg (-not $r2.Alive) "N7: 非法 settings.json 不导致崩溃（进程正常退出）"
 Assert-Neg ((Get-LogText $r2.Home) -notmatch "E2011") "N7: 无 serviceLifetime 键时不触发 E2011（精确判定，无子串误报）"
+
+Write-Host "`n=== N9: 未处理异常 → 崩溃留痕钩子写 E9001 日志（P0-2） ===" -ForegroundColor Cyan
+# 回归断言：任何未捕获异常必须先落 E9001 日志再终止——此前无钩子，崩溃零留痕无法诊断。
+$r = Start-ShellExe "n9" @{ DSH_TEST_CRASH = "1" } 5
+Assert-Neg (-not $r.Alive) "N9: 崩溃进程自行退出（未挂起）"
+Assert-Neg ((Get-LogText $r.Home) -match "E9001") "N9: 崩溃留痕钩子写入 E9001 日志"
+Assert-Neg ((Get-LogText $r.Home) -match "test crash hook") "N9: 日志含异常上下文（可定位）"
 
 # 清理隔离区 + 测试进程（防弹窗残留：超时/异常路径也要保证不遗留 DshWeb 测试实例）
 try {
