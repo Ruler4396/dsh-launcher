@@ -126,10 +126,14 @@ CI 每次 push/PR 也会自动跑 `dotnet test`。
 
 ```
 dsh-launcher/
-├── README.md / README.en.md   # 中英文用户文档
+├── README.md                   # 用户文档（中文主入口；英文版 docs/README.en.md）
 ├── CHANGELOG.md
 ├── LICENSE
 ├── assets/                    # README 截图（浅色/深色）
+├── .github/                   # 社区治理与 CI
+│   ├── CODE_OF_CONDUCT.md / CONTRIBUTING.md / SECURITY.md
+│   ├── ISSUE_TEMPLATE/ + PULL_REQUEST_TEMPLATE.md
+│   └── workflows/build.yml
 ├── docs/DETAILS.md            # 本文件：实现细节
 ├── installer/                 # MSI 安装器
 │   ├── product.wxs            # WiX v5 源：per-machine MSI（自启/快捷方式/目录选择向导）
