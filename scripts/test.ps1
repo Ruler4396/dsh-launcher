@@ -47,7 +47,7 @@ Assert-True ($uninstall -match 'Start Menu\\Programs\\Startup') "uninstall 删�
 Assert-True ($uninstall -match 'dsh-autostart\.vbs') "uninstall 同时清理旧版 dsh-autostart.vbs"
 Assert-True ($uninstall -match 'DshWeb\*\.lnk') "uninstall 删除桌面快捷方式"
 Assert-True ($uninstall -match '-CleanData') "uninstall 提供显式 -CleanData 数据清理开关"
-Assert-True ($uninstall -match 'rmdir /s /q "%DSH_HOME_P%\\dsh-launcher"') "uninstall -CleanData 只清 DSH_HOME\dsh-launcher"
+Assert-True ($uninstall -match 'rmdir /s /q "!DSH_HOME_P!\\dsh-launcher"') "uninstall -CleanData 只清 DSH_HOME\dsh-launcher（延迟扩展）"
 Assert-True ($uninstall -match '!DSH_HOME_P!') "uninstall -CleanData 使用延迟扩展（防解析期空值误删盘根，历史事故回归断言）"
 Assert-True ($uninstall -match 'EnableDelayedExpansion') "uninstall 启用延迟扩展"
 
