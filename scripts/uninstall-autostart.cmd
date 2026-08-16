@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 rem v0.3.0: optional -CleanData switch removes launcher-Owned user data
 rem (DSH_HOME\dsh-launcher\ and legacy %USERPROFILE%\.dsh-web*.log).
@@ -64,17 +64,21 @@ for %%D in ("%USERPROFILE%\Desktop" "%USERPROFILE%\OneDrive\Desktop") do (
 rem 4) Start Menu folder created by the MSI installer (removed only when empty)
 if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\dsh-launcher" (
   rmdir "%APPDATA%\Microsoft\Windows\Start Menu\Programs\dsh-launcher" 2>nul
-  echo [OK] Removed Start Menu folder (if empty).
+  rem 括号块内的 echo 文本不能含未转义括号对，cmd 解析器会判语法错误并中止其后所有行
+  echo [OK] Removed Start Menu folder if empty.
 )
 
+rem -CleanData 块内对 %DSH_HOME_P% 必须用延迟扩展 !DSH_HOME_P!：%VAR% 在括号块解析期
+rem 就展开，而 DSH_HOME_P 是在块内才 set 的——解析期展开会得到空串，导致
+rem `rmdir /s /q "\dsh-launcher"`（盘根相对路径）误删当前盘根的 dsh-launcher 目录。
 if defined CLEANDATA (
   echo.
   echo Cleaning launcher user data ^(v0.3.0 -CleanData^)...
   set "DSH_HOME_P=%DSH_HOME%"
   if not defined DSH_HOME_P set "DSH_HOME_P=%USERPROFILE%\.dsh"
-  if exist "%DSH_HOME_P%\dsh-launcher" (
-    rmdir /s /q "%DSH_HOME_P%\dsh-launcher"
-    echo [OK] Removed launcher data: "%DSH_HOME_P%\dsh-launcher"
+  if exist "!DSH_HOME_P!\dsh-launcher" (
+    rmdir /s /q "!DSH_HOME_P!\dsh-launcher"
+    echo [OK] Removed launcher data: "!DSH_HOME_P!\dsh-launcher"
   ) else (
     echo [SKIP] No launcher data dir found.
   )
