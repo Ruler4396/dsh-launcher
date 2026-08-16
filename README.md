@@ -1,7 +1,9 @@
 # dsh-launcher
 
-[English](README.en.md) · [简体中文](README.md)
+[English](docs/README.en.md) · [简体中文](README.md)
 
+[![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
 [![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
 
