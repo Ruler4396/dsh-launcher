@@ -1,14 +1,14 @@
 # dsh-launcher
 
-<p align="center">
-[简体中文](../README.md) · [English](README.en.md)
-</p>
+<div align="center">
 
-<p align="center">
+[简体中文](../README.md) · [English](README.en.md)
+
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
-</p>
+
+</div>
 
 > A lightweight Windows launcher for DeepSeek Harness. Double-click to run — no command line needed.
 
@@ -64,7 +64,9 @@ Independent third-party tool, not affiliated with DeepSeek / DeepSeek AI. The wi
 
 ## Friendly Links
 
-<p align="center">
+<div align="center">
+
 [![dsh.so](https://www.dsh.so/badges/dsh-launcher.svg)](https://www.dsh.so/artifact/dsh-launcher/)
 [![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
-</p>
+
+</div>
