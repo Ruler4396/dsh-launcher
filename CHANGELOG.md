@@ -2,8 +2,9 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.3.1] - Unreleased
+## [0.3.1] - 2026-08-16
 
+> **重要更新（SECURITY 标记）**：本轮包含多项安全与稳健性修复——诊断包脱敏与共享读、WebView2 数据目录互锁防护、更新降噪与下载缓存管理、便携环境自检、窗口记忆与镜像回退修复；建议所有旧版本用户更新。
 > v0.3.0 规划中 P2 储备的六项全部落地（commit 27881f8，单测 140/140）：WebView2 缺失自动修复、MSI 安装时 winget 自动装 .NET、SIGINT 优雅终止、Node 默认 LTS 升级、日志超长告警、镜像路由纯函数化。
 
 ### 新增
