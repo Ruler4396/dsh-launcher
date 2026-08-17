@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.3] - 2026-08-17
+
+> 修复：全屏窗口消失（#15）、最大化记忆丢失、VBScript 缺少对象弹窗。
+
+### 修复
+
+- **全屏窗口消失（#15 候选根因）**：`InitWebViewAsync` 新增 `ContainsFullScreenElementChanged` 事件处理——全屏时隐藏自绘标题栏、WebView2 填满客户区，退出全屏时恢复。此前无此处理，WebView2 内部全屏状态变化后页面可能渲染异常。
+- **最大化状态未持久化**：`WindowStateStore.WindowState` 新增 `IsMaximized` 字段，`SaveWindowState` 保存最大化标志，启动时恢复。
+- **最大化时窗口超出工作区**：`WM_NCCALCSIZE` 中最大化分支将客户区钳制到工作区范围，消除 `WS_CAPTION|WS_THICKFRAME` 不可见边框（8px）导致的窗口超出可视区域问题（Windows 25H2 上可能更明显）。
+- **VBScript 缺少对象弹窗（800A01A8）**：`start-dsh.vbs` 显式 `Set f = Nothing` 初始化变量，避免 `OpenTextFile` 失败后 `f` 为 `Empty` 导致 `Is Nothing` 引发"缺少对象"错误——此前 `On Error Resume Next` 静默吞掉该错误使回退分支不执行，最终弹窗报错。
+
 ## [0.3.2] - 2026-08-16
 
 > 普通更新：修复任务栏"再点一次最小化"失效，并完成稳定性 / 诊断 / 契约 / 测试收敛质量治理批次（无新增用户可见功能，非安全更新）。
