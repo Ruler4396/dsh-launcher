@@ -3,14 +3,17 @@ using System.Text.Json;
 namespace DshWeb;
 
 /// <summary>
-/// 主窗口位置/大小持久化（DSH_HOME\dsh-launcher\window-state.json，v0.3.0）。
+/// 主窗口位置/大小/最大化状态持久化（DSH_HOME\dsh-launcher\window-state.json，v0.3.0）。
 /// 关闭时写回最近一次 RestoreBounds（位置为物理像素，尺寸存 96dpi 逻辑值便于跨 DPI 恢复）；
 /// 启动时经 ShellLogic.RestoreWindowPosition 多显示器校验后恢复（越界 → 主屏居中）。
+/// v0.3.3：新增 IsMaximized 字段，修复最大化后关闭、重启后仅恢复 Normal 的问题。
 /// 克制：只存最近一次关闭状态，无历史、无热插拔实时响应。
 /// </summary>
 public static class WindowStateStore
 {
-    public sealed record WindowState(int X, int Y, int WidthLogical, int HeightLogical);
+    public sealed record WindowState(
+        int X, int Y, int WidthLogical, int HeightLogical,
+        bool IsMaximized = false);
 
     private static string _path = "";
 
