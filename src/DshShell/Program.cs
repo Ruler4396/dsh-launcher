@@ -710,6 +710,12 @@ internal static class Program
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(x, y);
                 Trace($"window restored to ({x},{y}) size={form.Width}x{form.Height}");
+                // v0.3.3：恢复最大化状态（IsMaximized 字段）
+                if (savedWindow.IsMaximized)
+                {
+                    form.WindowState = FormWindowState.Maximized;
+                    Trace("window restored to maximized state");
+                }
             }
 
             // WebView2 user data goes to %LOCALAPPDATA%\DshWeb to keep the app dir clean
@@ -940,7 +946,8 @@ internal static class Program
     /// <summary>v0.3.0 主窗口位置/大小持久化（多显示器记忆）：位置与尺寸存 96dpi 逻辑值（跨 DPI 恢复时按当前 DPI 缩放）。
     /// v0.3.1 修复：Normal 状态必须用 Bounds——WinForms 的 RestoreBounds 只在窗口
     /// 最小化/最大化时更新（Normal 时恒为初始字段值 (-1,-1,初始尺寸)），此前用
-    /// RestoreBounds 导致位置记忆从未生效（每次重启回默认位置/大小）。</summary>
+    /// RestoreBounds 导致位置记忆从未生效（每次重启回默认位置/大小）。
+    /// v0.3.3 新增：保存 IsMaximized 标志，最大化后关闭、重启时恢复最大化状态。</summary>
     private static void SaveWindowState(Form form)
     {
         try
@@ -953,7 +960,8 @@ internal static class Program
             WindowStateStore.Save(new WindowStateStore.WindowState(
                 rb.X, rb.Y,
                 (int)Math.Round(rb.Width / scale),
-                (int)Math.Round(rb.Height / scale)));
+                (int)Math.Round(rb.Height / scale),
+                form.WindowState == FormWindowState.Maximized));
         }
         catch (Exception ex)
         {
@@ -2454,6 +2462,46 @@ internal static class Program
                 }
             }
         };
+
+        // 全屏元素变化（网页 Fullscreen API）：隐藏/显示自绘标题栏。
+        // 无此处理时，WebView2 内部全屏状态变化后，页面内容可能渲染异常
+        //（v0.3.3 issue #15 候选根因）。
+        // 注意：ContainsFullScreenElement 是 WebView2 内部状态，不改变宿主窗口的 WindowState。
+        web.CoreWebView2.ContainsFullScreenElementChanged += (_, _) =>
+        {
+            var isFullScreen = web.CoreWebView2.ContainsFullScreenElement;
+            Trace($"webview fullscreen element changed: isFullScreen={isFullScreen}");
+            try
+            {
+                var parentForm = web.FindForm();
+                if (parentForm is DshShellForm dshForm && dshForm.TitleBar is not null)
+                {
+                    var titleHeight = (int)Math.Round(32 * parentForm.DeviceDpi / 96f);
+                    if (isFullScreen)
+                    {
+                        // 进入全屏：隐藏标题栏，WebView2 填满整个客户区
+                        dshForm.TitleBar.Visible = false;
+                        web.Bounds = new Rectangle(0, 0,
+                            parentForm.ClientSize.Width, parentForm.ClientSize.Height);
+                    }
+                    else
+                    {
+                        // 退出全屏：恢复标题栏
+                        dshForm.TitleBar.Visible = true;
+                        dshForm.TitleBar.Bounds = new Rectangle(1, 1,
+                            parentForm.ClientSize.Width - 2, titleHeight);
+                        web.Bounds = new Rectangle(1, 1 + titleHeight,
+                            parentForm.ClientSize.Width - 2,
+                            parentForm.ClientSize.Height - titleHeight - 2);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // 全屏处理失败不影响主功能
+                Trace($"fullscreen element change handler error: {ex.Message}");
+            }
+        };
     }
 
     /// 插件内部弹窗用的轻量窗口（与主窗口共享 WebView2 用户数据，保持登录态/会话）。
@@ -2920,6 +2968,18 @@ internal static class Program
         private struct POINT { public int X, Y; }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NCCALCSIZE_PARAMS
+        {
+            public RECT rgrc0;
+            public RECT rgrc1;
+            public RECT rgrc2;
+            public IntPtr lppos;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct MINMAXINFO
         {
             public POINT ptReserved;
@@ -2955,6 +3015,22 @@ internal static class Program
                     // 标题栏顶下来、四周出现原生边框。wParam=FALSE（初次计算）走默认。
                     if (m.WParam != IntPtr.Zero)
                     {
+                        // v0.3.3：最大化时调整客户区矩形，使窗口不超出工作区边界。
+                        // WS_CAPTION|WS_THICKFRAME 会让系统在窗口四周加上 8px 不可见边框，
+                        // 此前的裸 IntPtr.Zero 返回会让客户区包含这些不可见区域，导致窗口
+                        // 内容超出工作区（左右各多 8px，上下各多 8px）。Windows 25H2 上
+                        // 此问题可能更明显，表现为页面内容被裁剪或渲染异常。
+                        if (WindowState == FormWindowState.Maximized)
+                        {
+                            var ncParams = Marshal.PtrToStructure<NCCALCSIZE_PARAMS>(m.LParam);
+                            var wa = Screen.FromHandle(Handle).WorkingArea;
+                            // 将客户区钳制到工作区范围，消除不可见边框的影响
+                            ncParams.rgrc0.Left = Math.Max(ncParams.rgrc0.Left, wa.Left);
+                            ncParams.rgrc0.Top = Math.Max(ncParams.rgrc0.Top, wa.Top);
+                            ncParams.rgrc0.Right = Math.Min(ncParams.rgrc0.Right, wa.Right);
+                            ncParams.rgrc0.Bottom = Math.Min(ncParams.rgrc0.Bottom, wa.Bottom);
+                            Marshal.StructureToPtr(ncParams, m.LParam, false);
+                        }
                         m.Result = IntPtr.Zero;
                         return;
                     }
