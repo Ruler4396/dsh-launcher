@@ -25,9 +25,15 @@ If logfile = "" Then
     If env("DSH_HOME") <> "" Then dshhome = env("DSH_HOME") Else dshhome = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\.dsh"
     logfile = dshhome & "\dsh-launcher\dsh.log"
 End If
-' 显式初始化为 Nothing，避免 OpenTextFile 失败后 f 是 Empty（非 Nothing），
-' 导致后续 f Is Nothing 因"缺少对象"(800A01A8) 报错——On Error Resume Next
-' 会静默吞掉该错误并使回退分支不执行，最终 On Error GoTo 0 后再次报错弹窗。
+' 确保父目录存在（创建目录 + 防御性打开文件）。OpenTextFile 的第三个参数 True
+' 只创建文件*不创建目录*，目录不存在时直接失败。此前无此处理导致：
+' 1) 旧版 autostart 直接拉起本脚本时 %USERPROFILE%\.dsh\dsh-launcher\ 尚未创建，
+'    失败后 f 为 Empty（非 Nothing），f Is Nothing 引发"缺少对象"(800A01A8) 弹窗；
+' 2) On Error Resume Next 静默吞掉该错误使回退到 %TEMP% 的分支不执行。
+' 先创建目录，再显式初始化 f 为 Nothing，确保无论哪种失败路径结果都正确。
+On Error Resume Next
+fso.CreateFolder fso.GetParentFolderName(logfile)
+On Error GoTo 0
 Set f = Nothing
 On Error Resume Next
 Set f = fso.OpenTextFile(logfile, 8, True)

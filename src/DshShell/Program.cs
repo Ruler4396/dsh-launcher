@@ -1422,8 +1422,12 @@ internal static class Program
             // 忽略
         }
 
-        // 清理孤儿自启：HKCU Run 的 dsh-launcher 指向的 DshWeb.exe / start-dsh.vbs 已不存在
-        //（per-machine 提权卸载跳过 per-user 组件时残留），避免下次登录白启一个死项。
+        // 清理孤儿自启：HKCU Run 的 dsh-launcher 条目。
+        // 1) 指向 start-dsh.vbs 的旧版条目（0.2.x）一律删除——新版 autostart 应指向 DshWeb.exe，
+        //    且 VBS 直接拉起时 %USERPROFILE%\.dsh\dsh-launcher\ 目录可能尚未创建，导致 800A01A8 弹窗。
+        //    若用户在新版勾选了 autostart，EnsureAutoStartRequested 会重写正确条目。
+        // 2) 指向 DshWeb.exe 但文件已不存在的（per-machine 提权卸载跳过 per-user 组件时残留），
+        //    避免下次登录白启一个死项。
         try
         {
             using var runKey = Registry.CurrentUser.OpenSubKey(
@@ -1433,7 +1437,10 @@ internal static class Program
                 var m = Regex.Match(runValue, "\"([^\"]+(?:start-dsh\\.vbs|DshWeb\\.exe))\"",
                     RegexOptions.IgnoreCase);
                 var targetPath = m.Success ? m.Groups[1].Value : null;
-                if (targetPath is null || !File.Exists(targetPath))
+                // start-dsh.vbs 条目一律删除（旧版残留）；DshWeb.exe 条目仅文件不存在时删除
+                if (targetPath is null ||
+                    targetPath.EndsWith("start-dsh.vbs", StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(targetPath))
                     runKey.DeleteValue("dsh-launcher", false);
             }
         }
