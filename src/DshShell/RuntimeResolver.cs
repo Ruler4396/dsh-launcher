@@ -147,9 +147,14 @@ public static class RuntimeResolver
             };
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return false;
-            var outText = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit(3000);
-            return IsUsableNodeVersion(outText);
+            var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止子进程挂死时阻塞
+            if (!p.WaitForExit(3000))
+            {
+                // 超时：杀进程防泄漏（损坏的安装包弹窗/卡 IO 会让 node --version 挂死）
+                try { p.Kill(); p.WaitForExit(); } catch { }
+                return false;
+            }
+            return IsUsableNodeVersion(readTask.Result.Trim());
         }
         catch { return false; }
     }
@@ -241,9 +246,28 @@ public static class RuntimeResolver
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
-            var sums = await http.GetStringAsync(baseUrl + "/SHASUMS256.txt");
+            string? sums = null;
+            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
+            {
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
+                // 校验和优先从官方 nodejs.org 拉取，与 zip 下载源（可能是第三方镜像）解耦——
+                // 避免"镜像被投毒则 zip 与 SHASUMS256 一起被换"的供应链防护失效（E1004）。
+                // 官方拉取失败再回退到镜像（保证可用性，但默认走官方保证可信）。
+                foreach (var sumsUrl in new[]
+                {
+                    $"https://nodejs.org/dist/{version}/SHASUMS256.txt",
+                    baseUrl + "/SHASUMS256.txt",
+                })
+                {
+                    try
+                    {
+                        var s = await http.GetStringAsync(sumsUrl);
+                        if (!string.IsNullOrWhiteSpace(s)) { sums = s; break; }
+                    }
+                    catch { /* 尝试下一个源 */ }
+                }
+            }
+            if (string.IsNullOrWhiteSpace(sums)) return false;
             var expected = sums.Split('\n')
                 .FirstOrDefault(l => l.TrimEnd().EndsWith($"node-{version}-win-x64.zip", StringComparison.OrdinalIgnoreCase))
                 ?.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
@@ -323,7 +347,7 @@ public static class RuntimeResolver
                 writer.WriteString("lastNodeMirror", baseUrl);
                 writer.WriteEndObject();
             }
-            File.WriteAllText(RuntimeStatePath, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
+            ShellLogic.AtomicWrite(RuntimeStatePath, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
         }
         catch { /* 记录失败忽略 */ }
     }

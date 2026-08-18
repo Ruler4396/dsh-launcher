@@ -63,9 +63,10 @@ public static class ShellLogic
 
     /// <summary>
     /// 解析目标服务地址与端口。空值/非法值/非 http(s) 一律回退默认 3080。
-    /// 供 DSH_WEB_URL 环境变量覆盖目标地址（免重建）时使用。
+    /// 供 DSH_WEB_URL / DSH_WEB_PORT 环境变量覆盖目标地址/端口（免重建）时使用。
+    /// 优先级：DSH_WEB_URL（含端口）→ DSH_WEB_PORT → 默认 3080。
     /// </summary>
-    internal static (string Url, int Port) ResolveTarget(string? envUrl)
+    internal static (string Url, int Port) ResolveTarget(string? envUrl, string? envPort = null)
     {
         if (!string.IsNullOrWhiteSpace(envUrl))
         {
@@ -80,6 +81,9 @@ public static class ShellLogic
                 // 非法输入回退默认
             }
         }
+        if (!string.IsNullOrWhiteSpace(envPort) &&
+            int.TryParse(envPort, out var port) && port is > 0 and < 65536)
+            return ($"http://127.0.0.1:{port}", port);
         return ("http://127.0.0.1:3080", 3080);
     }
 
@@ -146,6 +150,26 @@ public static class ShellLogic
     /// 从 WM_NCHITTEST 的 64 位 lParam 拆出屏幕坐标：低 16 位有符号 = X，高 16 位有符号 = Y。
     /// 左侧/上方副屏为负坐标，直接 (int)lParam 会抛 OverflowException（B1 修复）。
     /// </summary>
+    /// <summary>
+    /// 原子写文本：先写同目录临时文件，再 File.Move 覆盖目标——避免关窗/退出瞬间断电或崩溃
+    /// 留下半截 JSON（窗口位置记忆、暂存更新、镜像记忆等）。调用方保证目录可写。
+    /// </summary>
+    internal static void AtomicWrite(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(tmp, content);
+            File.Move(tmp, path, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
+    }
+
     internal static (short X, short Y) SplitLParam(long lParam)
         => ((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));
 
@@ -198,7 +222,9 @@ public static class ShellLogic
             Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
             Registry.CurrentUser.OpenSubKey(@"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
         };
+        // 根键句柄逐个释放（类为 IDisposable），避免"清理旧版本"路径反复触发时泄漏句柄
         foreach (var root in roots)
+        using (root as IDisposable) // using var root 不可行（元素可能 null），用 null 安全释放
         {
             if (root is null) continue;
             try

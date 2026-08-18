@@ -27,8 +27,7 @@ public static class StagedUpdate
         if (_pendingPath.Length == 0 || string.IsNullOrWhiteSpace(version)) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_pendingPath)!);
-            File.WriteAllText(_pendingPath, JsonSerializer.Serialize(new
+            ShellLogic.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
             {
                 version,
                 at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -46,7 +45,7 @@ public static class StagedUpdate
         {
             var (version, failCount) = ReadPending();
             if (string.IsNullOrWhiteSpace(version)) return;
-            File.WriteAllText(_pendingPath, JsonSerializer.Serialize(new
+            ShellLogic.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
             {
                 version,
                 at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
