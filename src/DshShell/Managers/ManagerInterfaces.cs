@@ -1,3 +1,5 @@
+using Microsoft.Web.WebView2.WinForms;
+
 namespace DshWeb.Managers;
 
 /// <summary>运行时(Node)管理：解析/下载/校验便携 Node，注入 PATH。剥离自 RuntimeResolver，改为可注入。</summary>
@@ -28,20 +30,29 @@ public interface IServiceManager
     Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default);
 }
 
-/// <summary>WebView2 初始化/崩溃恢复/权限（占位接口，后续从 InitWebViewAsync 迁移）。</summary>
+/// <summary>WebView2 初始化/崩溃恢复/权限，并管理与主窗的绑定。</summary>
 public interface IWebViewManager
 {
-    // Task<WebView2> CreateAsync(CoreWebView2Environment env, string userDataFolder);  // 后续迁移
+    /// <summary>初始化 WebView2（设置/权限/下载/弹窗/崩溃自愈）并绑定到宿主控件。</summary>
+    Task InitializeAsync(WebView2 web, string userDataFolder);
 }
 
-/// <summary>主窗口/自定义边框/DPI/Win32 消息（占位接口，后续迁移 DshShellForm）。</summary>
+/// <summary>主窗口/自定义边框/DPI/Win32 消息与主题。</summary>
 public interface IWindowManager
 {
-    // Form CreateMainWindow(WebView2 web);  // 后续迁移
+    /// <summary>创建同源内部弹窗（轻量壳窗口，保留会话）。</summary>
+    (Form Form, WebView2 Web) CreatePopup();
+    /// <summary>给无边框窗口加 DWM 阴影。</summary>
+    void ApplyShadow(IntPtr hwnd);
+    /// <summary>解析当前的深色/浅色主题。</summary>
+    bool ResolveDarkMode();
 }
 
-/// <summary>托盘图标/菜单（占位接口，后续迁移）。</summary>
+/// <summary>托盘图标/菜单与主题监听。</summary>
 public interface ITrayManager
 {
-    // void EnsureTray(Form owner, ...);  // 后续迁移
+    /// <summary>确保托盘图标存在（按需显示）。</summary>
+    void EnsureTray(Form owner, bool force = false);
+    /// <summary>注册主题监听（系统/文件变化 → 即时切换）。</summary>
+    void RegisterThemeWatcher(Form form);
 }

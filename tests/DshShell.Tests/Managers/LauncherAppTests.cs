@@ -26,6 +26,25 @@ public class LauncherAppTests
     }
 
     [Fact]
+    public void Composition_AssemblesAllFiveManagers()
+    {
+        var app = new LauncherApp();
+        Assert.NotNull(app.Runtime);
+        Assert.NotNull(app.Service);
+        Assert.NotNull(app.WebView);
+        Assert.NotNull(app.Window);
+        Assert.NotNull(app.Tray);
+    }
+
+    [Fact]
+    public void WindowManager_DelegateSeamsWork()
+    {
+        // 委托现有实现（零行为变更）：弹窗创建需 UI 上下文，这里只验证可调用表面
+        var m = new DshWeb.Managers.WindowManager();
+        Assert.IsType<bool>(m.ResolveDarkMode());
+    }
+
+    [Fact]
     public async Task ServiceReady_DrivesToRunning()
     {
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
