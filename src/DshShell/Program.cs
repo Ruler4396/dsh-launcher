@@ -15,6 +15,11 @@ internal static class Program
     private const string DefaultUrl = "http://127.0.0.1:3080";
     private const int SW_RESTORE = 9;
 
+    /// <summary>F11 加速键判定（纯函数，可单测）：虚拟键码为 F11(0x7A) 且为按下事件。
+    /// 只认 KeyDown，避免 KeyDown+KeyUp 各触发一次导致"按一下切两次"。</summary>
+    internal static bool IsF11KeyDown(uint virtualKey, CoreWebView2KeyEventKind kind)
+        => virtualKey == 0x7A && kind == CoreWebView2KeyEventKind.KeyDown;
+
     /// 目标服务地址/端口：默认 3080。优先级：DSH_WEB_URL（视为外部托管，壳不拉起服务）→
     /// DSH_WEB_PORT（壳按此端口托管拉起服务，3080 被占用时可用）→ 默认 3080。
     private static readonly (string Url, int Port) Target = ResolveTarget();
@@ -602,6 +607,8 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.None,
             Icon = TrayWhaleIcon ?? SystemIcons.Application // 系统任务栏图标固定白色鲸鱼
         };
+        // F11 全屏：由 InitWebViewAsync 里的 CoreWebView2Controller.AcceleratorKeyPressed 接管
+        //（物理按键进入 WebView2 浏览器进程，消息过滤器/KeyDown 都拦不到）。
         var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
         {
@@ -618,6 +625,7 @@ internal static class Program
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
         };
         form.Controls.Add(web);
+        form.MainWebView2 = web;
         _mainWeb = web;
 
         // 无边框窗口阴影（DWM NCRENDERING_POLICY；带 WebView2 时系统阴影实际不呈现，边框替代质感）
@@ -627,10 +635,8 @@ internal static class Program
         form.DpiChanged += (_, _) =>
         {
             var scale = form.DeviceDpi / 96f;
-            var h = (int)Math.Round(32 * scale);
             form.TitleBar.Rescale(scale);
-            form.TitleBar.Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, h);
-            web.Bounds = new Rectangle(1, 1 + h, form.ClientSize.Width - 2, form.ClientSize.Height - h - 2);
+            form.LayoutChrome();
         };
 
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
@@ -2326,6 +2332,28 @@ internal static class Program
         settings.IsGeneralAutofillEnabled = false;       // 关闭表单自动填充，减少后台开销
         settings.IsPasswordAutosaveEnabled = false;      // 不保存密码
 
+        // F11 全屏：物理按键进入 WebView2 浏览器进程，WinForms 消息队列收不到
+        //（KeyDown/ProcessCmdKey/消息过滤器均无效）。必须经 CoreWebView2Controller
+        // 的 AcceleratorKeyPressed 在宿主层提前吃掉按键（v0.3.4）。
+        // 注意：只处理 KeyDown，否则 KeyDown+KeyUp 会各触发一次切换（按一下切两次）。
+        // WinForms 控件未公开 Controller，经反射取私有稳定字段订阅（失败则 F11 退回
+        // 默认行为，不影响其余功能）。
+        var controllerField = typeof(WebView2).GetField("_coreWebView2Controller",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (controllerField?.GetValue(web) is CoreWebView2Controller controller)
+        {
+            controller.AcceleratorKeyPressed += (_, e) =>
+            {
+                if (IsF11KeyDown(e.VirtualKey, e.KeyEventKind))
+                {
+                    e.Handled = true; // 吃掉 F11，阻止 WebView2 默认全屏行为
+                    var parentForm = web.FindForm();
+                    if (parentForm is DshShellForm dshForm)
+                        dshForm.ToggleFullscreen();
+                }
+            };
+        }
+
         // 权限：自动放行插件/DSH 依赖的能力（见 ShellLogic.IsAutoGrantedPermission），
         // 其余保持默认拒绝。麦克风/摄像头默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
         web.CoreWebView2.PermissionRequested += (_, e) =>
@@ -2467,51 +2495,6 @@ internal static class Program
                         try { web.CoreWebView2.Reload(); } catch { }
                     }
                 }
-            }
-        };
-
-        // 全屏元素变化（网页 Fullscreen API）：最大化窗口并隐藏自绘标题栏。
-        // 无此处理时，WebView2 内部全屏状态变化后，页面内容可能渲染异常
-        //（v0.3.3 issue #15 候选根因）。
-        // 注意：全屏时最大化窗口，退出时恢复之前的状态（Normal/Maximized）。
-        web.CoreWebView2.ContainsFullScreenElementChanged += (_, _) =>
-        {
-            var isFullScreen = web.CoreWebView2.ContainsFullScreenElement;
-            Trace($"webview fullscreen element changed: isFullScreen={isFullScreen}");
-            try
-            {
-                var parentForm = web.FindForm();
-                if (parentForm is DshShellForm dshForm && dshForm.TitleBar is not null)
-                {
-                    var titleHeight = (int)Math.Round(32 * parentForm.DeviceDpi / 96f);
-                    if (isFullScreen)
-                    {
-                        // 进入全屏：最大化窗口、隐藏标题栏、WebView2 填满整个客户区
-                        // 先最大化再隐藏标题栏，确保窗口状态正确
-                        parentForm.WindowState = FormWindowState.Maximized;
-                        dshForm.TitleBar.Visible = false;
-                        web.Bounds = new Rectangle(0, 0,
-                            parentForm.ClientSize.Width, parentForm.ClientSize.Height);
-                    }
-                    else
-                    {
-                        // 退出全屏：恢复标题栏；窗口从最大化恢复到 Normal（用 RestoreBounds）
-                        dshForm.TitleBar.Visible = true;
-                        dshForm.TitleBar.Bounds = new Rectangle(1, 1,
-                            parentForm.ClientSize.Width - 2, titleHeight);
-                        web.Bounds = new Rectangle(1, 1 + titleHeight,
-                            parentForm.ClientSize.Width - 2,
-                            parentForm.ClientSize.Height - titleHeight - 2);
-                        // 退出全屏时从最大化恢复到 Normal
-                        if (parentForm.WindowState == FormWindowState.Maximized)
-                            parentForm.WindowState = FormWindowState.Normal;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                // 全屏处理失败不影响主功能
-                Trace($"fullscreen element change handler error: {ex.Message}");
             }
         };
     }
@@ -2959,6 +2942,11 @@ internal static class Program
     private sealed class DshShellForm : Form
     {
         internal CustomTitleBar? TitleBar;
+        internal WebView2? MainWebView2;
+
+        /// <summary>F11 全屏会话是否激活（进入时最大化+隐藏标题栏；退出时恢复）。</summary>
+        private bool _fullscreenActive;
+        private FormWindowState _preFullscreenState = FormWindowState.Normal;
 
         private const int WM_GETMINMAXINFO = 0x0024;
         private const int WM_NCHITTEST = 0x0084;
@@ -2975,6 +2963,11 @@ internal static class Program
         private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
         private const int ResizeEdge = 8;
+        private const int SM_CXSIZEFRAME = 32;
+        private const int SM_CYSIZEFRAME = 33;
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int nIndex);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X, Y; }
@@ -3017,37 +3010,75 @@ internal static class Program
             }
         }
 
+        internal void ToggleFullscreen()
+        {
+            if (TitleBar is null || MainWebView2 is null) return;
+            if (_fullscreenActive)
+            {
+                // 退出全屏：恢复标题栏与布局，恢复进入全屏前的窗口状态
+                _fullscreenActive = false;
+                TitleBar.Visible = true;
+                LayoutChrome();
+                WindowState = _preFullscreenState;
+                Program.Trace($"ToggleFullscreen: exited fullscreen, restore WindowState={_preFullscreenState}");
+            }
+            else
+            {
+                // 进入全屏：记录先前状态，最大化窗口，隐藏标题栏，WebView2 填满客户区
+                _fullscreenActive = true;
+                _preFullscreenState = WindowState;
+                WindowState = FormWindowState.Maximized;
+                TitleBar.Visible = false;
+                MainWebView2.Bounds = new Rectangle(0, 0,
+                    ClientSize.Width, ClientSize.Height);
+                Program.Trace($"ToggleFullscreen: entered fullscreen (prev={_preFullscreenState})");
+            }
+        }
+
+        /// <summary>
+        /// 统一重算自绘标题栏与 WebView2 的客户区布局（1px 边框内缩；
+        /// 全屏时无边框、标题栏隐藏、WebView2 铺满）。供 DpiChanged / OnResize 复用，
+        /// 避免各路径手写布局不一致导致标题栏错位（按钮消失）。
+        /// </summary>
+        internal void LayoutChrome()
+        {
+            if (TitleBar is null || MainWebView2 is null) return;
+            var inset = _fullscreenActive ? 0 : 1;
+            var titleHeight = TitleBar.Visible
+                ? (int)Math.Round(32 * DeviceDpi / 96f)
+                : 0;
+            TitleBar.Bounds = new Rectangle(inset, inset,
+                Math.Max(0, ClientSize.Width - 2 * inset),
+                titleHeight);
+            MainWebView2.Bounds = new Rectangle(inset, inset + titleHeight,
+                Math.Max(0, ClientSize.Width - 2 * inset),
+                Math.Max(0, ClientSize.Height - inset - titleHeight - inset));
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            // 自愈：非全屏状态下标题栏必须可见——防止最大化/还原等路径把标题栏
+            // 弄丢（按钮消失）。全屏（_fullscreenActive）期间保持隐藏。
+            if (TitleBar is not null && !_fullscreenActive && !TitleBar.Visible)
+                TitleBar.Visible = true;
+            LayoutChrome();
+            // 强制整条标题栏重绘，清除 Aero Snap 拖动/最大化动画留下的按钮残留
+            TitleBar?.Invalidate();
+        }
+
         protected override void WndProc(ref Message m)
         {
             switch (m.Msg)
             {
                 case WM_NCCALCSIZE:
-                    // wParam=TRUE：把客户区设为整个窗口矩形（吃掉系统标题栏/边框预留，
-                    // 自绘标题栏照常占据客户区顶部）。不加此处理，窗口顶部会被原生
-                    // 标题栏顶下来、四周出现原生边框。wParam=FALSE（初次计算）走默认。
+                    // wParam=TRUE：返回 0 即声明"客户区 = 整个窗口矩形"（吃掉系统
+                    // 标题栏/边框预留，自绘标题栏照常占据客户区顶部）。
+                    // 注意：不能在此钳制 rgrc0（会让客户区比窗口小，DWM 在残留区画
+                    // 原生标题栏"多出一栏"），也不能返回 WVR_* 标志（DWM 客户区计算
+                    // 错乱导致内容大面积消失）。最大化铺满由 WM_GETMINMAXINFO 负责。
                     if (m.WParam != IntPtr.Zero)
                     {
-                        // v0.3.3：最大化时调整客户区矩形，使窗口不超出工作区边界。
-                        // WS_CAPTION|WS_THICKFRAME 会让系统在窗口四周加上不可见边框，
-                        // 此前的裸 IntPtr.Zero 返回会让客户区包含这些不可见区域，导致窗口
-                        // 内容超出工作区。边框厚度随 DPI 缩放（200% 下约 13px）。
-                        //
-                        // 注意：不能用 WindowState == FormWindowState.Maximized 判断——
-                        // WM_NCCALCSIZE 在 WM_SIZE 之前发送，此时 WindowState 仍是 Normal。
-                        // 改用检测提议窗口矩形是否超出工作区：最大化时系统会把窗口矩形设为
-                        // 工作区 + 不可见边框，必然超出；普通窗口则不会。
-                        var ncParams = Marshal.PtrToStructure<NCCALCSIZE_PARAMS>(m.LParam);
-                        var wa = Screen.FromHandle(Handle).WorkingArea;
-                        if (ncParams.rgrc0.Left < wa.Left || ncParams.rgrc0.Top < wa.Top ||
-                            ncParams.rgrc0.Right > wa.Right || ncParams.rgrc0.Bottom > wa.Bottom)
-                        {
-                            // 将客户区钳制到工作区范围，消除不可见边框的影响
-                            ncParams.rgrc0.Left = Math.Max(ncParams.rgrc0.Left, wa.Left);
-                            ncParams.rgrc0.Top = Math.Max(ncParams.rgrc0.Top, wa.Top);
-                            ncParams.rgrc0.Right = Math.Min(ncParams.rgrc0.Right, wa.Right);
-                            ncParams.rgrc0.Bottom = Math.Min(ncParams.rgrc0.Bottom, wa.Bottom);
-                            Marshal.StructureToPtr(ncParams, m.LParam, false);
-                        }
                         m.Result = IntPtr.Zero;
                         return;
                     }
@@ -3057,10 +3088,21 @@ internal static class Program
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
                     var wa = Screen.FromHandle(Handle).WorkingArea;
-                    mmi.ptMaxSize.X = wa.Width;
-                    mmi.ptMaxSize.Y = wa.Height;
-                    mmi.ptMaxPosition.X = wa.Left;
-                    mmi.ptMaxPosition.Y = wa.Top;
+                    // 系统在最大化时会额外加上 WS_THICKFRAME 不可见边框（每边
+                    // SM_CXSIZEFRAME/CYSIZEFRAME，随 DPI），实际窗口矩形 = 工作区±边框。
+                    // 把边框从尺寸中减掉、位置向工作区内平移，使"最大化窗口矩形 == 工作区"，
+                    // 配合 WM_NCCALCSIZE 返回 0（客户区 = 窗口矩形）实现客户区精确铺满。
+                    // 已知残留：补偿按 100% 边框 8px 时略过，留下约 4px 透明缝隙（外观，
+                    // 不影响内容/功能）；边框厚度随 DPI 缩放。
+                    var fx = GetSystemMetrics(SM_CXSIZEFRAME);
+                    var fy = GetSystemMetrics(SM_CYSIZEFRAME);
+                    mmi.ptMaxSize.X = wa.Width - 2 * fx;
+                    mmi.ptMaxSize.Y = wa.Height - 2 * fy;
+                    mmi.ptMaxPosition.X = wa.Left + fx;
+                    mmi.ptMaxPosition.Y = wa.Top + fy;
+                    // 限制手动拖动/贴边（Aero Snap）的最大追踪尺寸，防止超出工作区
+                    mmi.ptMaxTrackSize.X = wa.Width;
+                    mmi.ptMaxTrackSize.Y = wa.Height;
                     Marshal.StructureToPtr(mmi, m.LParam, false);
                     m.Result = IntPtr.Zero;
                     return;
