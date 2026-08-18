@@ -3143,27 +3143,20 @@ internal static class Program
                     base.WndProc(ref m);
                     return;
                 case WM_NCACTIVATE:
-                    // 焦点/激活态切换时系统发 WM_NCACTIVATE，若不吞掉，DefWindowProc 会因样式含
-                    // WS_SYSMENU|WS_MINIMIZEBOX|WS_MAXIMIZEBOX 而去绘制原生（无 WS_CAPTION 时走
-                    // user32 经典 NC 渲染器）→ 出现"老式 win98 标题栏"闪影。
-                    // 本窗口非客户区视觉（标题栏/1px 边框/按钮）全部自绘，无需系统画原生 NC。
-                    // 因此吞掉并返回 1（声明"已自行处理激活态重绘"，系统不再画原生标题栏），
-                    // 末尾追加 ForceNonClientRedraw 兜底清除可能已残留的经典画面。
+                    // 不吞掉则 DefWindowProc 用经典 NC 渲染器画 Win98 式标题栏（见 ADR-003）；
+                    // 本窗口 NC 全自绘，吞掉并返回 1（声明已处理激活态重绘）。
                     ForceNonClientRedraw();
                     m.Result = (IntPtr)1; // 1：已处理激活态重绘
                     return;
                 case WM_NCPAINT:
-                    // 非客户区绘制：本窗口 1px 边框由 Form.BackColor + 客户区内缩自绘，
-                    // 不让 DefWindowProc 画原生框架（否则同样会触发经典 NC 渲染）。
+                    // 非客户区绘制：1px 边框由 Form.BackColor + 客户区内缩自绘，不画原生框架（ADR-003）。
                     m.Result = IntPtr.Zero;
                     return;
                 case WM_GETMINMAXINFO:
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
                     var wa = Screen.FromHandle(Handle).WorkingArea;
-                    // 去掉 WS_CAPTION 后，系统在最大化时不再把窗口向外扩展（无原生边框预留）；
-                    // 直接把最大尺寸/位置设为工作区，窗口即精确填满工作区，无 4px 间隙、
-                    // 无负坐标、不覆盖任务栏。同时限制手动拖动/贴边的最大追踪尺寸。
+                    // 去 WS_CAPTION 后系统最大化不再外扩，直接给工作区即 0px 精确铺满、不越任务栏（ADR-001）。
                     mmi.ptMaxSize.X = wa.Width;
                     mmi.ptMaxSize.Y = wa.Height;
                     mmi.ptMaxPosition.X = wa.Left;
