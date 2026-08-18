@@ -1,0 +1,43 @@
+name: ui-selftest
+
+# 无头 UI 几何回归（GitHub Actions windows-latest，无需本地安装）。
+# 跑 `DshWeb.exe --ui-selftest`：建窗→最大化→断言「窗口矩形 == 工作区」（0px 铺满，ADR-001）。
+# 不依赖 dsh 服务 / Node / WebView2 内容，只验证自绘边框的 Win32 消息，故可在 CI 无头环境跑。
+on:
+  push:
+    branches: [master]
+    paths: ['src/**', 'scripts/**', 'docs/DETAILS.md']
+  pull_request:
+    paths: ['src/**']
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: 'true'
+
+jobs:
+  ui-selftest:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish shell (win-x64, single-file)
+        shell: pwsh
+        run: |
+          dotnet publish src/DshShell -c Release -r win-x64 `
+            --self-contained false -p:PublishSingleFile=true -p:Version=0.3.5-ci -o .publish-ci
+
+      - name: Run UI geometry selftest
+        shell: pwsh
+        run: |
+          $out = & ".\.publish-ci\DshWeb.exe" --ui-selftest 2>&1
+          Write-Host ($out -join "`n")
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "UI-SELFTEST failed with exit code $code" }
+          $joined = $out -join "`n"
+          if ($joined -notmatch 'pass=True') { throw "UI-SELFTEST did not report pass=True" }
+          Write-Host "UI-SELFTEST OK"

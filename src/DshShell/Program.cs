@@ -398,8 +398,19 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // 无头 UI 几何自测（GitHub CI 用，DSH_TEST_MODE 无关）：建窗→最大化→断言"窗口==工作区"（0px 铺满）。
+        if (args.Any(a => a.Equals("--ui-selftest", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunUiSelftest());
+            return;
+        }
+
         // v0.3.0：统一日志初始化（单一日志文件 + 启动早段轮转）
         Logger.Init(UnifiedLogPath);
+        // 特征开关（ADR-008 迁移用）：DSH_USE_NEW_LIFECYCLE=1 走新路径（当前日志标记，实际
+        // 迁入后由它切换旧/新实现，便于运行时对比）。默认 legacy。
+        Trace("feature flag: DSH_USE_NEW_LIFECYCLE="
+            + (Environment.GetEnvironmentVariable("DSH_USE_NEW_LIFECYCLE") == "1" ? "1 (new)" : "unset (legacy)"));
         // 轮转仅在"当前无活服务占用日志"时执行：若上次崩溃残留的孤儿服务仍用 `cmd >>` 持有
         // dsh.log，File.Move 重命名后它会继续写旧名（日志被劈裂，单一日志契约破坏）。
         // 有活服务占用端口则跳过本轮轮转；WarnIfOversized 兜底提示常驻超长日志。
@@ -870,6 +881,54 @@ internal static class Program
 
         Application.Run(form);
         Trace("main loop exited");
+    }
+
+    /// <summary>
+    /// 无头 UI 几何自测（GitHub CI 用）：建主窗 → 最大化 → 断言"窗口矩形 == 工作区"（0px 铺满，ADR-001）。
+    /// 不依赖 dsh 服务 / Node / WebView2 内容，只验证自绘边框的 Win32 消息（WS_CAPTION 移除 + WM_GETMINMAXINFO）。
+    /// 退出码：0=通过，1=几何不符，2=内部异常。结果同时写统一日志与 stdout（CI 抓取）。
+    /// </summary>
+    private static int RunUiSelftest()
+    {
+        Logger.Init(UnifiedLogPath);
+        try
+        {
+            var form = new DshShellForm
+            {
+                Text = "dsh selftest",
+                ClientSize = new Size(1280, 840),
+                MinimumSize = new Size(800, 600),
+                FormBorderStyle = FormBorderStyle.None,
+                ShowInTaskbar = false,
+            };
+            form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
+            {
+                Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2,
+                    (int)Math.Round(32 * form.DeviceDpi / 96f)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            };
+            form.Controls.Add(form.TitleBar);
+            form.Show();
+            Application.DoEvents();
+            form.WindowState = FormWindowState.Maximized;
+            Application.DoEvents();
+            form.Refresh();
+
+            var wa = Screen.FromHandle(form.Handle).WorkingArea;
+            var b = form.Bounds;
+            var ok = b.X == wa.X && b.Y == wa.Y && b.Width == wa.Width && b.Height == wa.Height;
+            var msg = $"UI-SELFTEST pass={ok} bound=({b.X},{b.Y},{b.Width}x{b.Height}) workarea=({wa.X},{wa.Y},{wa.Width}x{wa.Height})";
+            Logger.Info(msg);
+            Console.WriteLine(msg);
+            form.Close();
+            return ok ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("UI-SELFTEST threw: " + ex.Message);
+            Console.Error.WriteLine("UI-SELFTEST threw: " + ex.Message);
+            return 2;
+        }
     }
 
     private enum PendingUpdate { None, Dsh, LauncherSecurity }

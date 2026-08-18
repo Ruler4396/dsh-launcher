@@ -11,6 +11,7 @@
 - **WebView/Window/Tray Manager 委托实现 + 五 Manager 组合完成**：`IWebViewManager`/`IWindowManager`/`ITrayManager` 补齐方法契约，`WebViewManager`/`WindowManager`/`TrayManager` 作为真实类委托现有 Program 内部方法（零行为变更）；`LauncherApp` 组合根装配全部五个 Manager（可注入替换）。DshShellForm/InitWebViewAsync 本体物理迁移属高风险（Win32/焦点），留待 `DSH_USE_NEW_LIFECYCLE` 运行时对比后分步迁入。测试：组合完整性、WindowManager 委托表面。
 - **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
 - **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
+- **无头 UI 几何自测 + CI（ADR-001 回归网）**：新增 `--ui-selftest` 模式（建窗→最大化→断言窗口==工作区 0px，退出码 0/1/2，写日志+stdout）；新增 `.github/workflows/ui-test.yml` 在 `windows-latest` 跑几何回归（不依赖 Node/dsh/WebView2 内容，CI 无需本地安装）。特征开关 `DSH_USE_NEW_LIFECYCLE` 读取并记录启动路径日志。
 
 ## [0.3.5] - 2026-08-18
 
