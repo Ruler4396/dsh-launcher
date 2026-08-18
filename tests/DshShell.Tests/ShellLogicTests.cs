@@ -7,6 +7,18 @@ namespace DshShell.Tests;
 /// <summary>ShellLogic 纯逻辑单元测试。</summary>
 public class ShellLogicTests
 {
+    /// <summary>每测试用一次性临时目录（自动清理）。</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "dsh-test-" + Guid.NewGuid().ToString("N"));
+        public TempDir() => Directory.CreateDirectory(Path);
+        public void Dispose()
+        {
+            try { if (Directory.Exists(Path)) Directory.Delete(Path, true); } catch { }
+        }
+    }
+
     // ---------- 目标地址解析（DSH_WEB_URL） ----------
 
     [Theory]
@@ -120,6 +132,43 @@ public class ShellLogicTests
             Assert.DoesNotContain(".", name[(name.IndexOf('-') + 1)..]); // 时间戳名不含点
         else
             Assert.EndsWith(expectedExt, name);
+    }
+
+    [Theory]
+    [InlineData("attachment; filename*=UTF-8''%E6%B5%8B%E8%AF%95.txt", "https://x.com/a.bin", null, "测试.txt")] // RFC5987 UTF-8'' → unescape
+    [InlineData("attachment; filename*=UTF-8''report.txt", "https://x.com/a.bin", null, "report.txt")]
+    // 已知局限：仅剥 UTF-8'' 前缀，其他 charset 前缀（如 US-ASCII''）会被截断为 charset 名——契约锁定当前行为
+    [InlineData("attachment; filename*=US-ASCII''report.txt", "https://x.com/a.bin", null, "US-ASCII")]
+    [InlineData("attachment; filename=\"a;b.pdf\"", "https://x.com/a.bin", null, "a")] // 引号内分号：保守截断（S2 已知取舍）
+    public void SuggestDownloadName_RfcEncodingAndSemicolon(string? disposition, string? uri, string? mime, string expected)
+    {
+        Assert.Equal(expected, ShellLogic.SuggestDownloadName(disposition, uri, mime));
+    }
+
+    // ---------- 原子写 ----------
+
+    [Fact]
+    public void AtomicWrite_WritesContent_AndNoTempLeftover()
+    {
+        using var tmp = new TempDir();
+        var path = Path.Combine(tmp.Path, "sub", "state.json");
+        ShellLogic.AtomicWrite(path, """{"a":1}""");
+
+        Assert.Equal("""{"a":1}""", File.ReadAllText(path));
+        // 不应残留临时文件
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+    }
+
+    [Fact]
+    public void AtomicWrite_OverwritesExisting_Atomically()
+    {
+        using var tmp = new TempDir();
+        var path = Path.Combine(tmp.Path, "state.json");
+        ShellLogic.AtomicWrite(path, "v1");
+        ShellLogic.AtomicWrite(path, "v2");
+
+        Assert.Equal("v2", File.ReadAllText(path));
+        Assert.Empty(Directory.GetFiles(tmp.Path, "*.tmp"));
     }
 
     // ---------- 文件名清理 ----------

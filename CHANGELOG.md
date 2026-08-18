@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+> 内部：为 `Program.cs` 拆分做准备——显式生命周期状态机 + Headless 测试、纯逻辑测试补齐、架构决策索引。
+
+- **显式生命周期状态机（ADR-008 骨架）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast），暂不接线 Main，配 Headless 测试作回归护栏。
+- **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
+- **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
+
 ## [0.3.5] - 2026-08-18
 
 > 代码质量审查修复批次（P0-2/P0-3 + P1）：供应链/日志契约/进程管理加固。

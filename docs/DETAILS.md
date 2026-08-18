@@ -40,6 +40,21 @@
 | 单实例 | 按目标端口隔离的互斥锁：重复启动自动聚焦已开窗口，不重复创建 WebView2 进程 |
 | 安装包 | WiX v5 per-machine MSI（安装/卸载需 UAC 提权）：默认 `%ProgramFiles%\dsh-launcher` 可自定义，无服务、无计划任务，可卸载 |
 
+### 架构决策索引（Architecture decisions）
+
+源码注释只保留"不变式/半步警示"；**为什么这样设计、历史演进、issue 编号**统一沉淀到这里，避免源码被历史注释淹没。Bug 历史见 `CHANGELOG.md` / GitHub issues。
+
+| ID | 决策 | 一句话理由 |
+| --- | --- | --- |
+| ADR-001 | **去掉 `WS_CAPTION`，仅留 `WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU`** | 无 WS_CAPTION 则 DWM 最大化时不再为原生标题栏预留非客户区且不把窗口外扩，`WM_GETMINMAXINFO` 直接给工作区即 0px 精确铺满（消除 4px 间隙）；Aero Snap/Win+方向/Alt+Space/任务栏收起所需的位仍在 |
+| ADR-002 | **`WM_NCCALCSIZE` 返回 0，且严禁把 `rgrc0` 钳到工作区** | 客户区=窗口矩形；钳制会让客户区小于窗口，残留区被 DWM 当原生标题栏绘制（"多出一栏"）；最大化边界对齐全交给 `WM_GETMINMAXINFO` |
+| ADR-003 | **拦截 `WM_NCACTIVATE`(返回1)/`WM_NCPAINT`(返回0)** | 不拦则 DefWindowProc 用经典 NC 渲染器画 Win98 式标题栏（样式带 SYSMENU/MINIMIZEBOX/MAXIMIZEBOX）；本窗口 NC 全部自绘 |
+| ADR-004 | **F11 用系统级低级键盘钩子（`WH_KEYBOARD_LL`）** | 物理 F11 进 WebView2 浏览器进程，`KeyDown/ProcessCmdKey/消息过滤器`都拦不到；钩子在 OS 层捕获，仅前台时切换最大化/还原 |
+| ADR-005 | **便携 Node 校验和固定优先从官方 `nodejs.org` 拉取** | 校验和若与 zip 同镜像源，镜像被投毒则"防篡改"失效；官方优先、镜像回退（供应链） |
+| ADR-006 | **日志轮转绕开"活服务占用"** | 崩溃残留的孤儿服务若仍用 `cmd >>` 持有日志，`File.Move` 会把日志劈裂成两段；无活服务才轮转 |
+| ADR-007 | **JSON 状态文件用原子写（临时文件+`File.Move`）** | 防关窗/退出瞬间崩溃留下半截 JSON；窗口位置、暂存更新、镜像记忆共用 `ShellLogic.AtomicWrite` |
+| ADR-008 | **启动/退出用纯内存状态机 `LauncherLifecycle`** | 替代 Main 面条代码的隐式状态，纯表可 Headless 单测；独立类不经 UI，重构期间先建回归护栏再接线 |
+
 ## 错误码表 / Error codes
 
 弹窗、统一日志的 `code` 字段、`--diagnose` 汇总共用同一套码（目录见 `src/DshShell/ErrorCodes.cs`）。
