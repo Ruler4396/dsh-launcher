@@ -12,18 +12,36 @@ public sealed class LauncherApp
 {
     private readonly IRuntimeManager _runtime;
     private readonly IServiceManager _service;
+    private readonly IWebViewManager _webview;
+    private readonly IWindowManager _window;
+    private readonly ITrayManager _tray;
     private readonly LauncherLifecycle _lifecycle = new();
 
     // 供 Headless 测试观察状态机的当前状态
     public LifecycleState State => _lifecycle.State;
 
-    // 组合根内默认装配（测试可换自身构建的 Manager）
-    public LauncherApp(IRuntimeManager? runtime = null, IServiceManager? service = null)
+    // 组合根默认装配（测试可换自身构建的 Manager）
+    public LauncherApp(
+        IRuntimeManager? runtime = null,
+        IServiceManager? service = null,
+        IWebViewManager? webview = null,
+        IWindowManager? window = null,
+        ITrayManager? tray = null)
     {
         _runtime = runtime ?? new RuntimeManager();
         _service = service ?? new ServiceManager();
+        _webview = webview ?? new WebViewManager();
+        _window = window ?? new WindowManager();
+        _tray = tray ?? new TrayManager();
         _lifecycle.StateChanged += OnStateEntered;
     }
+
+    // 五个 Manager 的读取表面（供外部/测试校验装配完整性）
+    public IRuntimeManager Runtime => _runtime;
+    public IServiceManager Service => _service;
+    public IWebViewManager WebView => _webview;
+    public IWindowManager Window => _window;
+    public ITrayManager Tray => _tray;
 
     /// <summary>驱动一次启动尝试，返回是否进入 Running（纯逻辑/就绪路径，Headless 可测）。</summary>
     public async Task<bool> RunStartupAsync(CancellationToken ct = default)

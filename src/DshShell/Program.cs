@@ -1911,7 +1911,7 @@ internal static class Program
     /// <summary>创建托盘图标（按策略懒加载，幂等）；左键切换窗口，右键菜单为退出。
     /// 服务停留模式改由 dsh-launcher-lifetime 插件在 Harness 设置页里配置（不再放托盘菜单）。
     /// force=true 时无视按需策略（用于"待应用更新"等一次性通知，质量治理 P1-6）。</summary>
-    private static void EnsureTrayIcon(Form form, bool force = false)
+    internal static void EnsureTrayIcon(Form form, bool force = false)
     {
         if (_trayIcon is not null) return;
         if (!force && !IsTrayWanted()) return;
@@ -2384,7 +2384,7 @@ internal static class Program
     /// 统一的 WebView2 初始化：设置 + 权限 + 下载 + 弹窗 + 崩溃自愈。
     /// 主窗口与插件弹出的内部窗口共用，保证行为一致。
     /// </summary>
-    private static async Task InitWebViewAsync(WebView2 web, string userDataFolder)
+    internal static async Task InitWebViewAsync(WebView2 web, string userDataFolder)
     {
         var env = await GetSharedEnvironmentAsync(userDataFolder);
         await web.EnsureCoreWebView2Async(env);
@@ -2541,7 +2541,7 @@ internal static class Program
     }
 
     /// 插件内部弹窗用的轻量窗口（与主窗口共享 WebView2 用户数据，保持登录态/会话）。
-    private static (Form Form, WebView2 Web) CreatePopupForm()
+    internal static (Form Form, WebView2 Web) CreatePopupForm()
     {
         var popupWeb = new WebView2();
         var form = new DshShellForm
@@ -2664,7 +2664,7 @@ internal static class Program
     /// 解析壳的主题：以用户的选择为主——dsh 前端设置页里的主题选择
     /// （ui-theme.preference: dark / light / system）优先；system 或未设置时跟随系统深色模式。
     /// </summary>
-    private static bool ResolveDarkMode()
+    internal static bool ResolveDarkMode()
     {
         var pref = ReadDshThemePreference();
         if (pref == "dark") return true;
@@ -2781,7 +2781,7 @@ internal static class Program
     private const int HTCAPTION = 0x0002;
 
     /// <summary>给无边框窗口加 DWM 阴影（DWMWA_NCRENDERING_POLICY=ENABLED）。</summary>
-    private static void ApplyWindowShadow(IntPtr hwnd)
+    internal static void ApplyWindowShadow(IntPtr hwnd)
     {
         try
         {
@@ -3255,7 +3255,7 @@ internal static class Program
     /// 轮询 tick 不再重读文件/注册表（旧实现每 500ms 全量 ReadAllLines，主窗打开期间持续磁盘 IO）。
     /// 质量治理 P2-7：订阅句柄存字段，真实退出时由 ReleaseThemeWatcher 统一释放。
     /// </summary>
-    private static void RegisterThemeWatcher(Form form)
+    internal static void RegisterThemeWatcher(Form form)
     {
         var settingsYamlPath = Path.Combine(DshHomeDir, "settings.yaml");
         var lastYamlMtime = SafeFileMtime(settingsYamlPath);
