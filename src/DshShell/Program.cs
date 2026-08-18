@@ -3004,19 +3004,19 @@ internal static class Program
         // 方案：样式位加回来，再用 WM_NCCALCSIZE 吃掉原生框架预留区，观感仍是全自绘无边框
         //（Chromium / Windows Terminal 同款做法）。
         private const int WM_NCCALCSIZE = 0x0083;
-        private const int WS_CAPTION = 0x00C00000;
+        // 不用 WS_CAPTION（含 WS_BORDER|WS_DLGFRAME）：去掉后 DWM 在最大化时不再为原生
+        // 标题栏/边框预留非客户区空间，配合 WM_NCCALCSIZE 返回 0，系统不会把窗口向外扩展，
+        // WM_GETMINMAXINFO 直接设工作区即精确铺满（消除 4px 内缩间隙）。
+        // 保留 WS_THICKFRAME（Aero Snap/Win+方向键/边缘缩放）、WS_MINIMIZEBOX/MAXIMIZEBOX
+        //（任务栏收起/Alt+Space 项）、WS_SYSMENU（Alt+Space 系统菜单）。
         private const int WS_THICKFRAME = 0x00040000;
         private const int WS_MINIMIZEBOX = 0x00020000;
         private const int WS_MAXIMIZEBOX = 0x00010000;
+        private const int WS_SYSMENU = 0x00080000;
         private const int HTCLIENT = 0x0001;
         private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
         private const int ResizeEdge = 8;
-        private const int SM_CXSIZEFRAME = 32;
-        private const int SM_CYSIZEFRAME = 33;
-
-        [DllImport("user32.dll")]
-        private static extern int GetSystemMetrics(int nIndex);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X, Y; }
@@ -3047,14 +3047,12 @@ internal static class Program
         {
             get
             {
-                // 加回 WS_CAPTION|WS_THICKFRAME：恢复 Aero Snap / Win+方向键 / 系统窗口动画与
-                // 任务栏正常交互（FormBorderStyle.None 默认全部剥掉）。原生标题栏/边框区域
-                // 由 WM_NCCALCSIZE 移除，自绘标题栏与 1px 边框视觉不变。
-                // 追加 WS_MINIMIZEBOX|WS_MAXIMIZEBOX：任务栏"再点一次最小化"依赖 WS_MINIMIZEBOX
-                //（Explorer 只对带最小化框的窗口做收起切换——此前任务栏点击只能激活不能隐藏），
-                // 同时恢复 Alt+Space 系统菜单的最小化/最大化项（与自绘标题栏按钮一致）。
+                // 加回 WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU：恢复 Aero Snap
+                // /Win+方向键/任务栏收起/Alt+Space 系统菜单（FormBorderStyle.None 默认剥掉）。
+                // 不加 WS_CAPTION：避免 DWM 在最大化时预留原生标题栏空间导致窗口外扩。
+                // 原生边框观感由 WM_NCCALCSIZE 返回 0 去除，自绘标题栏 + 1px 边框不变。
                 var cp = base.CreateParams;
-                cp.Style |= WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+                cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
                 return cp;
             }
         }
@@ -3119,18 +3117,13 @@ internal static class Program
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
                     var wa = Screen.FromHandle(Handle).WorkingArea;
-                    // 系统最大化时额外加 WS_THICKFRAME 不可见边框（实际窗口 = 工作区±边框）。
-                    // 把边框从尺寸减掉、位置向工作区内平移使窗口贴近工作区。
-                    // 用满额补偿：保证最大化窗口顶部落在 ≥0（标题栏完整可见，不会"超出屏幕"）
-                    // 且不越界任务栏（#17），代价是留一个小缝隙（约 4px，纯外观）。
-                    // 注意：砍减补偿(如 3/4)在高 DPI 下会欠补偿 → 顶部为负 → 标题栏上沿被切。
-                    var fx = GetSystemMetrics(SM_CXSIZEFRAME);
-                    var fy = GetSystemMetrics(SM_CYSIZEFRAME);
-                    mmi.ptMaxSize.X = wa.Width - 2 * fx;
-                    mmi.ptMaxSize.Y = wa.Height - 2 * fy;
-                    mmi.ptMaxPosition.X = wa.Left + fx;
-                    mmi.ptMaxPosition.Y = wa.Top + fy;
-                    // 限制手动拖动/贴边（Aero Snap）的最大追踪尺寸，防止超出工作区
+                    // 去掉 WS_CAPTION 后，系统在最大化时不再把窗口向外扩展（无原生边框预留）；
+                    // 直接把最大尺寸/位置设为工作区，窗口即精确填满工作区，无 4px 间隙、
+                    // 无负坐标、不覆盖任务栏。同时限制手动拖动/贴边的最大追踪尺寸。
+                    mmi.ptMaxSize.X = wa.Width;
+                    mmi.ptMaxSize.Y = wa.Height;
+                    mmi.ptMaxPosition.X = wa.Left;
+                    mmi.ptMaxPosition.Y = wa.Top;
                     mmi.ptMaxTrackSize.X = wa.Width;
                     mmi.ptMaxTrackSize.Y = wa.Height;
                     Marshal.StructureToPtr(mmi, m.LParam, false);
