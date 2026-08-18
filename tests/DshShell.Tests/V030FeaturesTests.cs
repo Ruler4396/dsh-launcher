@@ -211,6 +211,38 @@ public class V030FeaturesTests
         var loaded = WindowStateStore.Load();
         Assert.NotNull(loaded);
         Assert.Equal((100, 200, 1280, 840), (loaded!.X, loaded.Y, loaded.WidthLogical, loaded.HeightLogical));
+        Assert.False(loaded.IsMaximized); // 默认 false
+    }
+
+    [Fact]
+    public void WindowStateStore_RoundTrip_IsMaximized()
+    {
+        using var tmp = new TempDir();
+        WindowStateStore.Init(tmp.Path);
+        // 保存最大化状态
+        WindowStateStore.Save(new WindowStateStore.WindowState(100, 200, 1280, 840, IsMaximized: true));
+        var loaded = WindowStateStore.Load();
+        Assert.NotNull(loaded);
+        Assert.True(loaded!.IsMaximized);
+        Assert.Equal((100, 200, 1280, 840), (loaded.X, loaded.Y, loaded.WidthLogical, loaded.HeightLogical));
+        // 保存非最大化状态
+        WindowStateStore.Save(new WindowStateStore.WindowState(200, 300, 1024, 768, IsMaximized: false));
+        loaded = WindowStateStore.Load();
+        Assert.NotNull(loaded);
+        Assert.False(loaded!.IsMaximized);
+    }
+
+    [Fact]
+    public void WindowStateStore_IsMaximized_BackwardCompat()
+    {
+        // 旧版 JSON 没有 IsMaximized 字段，应默认 false
+        using var tmp = new TempDir();
+        WindowStateStore.Init(tmp.Path);
+        File.WriteAllText(Path.Combine(tmp.Path, "window-state.json"),
+            """{"X":100,"Y":200,"WidthLogical":1280,"HeightLogical":840}""");
+        var loaded = WindowStateStore.Load();
+        Assert.NotNull(loaded);
+        Assert.False(loaded!.IsMaximized); // 旧版无此字段 → false
     }
 
     [Fact]

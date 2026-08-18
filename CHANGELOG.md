@@ -2,6 +2,21 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.4] - 2026-08-18
+
+> 修复：F11 全屏无效、最大化还原后标题栏按钮消失；移除 v0.3.3 引入的投机性全屏处理器回归源。
+
+### 修复
+
+- **F11 全屏无效（物理按键）**：键盘 `WM_KEYDOWN` 消息直接派发给**焦点控件（WebView2）**，窗体 `KeyPreview` / `KeyDown` / `ProcessCmdKey` 均收不到。改为 `Application.AddMessageFilter`（`IMessageFilter`）在消息循环分发前拦截 F11，任何焦点状态下均生效。
+- **最大化（非全屏）→还原后标题栏按钮消失**：v0.3.3 为 issue #15（从未复现）添加的 `ContainsFullScreenElementChanged` 处理器是唯一会在非 F11 路径隐藏自绘标题栏的代码——WebView2 触发全屏元素事件时执行 `TitleBar.Visible=false` 并强制最大化，还原时若无对应退出事件则标题栏永久隐藏。移除该处理器（页面 HTML 全屏回归 WebView2 默认行为，与 v0.3.2 一致），并新增 `OnResize` 自愈：非全屏状态下标题栏强制可见。
+- **统一布局逻辑（标题栏/WebView2）**：抽出 `LayoutChrome()` 供 DpiChanged / OnResize 复用，消除各路径手写布局不一致导致的控件错位风险。
+
+### 测试
+
+- 新增 `F11MessageFilterTests`：F11 按下被拦截并触发切换、非 F11 键放行、F11 弹起不触发。
+- 新增 `WindowStateStore` 最大化状态（`IsMaximized`）往返与旧版 JSON 向后兼容测试。
+
 ## [0.3.3] - 2026-08-17
 
 > 修复：全屏窗口消失（#15）、最大化记忆丢失、VBScript 缺少对象弹窗。
