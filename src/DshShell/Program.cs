@@ -2470,10 +2470,10 @@ internal static class Program
             }
         };
 
-        // 全屏元素变化（网页 Fullscreen API）：隐藏/显示自绘标题栏。
+        // 全屏元素变化（网页 Fullscreen API）：最大化窗口并隐藏自绘标题栏。
         // 无此处理时，WebView2 内部全屏状态变化后，页面内容可能渲染异常
         //（v0.3.3 issue #15 候选根因）。
-        // 注意：ContainsFullScreenElement 是 WebView2 内部状态，不改变宿主窗口的 WindowState。
+        // 注意：全屏时最大化窗口，退出时恢复之前的状态（Normal/Maximized）。
         web.CoreWebView2.ContainsFullScreenElementChanged += (_, _) =>
         {
             var isFullScreen = web.CoreWebView2.ContainsFullScreenElement;
@@ -2486,20 +2486,25 @@ internal static class Program
                     var titleHeight = (int)Math.Round(32 * parentForm.DeviceDpi / 96f);
                     if (isFullScreen)
                     {
-                        // 进入全屏：隐藏标题栏，WebView2 填满整个客户区
+                        // 进入全屏：最大化窗口、隐藏标题栏、WebView2 填满整个客户区
+                        // 先最大化再隐藏标题栏，确保窗口状态正确
+                        parentForm.WindowState = FormWindowState.Maximized;
                         dshForm.TitleBar.Visible = false;
                         web.Bounds = new Rectangle(0, 0,
                             parentForm.ClientSize.Width, parentForm.ClientSize.Height);
                     }
                     else
                     {
-                        // 退出全屏：恢复标题栏
+                        // 退出全屏：恢复标题栏；窗口从最大化恢复到 Normal（用 RestoreBounds）
                         dshForm.TitleBar.Visible = true;
                         dshForm.TitleBar.Bounds = new Rectangle(1, 1,
                             parentForm.ClientSize.Width - 2, titleHeight);
                         web.Bounds = new Rectangle(1, 1 + titleHeight,
                             parentForm.ClientSize.Width - 2,
                             parentForm.ClientSize.Height - titleHeight - 2);
+                        // 退出全屏时从最大化恢复到 Normal
+                        if (parentForm.WindowState == FormWindowState.Maximized)
+                            parentForm.WindowState = FormWindowState.Normal;
                     }
                 }
             }
