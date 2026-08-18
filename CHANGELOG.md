@@ -12,6 +12,8 @@
 - **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
 - **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
 - **无头 UI 几何自测 + CI（ADR-001 回归网）**：新增 `--ui-selftest` 模式（建窗→最大化→断言窗口==工作区 0px，退出码 0/1/2，写日志+stdout）；新增 `.github/workflows/ui-test.yml` 在 `windows-latest` 跑几何回归（不依赖 Node/dsh/WebView2 内容，CI 无需本地安装）。特征开关 `DSH_USE_NEW_LIFECYCLE` 读取并记录启动路径日志。
+- **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → CI 误报；改为 `Start-Process -Wait -PassThru` 读退出码 + 结果落盘 `ui-selftest-result.txt`，规避。
+- **自绘标题栏迁出（Chrome 层第一步）**：`CustomTitleBar` 从 Program 物理迁出至新的 `Chrome/CustomTitleBar.cs`（`internal sealed class`，`_owner`=DshShellForm，共享图标/user32 经 `Program.` 内部成员）；`DshShellForm` 提为 internal。`--ui-selftest`（0px）与正常窗口/自绘标题栏渲染均验证不变。
 
 ## [0.3.5] - 2026-08-18
 
