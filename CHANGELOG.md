@@ -2,6 +2,25 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.5] - 2026-08-18
+
+> 代码质量审查修复批次（P0-2/P0-3 + P1）：供应链/日志契约/进程管理加固。
+
+### 修复
+
+- **便携 Node 校验和源解耦（P0-2，供应链）**：`SHASUMS256.txt` 优先从官方 `nodejs.org` 拉取，与 zip 下载镜像源解耦——避免镜像被投毒时 zip 与校验和一起被替换，`SHA256` 防篡改真正生效（官方失败回退镜像）。
+- **日志轮转活服务守卫（P0-3，日志契约）**：崩溃残留的孤儿服务若仍用 `cmd >>` 持有 `dsh.log`，提前轮转会把日志劈裂成两段；现仅当无活服务占端口时才轮转。
+- **ResolveTarget 契约覆盖（P1-5）**：`DSH_WEB_PORT` 支持合并进 `ShellLogic.ResolveTarget`，生产委托调用，契约测试覆盖生产路径。
+- **注册表根键释放（P1-8）**：`ReadCandidateProducts` 四个 `OpenSubKey` 根键 Dispose，防"清理旧版本"路径句柄泄漏。
+- **子进程超时处置（P1-9）**：`IsUsableNode`/`RunCapture` 超时即 `Kill`（防 `node --version` 挂死泄漏），并异步排空管道防阻塞。
+- **非客户区重绘节流（P1-13）**：`ForceNonClientRedraw` 仅在窗口状态（最大化/还原/最小化）变化时调用，拖动缩放不再高频重算框架。
+- **JSON 原子写（P1-10）**：新增 `ShellLogic.AtomicWrite`（临时文件 + `File.Move` 覆盖），`WindowStateStore`/`StagedUpdate`/`RecordLastMirror` 共用，防退出瞬间崩溃留下半截 JSON。
+
+### 测试
+
+- `ResolveTarget` 新增 `DSH_WEB_PORT` 5 例（含非法/越界/URL 优先级）。
+- `Sanitize` 新增"独立波浪号不替换"用例，锁定脱敏行为。
+
 ## [0.3.4] - 2026-08-18
 
 > 修复：F11 全屏可靠化、最大化精确铺满（消除 4px 间隙）、焦点切换无经典标题栏闪影、dsh 下载镜像加速。
