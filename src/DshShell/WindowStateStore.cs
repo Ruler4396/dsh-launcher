@@ -24,8 +24,8 @@ public static class WindowStateStore
         if (_path.Length == 0) return;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, JsonSerializer.Serialize(state));
+            // 原子写（临时文件 + File.Move 覆盖），避免退出瞬间崩溃留下半截 JSON
+            ShellLogic.AtomicWrite(_path, JsonSerializer.Serialize(state));
         }
         catch { /* 保存失败不影响退出 */ }
     }

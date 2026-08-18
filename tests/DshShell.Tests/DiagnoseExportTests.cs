@@ -86,6 +86,18 @@ public class DiagnoseExportTests : IDisposable
         Assert.Equal("", DiagnoseExport.Sanitize(""));
     }
 
+    [Fact]
+    public void Sanitize_BareTilde_NotInPathContext_Untouched()
+    {
+        // 仅替换 "~\"（反斜杠后缀路径缩写）；独立波浪号（普通文本中的 ~ 符号）应保留
+        var s = DiagnoseExport.Sanitize("size ~100MB and ~ alone");
+        Assert.Contains("~100MB", s, StringComparison.Ordinal);
+        Assert.Contains("~ alone", s, StringComparison.Ordinal);
+        // "~\" 路径缩写被替换
+        var s2 = DiagnoseExport.Sanitize(@"~\.dsh\x");
+        Assert.DoesNotContain("~\\", s2, StringComparison.Ordinal);
+    }
+
     // ---------- TailLines 日志尾部 ----------
 
     [Fact]

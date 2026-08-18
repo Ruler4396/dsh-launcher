@@ -251,8 +251,13 @@ public static class DiagnoseExport
             };
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return "（无法启动）";
-            var outText = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit(4000);
+            var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止挂死阻塞
+            if (!p.WaitForExit(4000))
+            {
+                try { p.Kill(); p.WaitForExit(); } catch { } // 超时杀进程防泄漏
+                return "（执行超时）";
+            }
+            var outText = readTask.Result.Trim();
             return string.IsNullOrWhiteSpace(outText) ? "（无输出）" : outText;
         }
         catch (Exception ex) { return "（" + ex.Message + "）"; }

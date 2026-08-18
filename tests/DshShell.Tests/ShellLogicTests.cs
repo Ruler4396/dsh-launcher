@@ -26,6 +26,19 @@ public class ShellLogicTests
         Assert.Equal(expectedPort, port);
     }
 
+    [Theory]
+    [InlineData(null, null, "http://127.0.0.1:3080", 3080)]   // 默认
+    [InlineData(null, "4000", "http://127.0.0.1:4000", 4000)]  // DSH_WEB_PORT 生效
+    [InlineData(null, "0", "http://127.0.0.1:3080", 3080)]     // 非法端口回退默认
+    [InlineData(null, "70000", "http://127.0.0.1:3080", 3080)] // 越界回退默认
+    [InlineData("http://127.0.0.1:4123/", "5000", "http://127.0.0.1:4123", 4123)] // URL 优先于 port
+    public void ResolveTarget_DshWebPort(string? envUrl, string? envPort, string expectedUrl, int expectedPort)
+    {
+        var (url, port) = ShellLogic.ResolveTarget(envUrl, envPort);
+        Assert.Equal(expectedUrl, url);
+        Assert.Equal(expectedPort, port);
+    }
+
     // ---------- 弹窗分类 ----------
 
     [Theory]

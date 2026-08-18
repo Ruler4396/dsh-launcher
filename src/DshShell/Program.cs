@@ -96,28 +96,12 @@ internal static class Program
     /// DSH_WEB_PORT（壳按此端口托管拉起服务，3080 被占用时可用）→ 默认 3080。
     private static readonly (string Url, int Port) Target = ResolveTarget();
 
-    /// <summary>解析目标地址/端口；空值/非法值回退默认 3080。</summary>
-    private static (string Url, int Port) ResolveTarget()
-    {
-        var envUrl = Environment.GetEnvironmentVariable("DSH_WEB_URL");
-        if (!string.IsNullOrWhiteSpace(envUrl))
-        {
-            try
-            {
-                var uri = new Uri(envUrl, UriKind.Absolute);
-                if (uri.Scheme is "http" or "https")
-                    return (uri.GetLeftPart(UriPartial.Path).TrimEnd('/'), uri.Port);
-            }
-            catch
-            {
-                // 非法输入回退默认
-            }
-        }
-        var envPort = Environment.GetEnvironmentVariable("DSH_WEB_PORT");
-        if (int.TryParse(envPort, out var port) && port is > 0 and < 65536)
-            return ($"http://127.0.0.1:{port}", port);
-        return ("http://127.0.0.1:3080", 3080);
-    }
+    /// <summary>解析目标地址/端口；空值/非法值回退默认 3080。
+    /// 统一委托 ShellLogic.ResolveTarget（契约测试覆盖生产路径，含 DSH_WEB_PORT）。</summary>
+    private static (string Url, int Port) ResolveTarget() =>
+        ShellLogic.ResolveTarget(
+            Environment.GetEnvironmentVariable("DSH_WEB_URL"),
+            Environment.GetEnvironmentVariable("DSH_WEB_PORT"));
 
     /// 设置 DSH_WEB_URL 时视为“外部托管服务”，壳不再自动拉起 dsh（DSH_WEB_PORT 则相反：壳托管拉起）。
     private static readonly bool ServerManagedExternally =
@@ -416,7 +400,11 @@ internal static class Program
 
         // v0.3.0：统一日志初始化（单一日志文件 + 启动早段轮转）
         Logger.Init(UnifiedLogPath);
-        Logger.RotateIfNeeded();
+        // 轮转仅在"当前无活服务占用日志"时执行：若上次崩溃残留的孤儿服务仍用 `cmd >>` 持有
+        // dsh.log，File.Move 重命名后它会继续写旧名（日志被劈裂，单一日志契约破坏）。
+        // 有活服务占用端口则跳过本轮轮转；WarnIfOversized 兜底提示常驻超长日志。
+        if (!PortOpen(Target.Port))
+            Logger.RotateIfNeeded();
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
 
         // P0-2（质量治理）：崩溃留痕——任何未捕获异常（UI 线程/后台线程/主线程）先写一条
@@ -2996,6 +2984,7 @@ internal static class Program
     {
         internal CustomTitleBar? TitleBar;
         internal WebView2? MainWebView2;
+        private FormWindowState _lastWindowState = FormWindowState.Normal;
 
         private const int WM_GETMINMAXINFO = 0x0024;
         private const int WM_NCHITTEST = 0x0084;
@@ -3103,7 +3092,14 @@ internal static class Program
             LayoutChrome();
             // 强制整条标题栏重绘，清除 Aero Snap 拖动/最大化动画留下的按钮残留
             TitleBar?.Invalidate();
-            ForceNonClientRedraw();
+            // 仅当窗口状态（最大化/还原/最小化）真正变化时才强推 DWM 重算非客户区；
+            // 拖动缩放期间 WM_SIZE 高频触发，若每次 SetWindowPos(SWP_FRAMECHANGED) 会反复
+            // 重算框架，造成卡顿/闪烁（v0.3.4）。
+            if (WindowState != _lastWindowState)
+            {
+                _lastWindowState = WindowState;
+                ForceNonClientRedraw();
+            }
         }
 
         protected override void OnShown(EventArgs e)
