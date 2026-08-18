@@ -4,17 +4,21 @@
 
 ## [0.3.4] - 2026-08-18
 
-> 修复：F11 全屏无效、最大化还原后标题栏按钮消失；移除 v0.3.3 引入的投机性全屏处理器回归源。
+> 修复：F11 全屏可靠化、最大化精确铺满（消除 4px 间隙）、焦点切换无经典标题栏闪影、dsh 下载镜像加速。
 
 ### 修复
 
-- **F11 全屏无效（物理按键）**：键盘 `WM_KEYDOWN` 消息直接派发给**焦点控件（WebView2）**，窗体 `KeyPreview` / `KeyDown` / `ProcessCmdKey` 均收不到。改为 `Application.AddMessageFilter`（`IMessageFilter`）在消息循环分发前拦截 F11，任何焦点状态下均生效。
-- **最大化（非全屏）→还原后标题栏按钮消失**：v0.3.3 为 issue #15（从未复现）添加的 `ContainsFullScreenElementChanged` 处理器是唯一会在非 F11 路径隐藏自绘标题栏的代码——WebView2 触发全屏元素事件时执行 `TitleBar.Visible=false` 并强制最大化，还原时若无对应退出事件则标题栏永久隐藏。移除该处理器（页面 HTML 全屏回归 WebView2 默认行为，与 v0.3.2 一致），并新增 `OnResize` 自愈：非全屏状态下标题栏强制可见。
-- **统一布局逻辑（标题栏/WebView2）**：抽出 `LayoutChrome()` 供 DpiChanged / OnResize 复用，消除各路径手写布局不一致导致的控件错位风险。
+- **F11 全屏可靠化（物理按键）**：物理 F11 的 `WM_KEYDOWN` 有时被 WebView2 浏览器进程截走，不进入 WinForms 消息队列（`KeyDown`/`ProcessCmdKey`/消息过滤器均不可靠）。改用**系统级低级键盘钩子（`WH_KEYBOARD_LL`）**在 OS 层捕获 F11，仅在主窗口前台时切换最大化/还原并吞掉该键，与焦点/浏览器进程/重启无关。
+- **最大化精确铺满（消除 4px 间隙）**：去掉 `WS_CAPTION`（含 `WS_BORDER|WS_DLGFRAME`），仅保留 `WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU`；`WM_GETMINMAXINFO` 直接设为工作区尺寸/位置。DWM 不再为原生标题栏预留空间、不再把窗口向外扩展，最大化窗口 == 客户区 == 工作区，四周 **0px 间隙**、无负坐标、不覆盖任务栏（#17 保持修复）。
+- **焦点切换无经典标题栏闪影**：拦截 `WM_NCACTIVATE`/`WM_NCPAINT` 并吞掉（返回 1/0），避免 DefWindowProc 用经典 NC 渲染器画出"老式 win98 标题栏"；`WM_NCACTIVATE` 末尾追加 `SWP_FRAMECHANGED` 兜底重绘。
+- **标题栏永不移除 / 按钮不再消失**：F11 语义改为"最大化/还原"，标题栏始终保留；`OnResize` 自愈强制标题栏可见 + `LayoutChrome` 统一布局 + `Invalidate` 清除 Aero Snap 残留（此前最大化还原后按钮消失的根因——v0.3.3 为未复现 issue#15 添加的 `ContainsFullScreenElementChanged` 处理器已被移除，页面 HTML 全屏回归 WebView2 默认行为）。
+- **最大化状态持久化**：`WindowStateStore.WindowState` 新增 `IsMaximized`，最大化后关闭再启动恢复最大化。
+- **dsh 下载镜像加速**：`start-dsh.vbs` 的 `npx` 路径默认走 `npmmirror`（国内可直连），可用 `DSH_NPM_MIRROR` 覆盖——dsh 本体下载不再卡在慢 npmjs。
+- **VBScript 缺少对象弹窗（800A01A8）**：`start-dsh.vbs` 显式 `Set f = Nothing` 初始化 + `OpenTextFile` 前 `CreateFolder`，并清理旧版指向 `start-dsh.vbs` 的 autostart 残留。
 
 ### 测试
 
-- 新增 `F11MessageFilterTests`：F11 按下被拦截并触发切换、非 F11 键放行、F11 弹起不触发。
+- 新增 `F11HookDecisionTests`（低级键盘钩子判定纯函数：F11 且前台才处理、非 F11/非前台放行）。
 - 新增 `WindowStateStore` 最大化状态（`IsMaximized`）往返与旧版 JSON 向后兼容测试。
 
 ## [0.3.3] - 2026-08-17
