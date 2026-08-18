@@ -51,8 +51,13 @@ If sh.Run("cmd /c where dsh >nul 2>&1", 0, True) = 0 Then
     cmdline = "dsh web --host 127.0.0.1 --port " & port
     note = "using global dsh"
 Else
-    cmdline = "npx -y @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
-    note = "dsh not on PATH - falling back to npx -y @deepseek-ai/dsh"
+    ' dsh 本体经 npx 从 npm registry 下载，国内/弱网访问默认 npmjs 慢易超时。
+    ' 镜像回退：DSH_NPM_MIRROR 显式指定则用（封装 npm 私有 registry 场景）；
+    ' 未指定时默认 npmmirror（公共 npm 镜像，国内可直连、全球亦快，@deepseek-ai/dsh 为公共包）。
+    npmRegistry = env("DSH_NPM_MIRROR")
+    If npmRegistry = "" Then npmRegistry = "https://registry.npmmirror.com"
+    cmdline = "npx -y --registry=" & npmRegistry & " @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
+    note = "dsh not on PATH - npx via " & npmRegistry
 End If
 ' 日志重定向目标必须加引号：USERPROFILE 含空格（如 C:\Users\John Smith）时，
 ' 不带引号会把路径截断成命令参数/碎片文件名（实测复现）；含 & 等 cmd 元字符时可注入命令。
