@@ -3017,6 +3017,15 @@ internal static class Program
         private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
         private const int ResizeEdge = 8;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_FRAMECHANGED = 0x0020;
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X, Y; }
@@ -3094,6 +3103,30 @@ internal static class Program
             LayoutChrome();
             // 强制整条标题栏重绘，清除 Aero Snap 拖动/最大化动画留下的按钮残留
             TitleBar?.Invalidate();
+            ForceNonClientRedraw();
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            ForceNonClientRedraw();
+        }
+
+        /// <summary>
+        /// 去掉 WS_CAPTION 后，最大化/还原/初次显示等瞬间 DWM 可能短暂按默认非客户区绘制
+        /// 一次（看起来像"经典/win98 边框"），直到下一次 WM_NCCALCSIZE/WM_PAINT 才被自定义
+        /// 样式覆盖。此处用 SetWindowPos(SWP_FRAMECHANGED) 强推 DWM 立即重新计算非客户区
+        /// （重发 WM_NCCALCSIZE），清除该闪影（v0.3.4）。
+        /// </summary>
+        internal void ForceNonClientRedraw()
+        {
+            try
+            {
+                if (Handle == IntPtr.Zero) return;
+                SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            catch { /* 重绘失败不影响功能 */ }
         }
 
         protected override void WndProc(ref Message m)
