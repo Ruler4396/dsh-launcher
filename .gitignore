@@ -3,6 +3,7 @@ bin/
 obj/
 dist/
 .publish-tmp/
+.publish-test/
 .neg-publish/
 # WiX v5 temp files generated next to the build source
 .tmp-wix/
