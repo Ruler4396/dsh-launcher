@@ -920,15 +920,33 @@ internal static class Program
             var msg = $"UI-SELFTEST pass={ok} bound=({b.X},{b.Y},{b.Width}x{b.Height}) workarea=({wa.X},{wa.Y},{wa.Width}x{wa.Height})";
             Logger.Info(msg);
             Console.WriteLine(msg);
+            WriteSelftestResult(ok, msg);
             form.Close();
             return ok ? 0 : 1;
         }
         catch (Exception ex)
         {
-            Logger.Error("UI-SELFTEST threw: " + ex.Message);
-            Console.Error.WriteLine("UI-SELFTEST threw: " + ex.Message);
+            var msg = "UI-SELFTEST threw: " + ex.Message;
+            Logger.Error(msg);
+            Console.Error.WriteLine(msg);
+            WriteSelftestResult(false, msg);
             return 2;
         }
+    }
+
+    /// <summary>
+    /// 把自测结果落盘（CI 可靠取回通道——GUI 子系统应用的 stdout/退出码在 pwsh 里未必可靠回传）。
+    /// 写入当前目录 ui-selftest-result.txt；可用 DSH_TEST_RESULT 覆盖路径。
+    /// </summary>
+    private static void WriteSelftestResult(bool pass, string detail)
+    {
+        try
+        {
+            var path = Environment.GetEnvironmentVariable("DSH_TEST_RESULT") ?? "ui-selftest-result.txt";
+            try { System.IO.Path.GetFullPath(path); } catch { path = "ui-selftest-result.txt"; }
+            File.WriteAllText(path, $"pass={pass}\n{detail}\n");
+        }
+        catch { /* 落盘失败不阻断 */ }
     }
 
     private enum PendingUpdate { None, Dsh, LauncherSecurity }

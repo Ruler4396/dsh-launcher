@@ -4,7 +4,12 @@ obj/
 dist/
 .publish-tmp/
 .publish-test/
+.publish-ci/
 .neg-publish/
+# CI UI-selftest 运行产物
+ui-selftest-result.txt
+out.txt
+err.txt
 # WiX v5 temp files generated next to the build source
 .tmp-wix/
 # WiX tool cache (defensive)

@@ -1,8 +1,8 @@
 name: ui-selftest
 
 # 无头 UI 几何回归（GitHub Actions windows-latest，无需本地安装）。
-# 跑 `DshWeb.exe --ui-selftest`：建窗→最大化→断言「窗口矩形 == 工作区」（0px 铺满，ADR-001）。
-# 不依赖 dsh 服务 / Node / WebView2 内容，只验证自绘边框的 Win32 消息，故可在 CI 无头环境跑。
+# 跑 `DshWeb.exe --ui-selftest`：建窗→最大化→断言「窗口矩形 == 工作区」（0px 铺满，ADR-001），
+# 结果落盘 ui-selftest-result.txt。不依赖 dsh 服务 / Node / WebView2 内容，故可在 CI 无头环境跑。
 on:
   push:
     branches: [master]
@@ -34,10 +34,14 @@ jobs:
       - name: Run UI geometry selftest
         shell: pwsh
         run: |
-          $out = & ".\.publish-ci\DshWeb.exe" --ui-selftest 2>&1
-          Write-Host ($out -join "`n")
-          $code = $LASTEXITCODE
-          if ($code -ne 0) { throw "UI-SELFTEST failed with exit code $code" }
-          $joined = $out -join "`n"
-          if ($joined -notmatch 'pass=True') { throw "UI-SELFTEST did not report pass=True" }
+          # GUI 子系统应用的 stdout/退出码经 & 回传不可靠 → Start-Process -Wait -PassThru + 读结果文件
+          $proc = Start-Process -FilePath ".\.publish-ci\DshWeb.exe" -ArgumentList '--ui-selftest' `
+            -PassThru -Wait -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          $exitCode = $proc.ExitCode
+          if (Test-Path err.txt) { Write-Host "stderr: $(Get-Content err.txt -Raw)" }
+          $result = if (Test-Path 'ui-selftest-result.txt') { Get-Content 'ui-selftest-result.txt' -Raw } else { '<no result file>' }
+          Write-Host "exitCode=$exitCode"
+          Write-Host "result: $result"
+          if ($exitCode -ne 0) { throw "UI-SELFTEST exit code $exitCode" }
+          if ($result -notmatch 'pass=True') { throw "UI-SELFTEST did not report pass=True" }
           Write-Host "UI-SELFTEST OK"
