@@ -3023,14 +3023,19 @@ internal static class Program
                     if (m.WParam != IntPtr.Zero)
                     {
                         // v0.3.3：最大化时调整客户区矩形，使窗口不超出工作区边界。
-                        // WS_CAPTION|WS_THICKFRAME 会让系统在窗口四周加上 8px 不可见边框，
+                        // WS_CAPTION|WS_THICKFRAME 会让系统在窗口四周加上不可见边框，
                         // 此前的裸 IntPtr.Zero 返回会让客户区包含这些不可见区域，导致窗口
-                        // 内容超出工作区（左右各多 8px，上下各多 8px）。Windows 25H2 上
-                        // 此问题可能更明显，表现为页面内容被裁剪或渲染异常。
-                        if (WindowState == FormWindowState.Maximized)
+                        // 内容超出工作区。边框厚度随 DPI 缩放（200% 下约 13px）。
+                        //
+                        // 注意：不能用 WindowState == FormWindowState.Maximized 判断——
+                        // WM_NCCALCSIZE 在 WM_SIZE 之前发送，此时 WindowState 仍是 Normal。
+                        // 改用检测提议窗口矩形是否超出工作区：最大化时系统会把窗口矩形设为
+                        // 工作区 + 不可见边框，必然超出；普通窗口则不会。
+                        var ncParams = Marshal.PtrToStructure<NCCALCSIZE_PARAMS>(m.LParam);
+                        var wa = Screen.FromHandle(Handle).WorkingArea;
+                        if (ncParams.rgrc0.Left < wa.Left || ncParams.rgrc0.Top < wa.Top ||
+                            ncParams.rgrc0.Right > wa.Right || ncParams.rgrc0.Bottom > wa.Bottom)
                         {
-                            var ncParams = Marshal.PtrToStructure<NCCALCSIZE_PARAMS>(m.LParam);
-                            var wa = Screen.FromHandle(Handle).WorkingArea;
                             // 将客户区钳制到工作区范围，消除不可见边框的影响
                             ncParams.rgrc0.Left = Math.Max(ncParams.rgrc0.Left, wa.Left);
                             ncParams.rgrc0.Top = Math.Max(ncParams.rgrc0.Top, wa.Top);
