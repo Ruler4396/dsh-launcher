@@ -15,10 +15,82 @@ internal static class Program
     private const string DefaultUrl = "http://127.0.0.1:3080";
     private const int SW_RESTORE = 9;
 
-    /// <summary>F11 加速键判定（纯函数，可单测）：虚拟键码为 F11(0x7A) 且为按下事件。
-    /// 只认 KeyDown，避免 KeyDown+KeyUp 各触发一次导致"按一下切两次"。</summary>
-    internal static bool IsF11KeyDown(uint virtualKey, CoreWebView2KeyEventKind kind)
-        => virtualKey == 0x7A && kind == CoreWebView2KeyEventKind.KeyDown;
+    /// <summary>
+    /// F11 全屏判定（纯函数，可单测）：低级键盘钩子回调中，nCode≥0 且主窗口在前台
+    /// 且为 F11(0x7A) 的按下/系统按下，即应切换全屏并吞掉该键。
+    /// </summary>
+    internal static bool ShouldHandleF11Hook(int nCode, IntPtr wParam, uint vkCode, bool isForeground)
+    {
+        const int WM_KEYDOWN = 0x0100;
+        const int WM_SYSKEYDOWN = 0x0104;
+        const int VK_F11 = 0x7A;
+        return nCode >= 0 && isForeground
+            && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)
+            && vkCode == VK_F11;
+    }
+
+    /// <summary>
+    /// F11 全屏的系统级低级键盘钩子（WH_KEYBOARD_LL）。
+    /// 在 OS 层捕获按键，不依赖 WinForms 消息队列 / 焦点 / WebView2 浏览器进程——
+    /// 这是对物理 F11 最可靠、跨重启稳定的方案（v0.3.4）。
+    /// </summary>
+    internal sealed class F11LowLevelHook : IDisposable
+    {
+        private const int WH_KEYBOARD_LL = 13;
+        private readonly Action _toggle;
+        private readonly Func<bool> _isForeground;
+        private IntPtr _hook;
+        private readonly LowLevelKeyboardProc _proc; // 保持委托存活，防 GC
+
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookExW(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint threadId);
+        [DllImport("user32.dll")]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr GetModuleHandleW(string lpModuleName);
+        [DllImport("user32.dll")]
+        internal static extern IntPtr GetForegroundWindow();
+
+        public F11LowLevelHook(Action toggle, Func<bool> isForeground)
+        {
+            _toggle = toggle;
+            _isForeground = isForeground;
+            _proc = HookProc;
+            _hook = SetWindowsHookExW(WH_KEYBOARD_LL, _proc, GetModuleHandleW("DshWeb.exe"), 0);
+            if (_hook == IntPtr.Zero)
+                Logger.Warn("F11 low-level keyboard hook install failed");
+        }
+
+        public void Dispose()
+        {
+            if (_hook != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_hook);
+                _hook = IntPtr.Zero;
+            }
+        }
+
+        private IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0 && wParam is (IntPtr)0x0100 or (IntPtr)0x0104)
+            {
+                var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                if (ShouldHandleF11Hook(nCode, wParam, info.vkCode, _isForeground()))
+                {
+                    _toggle();
+                    return (IntPtr)1; // 吞掉 F11，阻止继续分发
+                }
+            }
+            return CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
+    }
 
     /// 目标服务地址/端口：默认 3080。优先级：DSH_WEB_URL（视为外部托管，壳不拉起服务）→
     /// DSH_WEB_PORT（壳按此端口托管拉起服务，3080 被占用时可用）→ 默认 3080。
@@ -607,8 +679,11 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.None,
             Icon = TrayWhaleIcon ?? SystemIcons.Application // 系统任务栏图标固定白色鲸鱼
         };
-        // F11 全屏：由 InitWebViewAsync 里的 CoreWebView2Controller.AcceleratorKeyPressed 接管
-        //（物理按键进入 WebView2 浏览器进程，消息过滤器/KeyDown 都拦不到）。
+        // F11 全屏：用系统级低级键盘钩子（WH_KEYBOARD_LL）在 OS 层捕获——不依赖焦点、
+        // 不依赖浏览器进程（WebView2 有时会截走物理 F11 导致 KeyDown/消息过滤器失效）。
+        // 仅在主窗口位于前台时切换并吞掉 F11。
+        using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
+            () => F11LowLevelHook.GetForegroundWindow() == form.Handle);
         var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
         {
@@ -2332,28 +2407,6 @@ internal static class Program
         settings.IsGeneralAutofillEnabled = false;       // 关闭表单自动填充，减少后台开销
         settings.IsPasswordAutosaveEnabled = false;      // 不保存密码
 
-        // F11 全屏：物理按键进入 WebView2 浏览器进程，WinForms 消息队列收不到
-        //（KeyDown/ProcessCmdKey/消息过滤器均无效）。必须经 CoreWebView2Controller
-        // 的 AcceleratorKeyPressed 在宿主层提前吃掉按键（v0.3.4）。
-        // 注意：只处理 KeyDown，否则 KeyDown+KeyUp 会各触发一次切换（按一下切两次）。
-        // WinForms 控件未公开 Controller，经反射取私有稳定字段订阅（失败则 F11 退回
-        // 默认行为，不影响其余功能）。
-        var controllerField = typeof(WebView2).GetField("_coreWebView2Controller",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (controllerField?.GetValue(web) is CoreWebView2Controller controller)
-        {
-            controller.AcceleratorKeyPressed += (_, e) =>
-            {
-                if (IsF11KeyDown(e.VirtualKey, e.KeyEventKind))
-                {
-                    e.Handled = true; // 吃掉 F11，阻止 WebView2 默认全屏行为
-                    var parentForm = web.FindForm();
-                    if (parentForm is DshShellForm dshForm)
-                        dshForm.ToggleFullscreen();
-                }
-            };
-        }
-
         // 权限：自动放行插件/DSH 依赖的能力（见 ShellLogic.IsAutoGrantedPermission），
         // 其余保持默认拒绝。麦克风/摄像头默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
         web.CoreWebView2.PermissionRequested += (_, e) =>
@@ -2944,10 +2997,6 @@ internal static class Program
         internal CustomTitleBar? TitleBar;
         internal WebView2? MainWebView2;
 
-        /// <summary>F11 全屏会话是否激活（进入时最大化+隐藏标题栏；退出时恢复）。</summary>
-        private bool _fullscreenActive;
-        private FormWindowState _preFullscreenState = FormWindowState.Normal;
-
         private const int WM_GETMINMAXINFO = 0x0024;
         private const int WM_NCHITTEST = 0x0084;
         // Aero Snap（拖到屏幕边缘的半屏/最大化、Win+方向键）依赖 WS_CAPTION|WS_THICKFRAME
@@ -3012,27 +3061,11 @@ internal static class Program
 
         internal void ToggleFullscreen()
         {
-            if (TitleBar is null || MainWebView2 is null) return;
-            if (_fullscreenActive)
-            {
-                // 退出全屏：恢复标题栏与布局，恢复进入全屏前的窗口状态
-                _fullscreenActive = false;
-                TitleBar.Visible = true;
-                LayoutChrome();
-                WindowState = _preFullscreenState;
-                Program.Trace($"ToggleFullscreen: exited fullscreen, restore WindowState={_preFullscreenState}");
-            }
-            else
-            {
-                // 进入全屏：记录先前状态，最大化窗口，隐藏标题栏，WebView2 填满客户区
-                _fullscreenActive = true;
-                _preFullscreenState = WindowState;
-                WindowState = FormWindowState.Maximized;
-                TitleBar.Visible = false;
-                MainWebView2.Bounds = new Rectangle(0, 0,
-                    ClientSize.Width, ClientSize.Height);
-                Program.Trace($"ToggleFullscreen: entered fullscreen (prev={_preFullscreenState})");
-            }
+            // F11 = 最大化/还原切换，标题栏始终保留（不再隐藏标题栏——
+            // 之前"全屏模式隐藏标题栏"反复造成"标题栏消失"困扰）。
+            WindowState = WindowState == FormWindowState.Maximized
+                ? FormWindowState.Normal : FormWindowState.Maximized;
+            Program.Trace($"ToggleFullscreen: WindowState={WindowState}");
         }
 
         /// <summary>
@@ -3043,10 +3076,9 @@ internal static class Program
         internal void LayoutChrome()
         {
             if (TitleBar is null || MainWebView2 is null) return;
-            var inset = _fullscreenActive ? 0 : 1;
-            var titleHeight = TitleBar.Visible
-                ? (int)Math.Round(32 * DeviceDpi / 96f)
-                : 0;
+            // 标题栏始终可见（F11 = 最大化/还原，不再隐藏标题栏）
+            var inset = 1;
+            var titleHeight = (int)Math.Round(32 * DeviceDpi / 96f);
             TitleBar.Bounds = new Rectangle(inset, inset,
                 Math.Max(0, ClientSize.Width - 2 * inset),
                 titleHeight);
@@ -3058,9 +3090,8 @@ internal static class Program
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            // 自愈：非全屏状态下标题栏必须可见——防止最大化/还原等路径把标题栏
-            // 弄丢（按钮消失）。全屏（_fullscreenActive）期间保持隐藏。
-            if (TitleBar is not null && !_fullscreenActive && !TitleBar.Visible)
+            // 自愈：标题栏必须始终可见——防止最大化/还原等路径把标题栏弄丢（按钮消失）。
+            if (TitleBar is not null && !TitleBar.Visible)
                 TitleBar.Visible = true;
             LayoutChrome();
             // 强制整条标题栏重绘，清除 Aero Snap 拖动/最大化动画留下的按钮残留
@@ -3088,12 +3119,11 @@ internal static class Program
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
                     var wa = Screen.FromHandle(Handle).WorkingArea;
-                    // 系统在最大化时会额外加上 WS_THICKFRAME 不可见边框（每边
-                    // SM_CXSIZEFRAME/CYSIZEFRAME，随 DPI），实际窗口矩形 = 工作区±边框。
-                    // 把边框从尺寸中减掉、位置向工作区内平移，使"最大化窗口矩形 == 工作区"，
-                    // 配合 WM_NCCALCSIZE 返回 0（客户区 = 窗口矩形）实现客户区精确铺满。
-                    // 已知残留：补偿按 100% 边框 8px 时略过，留下约 4px 透明缝隙（外观，
-                    // 不影响内容/功能）；边框厚度随 DPI 缩放。
+                    // 系统最大化时额外加 WS_THICKFRAME 不可见边框（实际窗口 = 工作区±边框）。
+                    // 把边框从尺寸减掉、位置向工作区内平移使窗口贴近工作区。
+                    // 用满额补偿：保证最大化窗口顶部落在 ≥0（标题栏完整可见，不会"超出屏幕"）
+                    // 且不越界任务栏（#17），代价是留一个小缝隙（约 4px，纯外观）。
+                    // 注意：砍减补偿(如 3/4)在高 DPI 下会欠补偿 → 顶部为负 → 标题栏上沿被切。
                     var fx = GetSystemMetrics(SM_CXSIZEFRAME);
                     var fy = GetSystemMetrics(SM_CYSIZEFRAME);
                     mmi.ptMaxSize.X = wa.Width - 2 * fx;
