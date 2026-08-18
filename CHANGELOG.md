@@ -7,6 +7,7 @@
 > 内部：为 `Program.cs` 拆分做准备——显式生命周期状态机 + Headless 测试、纯逻辑测试补齐、架构决策索引。
 
 - **显式生命周期状态机（ADR-008 骨架）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast），暂不接线 Main，配 Headless 测试作回归护栏。
+- **Manager 层骨架（ADR-008）**：新增 `Managers/` 五个职责接口 + `RuntimeManager`（委托 RuntimeResolver）、`ServiceManager`（就绪探测，探针可注入）+ `LauncherApp` 组合根（手写装配，不引外部 DI）。全部纯增量未接线 Main；Headless 测试覆盖就绪/超时/运行失败路径。
 - **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
 - **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
 
