@@ -95,9 +95,11 @@ Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-w
 #   Assert-True ($shellSrc -notmatch ': Form')        "Program.cs 不含 Form 子类"
 #   Assert-True ($shellSrc -notmatch 'WndProc')       "Program.cs 不含 WndProc"
 #   Assert-True ($shellSrc -notmatch 'PermissionRequested') "WebView2 事件接线已迁出 Program"
-Assert-True ($shellSrc -match 'class DshShellForm : Form') "【基线】Program.cs 当前仍含 DshShellForm:Form（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'protected override void WndProc') "【基线】Program.cs 当前仍含 WndProc（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'protected override CreateParams') "【基线】Program.cs 当前仍含 CreateParams（重构前锁定；收尾反转）"
+# Step 6 完成：窗体类（DshShellForm/TrayMenuForm）已迁出至 Windows/，以下完成态断言启用。
+# 匹配类声明 `: Form`（精确类继承，避免误匹配 FormWindowState/FormBorderStyle 等标识符）
+Assert-True ($shellSrc -notmatch '(class|record|struct)\s+\w+\s*:\s*Form\b') "【Step6完成】Program.cs 不含 Form 子类（已迁出 Windows/）"
+Assert-True ($shellSrc -notmatch 'WndProc') "【Step6完成】Program.cs 不含 WndProc（已迁出 Windows/）"
+Assert-True ($shellSrc -notmatch 'CreateParams') "【Step6完成】Program.cs 不含 CreateParams（已迁出 Windows/）"
 # Step 4 完成：WebView2 事件接线已迁入 WebViewManager → 此断言提前反转（完成态）。
 Assert-True ($shellSrc -notmatch 'web\.CoreWebView2\.(PermissionRequested|NewWindowRequested|DownloadStarting|NavigationStarting|ProcessFailed)') "【Step4完成】Program.cs 不含 WebView2 事件接线（已迁入 WebViewManager）"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
