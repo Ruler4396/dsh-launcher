@@ -31,7 +31,9 @@
 | --- | --- |
 | 壳应用 | WinForms + `Microsoft.Web.WebView2`，`PublishSingleFile` 单文件发布 |
 | 静默启动 | VBS 调用 `wscript` 后台运行 `dsh web --host 127.0.0.1 --port 3080`，输出按 `DSH_LOG` 追加到统一日志 `DSH_HOME\dsh-launcher\dsh.log`（append 模式，**不截断、不自行轮转**——轮转所有权归壳）；日志被运行中服务锁定或缺失时回退 `%TEMP%\dsh.log` 优先保证冷启动；`dsh` 不在 PATH 时自动回退 `npx -y @deepseek-ai/dsh web` |
-| 端口探测 | `TcpClient.Connect("127.0.0.1", <端口>)`，壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
+| 端口探测 | `ConnectAsync`（`ShellLogic.PortOpenAsync`，3s 超时）——v0.4.0 起异步化，不再阻塞调用线程；壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
+| 启动体验（v0.4.0 极速启动） | `SplashForm`（Windows/SplashForm.cs）双缓冲渲染，后台流水线经 `IProgress<T>` 回填进度，双击后 <500ms 出现启动窗；Node 缺失/服务超时等确认交互走窗体内联面板（非 MessageBox 嵌套模态循环）；编排唯一由组合根 `LauncherApp` 驱动（ADR-010） |
+| UI 自动化（TestHook） | `DSH_TEST_MODE=1` + `--ui-probe` 时激活 NamedPipe（`Win32/UiTestHook.cs`，ADR-009），命令 `ToggleMaximize`/`GetWindowRect`/`GetWorkArea`/`Shutdown`；与 `--ui-selftest`（进程内自测）互补，供 E2E 精确验证最大化 0px 间隙 |
 | 开机自启 | MSI 勾选后写 `HKCU\...\Run` 直接指向 `DshWeb.exe`（登录 → 壳窗口出现 → 壳自行拉起服务）；安装器同时落 HKLM 意图标志（per-machine 提权安装直接写 HKCU 不可靠，壳首启补写兜底）；便携版：启动文件夹放置 `start-dsh.vbs` 由 `wscript` 执行，或直接放 `DshWeb.exe` 快捷方式 |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |
@@ -53,7 +55,12 @@
 | ADR-005 | **便携 Node 校验和固定优先从官方 `nodejs.org` 拉取** | 校验和若与 zip 同镜像源，镜像被投毒则"防篡改"失效；官方优先、镜像回退（供应链） |
 | ADR-006 | **日志轮转绕开"活服务占用"** | 崩溃残留的孤儿服务若仍用 `cmd >>` 持有日志，`File.Move` 会把日志劈裂成两段；无活服务才轮转 |
 | ADR-007 | **JSON 状态文件用原子写（临时文件+`File.Move`）** | 防关窗/退出瞬间崩溃留下半截 JSON；窗口位置、暂存更新、镜像记忆共用 `ShellLogic.AtomicWrite` |
-| ADR-008 | **启动/退出用纯内存状态机 `LauncherLifecycle`** | 替代 Main 面条代码的隐式状态，纯表可 Headless 单测；独立类不经 UI，重构期间先建回归护栏再接线 |
+| ADR-008 | **启动/退出用纯内存状态机 `LauncherLifecycle`** | 替代 Main 面条代码的隐式状态，纯表可 Headless 单测；独立类不经 UI，重构期间先建回归护栏再接线；`WebViewCrashed` 触发器用 Running 自转移表达"崩溃被拦截并重载，不终结应用" |
+| ADR-009 | **UI TestHook 用 NamedPipe（`DSH_TEST_MODE=1` 激活）** | WinForms UI 几何状态难自动化；pipe 提供进程内可控入口发 `ToggleMaximize`/`GetWindowRect`/`GetWorkArea`/`Shutdown`，按进程 PID 命名隔离并行 E2E，生产路径零接触 |
+| ADR-010 | **启动编排唯一由组合根 `LauncherApp` 驱动** | 消除"新旧双实现并存（语义漂移）"：Manager 装配 + `LauncherLifecycle` 状态→副作用接线集中在组合根，`Program.Main` 只做薄适配；目标地址/端口经 `ShellLogic.ResolveTarget` 统一解析（`DSH_WEB_URL` 外部托管 / `DSH_WEB_PORT` 端口覆盖 / 缺省 3080） |
+| ADR-011 | **`WindowManager` 对 `Program` 的静态引用一律改组合根委托注入** | 切断 Program↔WindowManager 隐式循环依赖；`PopupFactory`/`ApplyShadowAction`/`ShowWindowAction`/`ResolveDarkModeProvider`/`TraceAction` 由组合根装配，进程级测试不被 Program 静态状态污染 |
+| ADR-012 | **Splash 消息泵模型：双缓冲 + `IProgress<T>` 回填 + 内联确认面板** | UI 线程只跑消息泵，全部耗时 IO 在后台流水线；进度经绑定 UI `SynchronizationContext` 的 `Progress<T>` 回填，确认用窗体内联面板 + `TaskCompletionSource`（禁 MessageBox 嵌套模态循环）；控件构造时预渲染默认文本，消除白屏/闪烁 |
+| ADR-013 | **服务探测必须异步（`ConnectAsync`/后台线程）** | 同步 `TcpClient.Connect` 本机可达 2s，在 UI 线程会卡死消息泵（白屏）；`ShellLogic.PortOpenAsync` + `ServiceManager` 探测异步化，首个 `await` 前不做任何阻塞 IO |
 
 ## 错误码表 / Error codes
 
@@ -166,8 +173,18 @@ dsh-launcher/
 │   └── build-release.ps1      # 打包（仅开发用）
 ├── src/
 │   └── DshShell/              # 壳应用源码（C# WinForms + WebView2）
+│       ├── Lifecycle/         # 纯内存状态机 LauncherLifecycle（ADR-008）
+│       ├── Managers/          # 五个职责 Manager（Runtime/Service/WebView/Window/Tray）+ F11 钩子
+│       ├── Windows/           # 窗体类（DshShellForm / SplashForm / TrayMenuForm）
+│       ├── Win32/             # Win32 封装（NativeMethods / WindowGeometry / DisplayMetricsProvider / UiTestHook）
+│       ├── Chrome/            # 自绘标题栏 CustomTitleBar / WindowChromeController
+│       ├── LauncherApp.cs     # 组合根：装配 Manager + 状态→副作用接线（ADR-010）
+│       ├── ShellLogic.cs      # 纯策略逻辑（可单测）
+│       ├── Program.cs         # 入口 + UI 事件接线（已大幅瘦身）
+│       └── …
 └── tests/
-    └── DshShell.Tests/        # 单元测试
+    ├── DshShell.Tests/        # 单元测试（含 Lifecycle/、Managers/ 目录）
+    └── DshShell.E2E/          # E2E：启动耗时基准 / UI 响应性 / 跨屏最大化 / TestHook
 ```
 
 ## 常见问题 / FAQ
