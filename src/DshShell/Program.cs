@@ -3029,11 +3029,31 @@ internal static class Program
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
             int X, int Y, int cx, int cy, uint uFlags);
 
+        // Step 1 多屏修复（G1/G10）P/Invoke：物理像素工作区来源。
+        // 为什么必须物理像素：PerMonitorV2 下 Screen.FromHandle.WorkingArea 是逻辑像素，
+        // 150% 缩放副屏会把工作区算小 → 最大化铺不满/丢窗。MonitorFromWindow+GetMonitorInfo
+        // 拿 rcWork（物理像素）喂 ComputeMaximizedMinMaxInfo 消除陷阱（矩阵 G1/G10）。
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        private const uint MONITOR_DEFAULTTONEAREST = 2; // 取最近监视器（副屏窗口归属判定）
+
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int X, Y; }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;      // 物理像素工作区（最大化铺满目标）
+            public uint dwFlags;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct NCCALCSIZE_PARAMS
@@ -3086,14 +3106,11 @@ internal static class Program
         {
             if (TitleBar is null || MainWebView2 is null) return;
             // 标题栏始终可见（F11 = 最大化/还原，不再隐藏标题栏）
-            var inset = 1;
-            var titleHeight = (int)Math.Round(32 * DeviceDpi / 96f);
-            TitleBar.Bounds = new Rectangle(inset, inset,
-                Math.Max(0, ClientSize.Width - 2 * inset),
-                titleHeight);
-            MainWebView2.Bounds = new Rectangle(inset, inset + titleHeight,
-                Math.Max(0, ClientSize.Width - 2 * inset),
-                Math.Max(0, ClientSize.Height - inset - titleHeight - inset));
+            // Step 1 纯函数下沉（G7）：布局决策在 WindowGeometry.LayoutChromeRects（inset=1、
+            // titleH=round(32*dpi/96)、负值钳 0），此处只应用结果，避免各路径手写不一致。
+            var (title, web) = DshWeb.Win32.WindowGeometry.LayoutChromeRects(ClientSize, DeviceDpi);
+            TitleBar.Bounds = title;
+            MainWebView2.Bounds = web;
         }
 
         protected override void OnResize(EventArgs e)
@@ -3168,39 +3185,37 @@ internal static class Program
                 case WM_GETMINMAXINFO:
                 {
                     var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
-                    var wa = Screen.FromHandle(Handle).WorkingArea;
+                    // Step 1 多屏修复（G1/G10）：物理像素工作区（MonitorFromWindow+GetMonitorInfo），
+                    // 替代 Screen.FromHandle 的逻辑像素陷阱（150% 副屏把工作区算小 → 丢窗）。
+                    // 决策全在纯函数 ComputeMaximizedMinMaxInfo，此处只做"取物理工作区 + 转发"。
+                    var hmon = MonitorFromWindow(Handle, MONITOR_DEFAULTTONEAREST);
+                    var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                    GetMonitorInfo(hmon, ref mi);
+                    var work = new Rectangle(mi.rcWork.Left, mi.rcWork.Top,
+                        mi.rcWork.Right - mi.rcWork.Left, mi.rcWork.Bottom - mi.rcWork.Top);
+                    var mm = DshWeb.Win32.WindowGeometry.ComputeMaximizedMinMaxInfo(work);
                     // 去 WS_CAPTION 后系统最大化不再外扩，直接给工作区即 0px 精确铺满、不越任务栏（ADR-001）。
-                    mmi.ptMaxSize.X = wa.Width;
-                    mmi.ptMaxSize.Y = wa.Height;
-                    mmi.ptMaxPosition.X = wa.Left;
-                    mmi.ptMaxPosition.Y = wa.Top;
-                    mmi.ptMaxTrackSize.X = wa.Width;
-                    mmi.ptMaxTrackSize.Y = wa.Height;
+                    mmi.ptMaxSize = new POINT { X = mm.MaxSize.X, Y = mm.MaxSize.Y };
+                    mmi.ptMaxPosition = new POINT { X = mm.MaxPos.X, Y = mm.MaxPos.Y };
+                    mmi.ptMaxTrackSize = new POINT { X = mm.MaxTrack.X, Y = mm.MaxTrack.Y };
                     Marshal.StructureToPtr(mmi, m.LParam, false);
                     m.Result = IntPtr.Zero;
                     return;
                 }
                 case WM_NCHITTEST:
                     base.WndProc(ref m);
-                    if (m.Result == (IntPtr)HTCLIENT && WindowState != FormWindowState.Maximized)
+                    if (m.Result == (IntPtr)HTCLIENT)
                     {
                         // 64 位屏幕坐标：左侧/上方副屏为负坐标，LParam.ToInt32() 会抛 OverflowException
                         //（B1）。正确拆位：低 16 位有符号 = X，高 16 位有符号 = Y。
                         var (x, y) = ShellLogic.SplitLParam(m.LParam.ToInt64());
                         var pt = new Point(x, y);
                         var r = RectangleToScreen(ClientRectangle);
-                        var left = pt.X < r.Left + ResizeEdge;
-                        var right = pt.X > r.Right - ResizeEdge;
-                        var top = pt.Y < r.Top + ResizeEdge;
-                        var bottom = pt.Y > r.Bottom - ResizeEdge;
-                        if (left && top) m.Result = (IntPtr)HTTOPLEFT;
-                        else if (right && top) m.Result = (IntPtr)HTTOPRIGHT;
-                        else if (left && bottom) m.Result = (IntPtr)HTBOTTOMLEFT;
-                        else if (right && bottom) m.Result = (IntPtr)HTBOTTOMRIGHT;
-                        else if (left) m.Result = (IntPtr)HTLEFT;
-                        else if (right) m.Result = (IntPtr)HTRIGHT;
-                        else if (top) m.Result = (IntPtr)HTTOP;
-                        else if (bottom) m.Result = (IntPtr)HTBOTTOM;
+                        // Step 1 纯函数下沉（G4/G5）：决策在 WindowGeometry.HitTestResizeEdge，
+                        // 最大化返回 null（边缘不出现缩放指针）。行为与旧内联判定逐位一致。
+                        var ht = DshWeb.Win32.WindowGeometry.HitTestResizeEdge(
+                            pt, r, ResizeEdge, maximized: WindowState == FormWindowState.Maximized);
+                        if (ht is not null) m.Result = (IntPtr)ht.Value;
                     }
                     return;
                 default:
