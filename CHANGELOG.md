@@ -9,40 +9,45 @@
 > 本版本为 **预览发布（Preview）**，可能包含未知 Bug、行为变更或不稳定表现，**仅供体验与测试，请勿视为正式稳定版本**。
 > 若在使用中发现问题，欢迎提交 [Issue](https://github.com/Ruler4396/dsh-launcher/issues)（请附上 `dsh.log` 与简要复现步骤），我们会尽快跟进处理。
 
+> 本版本是一次**大规模架构重构**：将 3000 行的 God Object `Program.cs` 拆分为职责单一的 Manager + 显式状态机，引入极速启动模型，并完成多显示器 DPI 修复。行为应尽量与前版一致，但因改动面广，属预览性质。
+
 ### 新增
 
-- **极速启动模型**：启动状态窗（Splash）双缓冲渲染 + `IProgress<T>` 后台流水线回填进度，双击后 <500ms 出现启动窗；取消按钮只撤销后台流程、不放弃已在后台进行中的服务下载/启动。
-- **架构收尾（ADR-008 落地）**：启动编排统一由 `LauncherApp` 状态机驱动（替换旧 Main 面条流水线）；`WindowManager` 对 `Program` 的隐式循环依赖经组合根委托注入解除；`WebViewManager` 全部静默 `catch{}` 改为带日志的异常边界。
-- **UI TestHook（NamedPipe）**：`DSH_TEST_MODE=1` 时激活，供自动化精确验证窗口几何（最大化 0px 间隙、DPI 缩放），生产路径零接触。
-- **跨屏最大化 E2E**：基于虚拟副屏 + 异构 DPI 的 FlaUI 回归测试（无物理硬件可复现多屏丢窗）。
+- **极速启动模型**：启动状态窗（Splash）双缓冲渲染 + `IProgress<T>` 后台流水线回填进度，双击后 <500ms 出现启动窗；取消按钮只撤销后台流程、不放弃已在后台进行中的服务下载/启动；`DSH_TEST_SPLASH_DELAY_MS` 测试钩子可模拟后台耗时。
+- **多显示器 DPI 最大化修复（0px 间隙）**：物理像素工作区 + frame 补偿决策下沉 `WindowGeometry.ComputeMaximizedMinMaxInfo`；新增 `Win32/DisplayMetricsProvider.cs`、`Win32/MonitorDpiMetrics.cs`（`IDisplayMetricsProvider` 可注入，Headless 单测覆盖负坐标副屏/异构 DPI 边界）。
+- **UI TestHook（NamedPipe，ADR-009）**：`DSH_TEST_MODE=1` 时激活的 `Win32/UiTestHook.cs` 内部通信通道，供自动化发 `ToggleMaximize`/`GetWindowRect`/`GetWorkArea`/`Shutdown` 精确验证窗口几何，生产路径零接触。
+- **无头 UI 几何自测 `--ui-selftest`**：建窗→最大化→断言"窗口==工作区 0px"，退出码 0/1/2，结果落盘 `ui-selftest-result.txt`；配套 `.github/workflows/ui-test.yml` 在 windows-latest 跑几何回归。
+- **跨屏最大化 E2E（无物理硬件）**：`scripts/install-virtual-display.ps1`/`Set-VirtualDisplay.ps1` 注入 IDD 虚拟副屏 + 异构 DPI（150%），`MaximizeAcrossVirtualDisplayTests` 断言最大化后窗口 ⊆ 副屏工作区（≤2px）。
+- **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION / WM_NCCALCSIZE / WM_NCACTIVATE / F11 钩子 / 校验和源 / 日志轮转 / 原子写 / 生命周期）。
+
+### 重构（架构，核心）
+
+- **显式生命周期状态机（ADR-008）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast）；新增 `WebViewCrashed` 触发器（Running 自转移：崩溃被拦截并触发重载，不终结应用）。
+- **Manager 层（ADR-008）**：新增 `Managers/` 五个职责接口 + `RuntimeManager`（委托 RuntimeResolver，`confirmDownload` 注入保持"先确认后下载"契约）、`ServiceManager`（就绪探测，探针可注入）、`WebViewManager`（WebView2 事件接线迁入）、`WindowManager`、`TrayManager`、`F11LowLevelHook`。
+- **组合根统一启动编排（ADR-010）**：`LauncherApp` 装配各 Manager 并把 `LauncherLifecycle` 的"状态→副作用"接线，**彻底替换 `Program.Main` 的旧 SplashForm 流水线**；解析 `DSH_WEB_URL`/`DSH_WEB_PORT`（修复硬编码 3080）；副作用（维护 IO/拉起服务/就绪探针/僵尸清理）经委托注入，自身不引用 Program。
+- **`Program.cs` 瘦身 + 分步纯移动拆分**：窗体类迁出至 `Windows/`（`DshShellForm`/`SplashForm`/`TrayMenuForm`）、`CustomTitleBar` 迁出至 `Chrome/`、WebView2 事件接线迁入 `WebViewManager`（InitWebViewAsync/崩溃自愈/下载/弹窗策略）、托盘生命周期与主题监听迁入 `WindowManager`（依赖委托注入 + `VerifyDependencies` 接线自检）。
+- **解除隐式循环依赖（ADR-011）**：`WindowManager` 对 `Program` 的 5 处静态引用（`CreatePopup`/`ApplyShadow`/`ShowWindowNative`/`ResolveDarkMode`/`Trace`）全部改为组合根注入的委托（`PopupFactory`/`ApplyShadowAction`/`ShowWindowAction`/`ResolveDarkModeProvider`/`TraceAction`），切断 Program↔WindowManager 环。
+- **异常边界治理**：`WebViewManager` 全部静默 `catch{}`（8 处）改为捕获特定异常 + `Logger.Warn` 留痕；`RuntimeResult.Failed()` 保留错误码（E1002-E1005 诊断语义完整）。
 
 ### 修复
 
 - **多显示器最大化 `ptMaxTrackSize` 修正**：Normal 态拖拽贴边时窗口不再比工作区小一圈（业界惯例：maxTrack 直接用物理工作区尺寸，maxSize 仍扣 frame 补偿 DWM 外扩）。
-- **启动白屏 / 组件延迟绘制（v0.4.2 回归根因）**：`LauncherApp.RunStartupAsync` 首个 await 前的同步阻塞（`TcpClient.Connect` 本机可达 2s、数据迁移 IO）曾卡死 UI 线程导致 Splash 先全白、控件后绘制——全部同步副作用已包 `Task.Run`，首个 await 即让出 UI 线程。
-- **"正在检查 dsh 服务…"阶段卡顿**：`ServiceManager` 端口探测改为 `ConnectAsync` 异步、HTTP 探测移入后台线程，检查期间窗体可拖动/重绘、取消按钮立即响应。
-- **Splash 启动窗 UI 紧凑化**：窗体 380×196 → 380×180，边距统一 16px，消除"字少窗空"视觉失衡。
+- **启动白屏 / 组件延迟绘制（回归根因）**：`LauncherApp.RunStartupAsync` 首个 await 前的同步阻塞（`TcpClient.Connect` 本机可达 2s、数据迁移 IO）曾卡死 UI 线程导致 Splash 先全白、控件后绘制——全部同步副作用已包 `Task.Run`，首个 await 即让出 UI 线程。
+- **"正在检查 dsh 服务…"阶段卡顿（ADR-013）**：`ShellLogic.PortOpenAsync`（`ConnectAsync` + 3s 超时）、`ServiceManager` 探测异步化、HTTP 探测移入后台线程，检查期间窗体可拖动/重绘、取消按钮立即响应。
+- **Splash 启动窗 UI 紧凑化**：窗体 440×232 → 380×196 → 380×180，边距统一 16px，消除"字少窗空"视觉失衡。
 - **`RuntimeResult` 错误码保留**：修复 `Failed()` 工厂丢弃错误码问题，E1002/E1003/E1004/E1005 诊断语义完整。
+- **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → 改为 `Start-Process -Wait -PassThru` + 结果落盘。
 
 ### 测试
 
-- Headless 状态机/组合根场景测试：Happy Path、Runtime Failure（E1004）、Readiness Timeout（E2002 + 僵尸清理）、WebView2 崩溃恢复、异常边界。
-- TestHook E2E：`ToggleMaximize` + `GetWindowRect`/`GetWorkArea` 断言最大化 0px 间隙（≤2px）、`Shutdown` 优雅退出。
-- 启动耗时基准（<500ms）与 UI 响应性/渲染完整性（FlaUI，后台 10s 阻塞期 UI 健康）E2E。
-- 单测 321 个全部通过。
+- Headless 状态机/组合根场景测试（`LauncherAppScenarioTests` + `LauncherLifecycleTests`）：Happy Path（状态轨迹 + UIInitialized 事件）、Runtime Failure（E1004）、Readiness Timeout（E2002 + 僵尸清理回调）、WebView2 崩溃恢复（自转移 + 广播）、异常边界（Manager 抛异常不悬停状态机）、非法转移 Fail-fast。
+- TestHook E2E（`UiTestHookE2ETests`）：`ToggleMaximize` + `GetWindowRect`/`GetWorkArea` 断言最大化 0px 间隙（≤2px）、`Shutdown` 优雅退出。
+- 启动耗时基准（`StartupLatencyTests`，Splash 窗口 <500ms）与 UI 响应性/渲染完整性（`UiResponsivenessTests`，后台 10s 阻塞期 UI 健康 + 无空白）。
+- 跨屏最大化 E2E（虚拟副屏，见上）。
+- 纯逻辑测试补齐：`SuggestDownloadName`（RFC5987）、`ShellLogic.AtomicWrite`、`F11HookDecisionTests`、`WindowStateStore` 最大化状态。
+- 单测 **321 个全部通过**。
 
 ## [Unreleased]
-
-> 内部：为 `Program.cs` 拆分做准备——显式生命周期状态机 + Headless 测试、纯逻辑测试补齐、架构决策索引。
-
-- **显式生命周期状态机（ADR-008 骨架）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast），暂不接线 Main，配 Headless 测试作回归护栏。
-- **Manager 层骨架（ADR-008）**：新增 `Managers/` 五个职责接口 + `RuntimeManager`（委托 RuntimeResolver）、`ServiceManager`（就绪探测，探针可注入）+ `LauncherApp` 组合根（手写装配，不引外部 DI）。全部纯增量未接线 Main；Headless 测试覆盖就绪/超时/运行失败路径。
-- **WebView/Window/Tray Manager 委托实现 + 五 Manager 组合完成**：`IWebViewManager`/`IWindowManager`/`ITrayManager` 补齐方法契约，`WebViewManager`/`WindowManager`/`TrayManager` 作为真实类委托现有 Program 内部方法（零行为变更）；`LauncherApp` 组合根装配全部五个 Manager（可注入替换）。DshShellForm/InitWebViewAsync 本体物理迁移属高风险（Win32/焦点），留待 `DSH_USE_NEW_LIFECYCLE` 运行时对比后分步迁入。测试：组合完整性、WindowManager 委托表面。
-- **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
-- **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
-- **无头 UI 几何自测 + CI（ADR-001 回归网）**：新增 `--ui-selftest` 模式（建窗→最大化→断言窗口==工作区 0px，退出码 0/1/2，写日志+stdout）；新增 `.github/workflows/ui-test.yml` 在 `windows-latest` 跑几何回归（不依赖 Node/dsh/WebView2 内容，CI 无需本地安装）。特征开关 `DSH_USE_NEW_LIFECYCLE` 读取并记录启动路径日志。
-- **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → CI 误报；改为 `Start-Process -Wait -PassThru` 读退出码 + 结果落盘 `ui-selftest-result.txt`，规避。
-- **自绘标题栏迁出（Chrome 层第一步）**：`CustomTitleBar` 从 Program 物理迁出至新的 `Chrome/CustomTitleBar.cs`（`internal sealed class`，`_owner`=DshShellForm，共享图标/user32 经 `Program.` 内部成员）；`DshShellForm` 提为 internal。`--ui-selftest`（0px）与正常窗口/自绘标题栏渲染均验证不变。
 
 ## [0.3.5] - 2026-08-18
 
