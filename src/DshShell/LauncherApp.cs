@@ -28,8 +28,9 @@ public sealed class LauncherApp
 
     // ---------------- 副作用委托（组合根注入；null = 跳过，供 Headless 测试） ----------------
 
-    /// <summary>阶段 0：无 UI 的轻量维护 IO（日志轮转/数据迁移/自启落地等）。</summary>
-    public Action? BackgroundMaintenance { get; set; }
+    /// <summary>阶段 0：无 UI 的轻量维护 IO（日志轮转/数据迁移/自启落地/延迟更新应用等）。
+    /// 入参为取消令牌：npm install -g 应用更新可达 30-60s，用户取消 Splash 时必须能中断（v0.4.0）。</summary>
+    public Action<CancellationToken>? BackgroundMaintenance { get; set; }
 
     /// <summary>拉起服务前的僵尸清扫 + 延迟更新应用。</summary>
     public Action? SweepStaleAndApplyUpdate { get; set; }
@@ -117,9 +118,12 @@ public sealed class LauncherApp
         // ---- 阶段 0：无 UI 的轻量维护 IO（原 Main 同步项）——必须后台执行：内部含同步
         // PortOpen（TcpClient.Connect）、数据迁移与延迟更新应用（npm install -g 可能 30-60s）
         // 等 IO，同步调用会阻塞 UI 线程导致 Splash 白屏。----
+        // 取消语义：Task.Run 的 ct 只在任务启动前生效；已运行中的 npm install 由
+        // BackgroundMaintenance(ct) 内部转发到 RunNpmCommand → ct.Register Kill 进程树（Splash
+        // 取消立即生效，不残留"点取消几十秒后才关"）。----
         progress?.Report("正在准备启动环境…");
         if (BackgroundMaintenance is not null)
-            await Task.Run(BackgroundMaintenance, ct);
+            await Task.Run(() => BackgroundMaintenance(ct), ct);
 
         // ---- E2E 测试钩子：模拟"后台启动耗时"，跳过真实服务逻辑（tests/DshShell.E2E）。
         // 设 0/缺省 = 正常流水线；设 >0 = 延迟该毫秒数后直接返回就绪。仅测试使用。
