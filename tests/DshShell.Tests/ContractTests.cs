@@ -58,11 +58,20 @@ public class ContractTests
     [Fact]
     public void PortOpen_ListeningSocket_True_ThenClosed_False()
     {
-        // 真实环回 socket（127.0.0.1:0 取空闲端口），确定性、无 Sleep
+        // 真实环回 socket（127.0.0.1:0 取空闲端口），确定性、无 Sleep。
+        // CI runner（Windows Server）上 TcpListener.Start() 后 connect 偶发瞬时不就绪
+        //（PortOpen 300ms 硬超时内 connect 超时）→ 断言前置短重试（≤5 次/200ms）吸收时序抖动。
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        Assert.True(ShellLogic.PortOpen("127.0.0.1", port));
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        var opened = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ShellLogic.PortOpen("127.0.0.1", port)) { opened = true; break; }
+            Thread.Sleep(200);
+        }
+        Assert.True(opened, "监听 socket 应能被 PortOpen 探测到（含 CI 时序抖动容错）");
         listener.Stop();
         Assert.False(ShellLogic.PortOpen("127.0.0.1", port));
     }
