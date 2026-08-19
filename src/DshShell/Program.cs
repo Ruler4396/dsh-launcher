@@ -622,8 +622,11 @@ internal static class Program
         // F11 全屏：用系统级低级键盘钩子（WH_KEYBOARD_LL）在 OS 层捕获——不依赖焦点、
         // 不依赖浏览器进程（WebView2 有时会截走物理 F11 导致 KeyDown/消息过滤器失效）。
         // 仅在主窗口位于前台时切换并吞掉 F11。
+        // 跨线程修复（Step2b）：UI 线程缓存 hwnd 再进 lambda——钩子回调在线程池/系统线程触发，
+        // 直接访问 form.Handle 在窗体销毁期抛 ObjectDisposedException（竞态）。
+        var mainHwnd = form.Handle; // 仅触发句柄创建（此时窗体已建）
         using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
-            () => F11LowLevelHook.GetForegroundWindow() == form.Handle);
+            () => F11LowLevelHook.GetForegroundWindow() == mainHwnd);
         var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
         {
@@ -915,9 +918,11 @@ internal static class Program
             _mainWeb = web; // readyState 测试钩子按 ReferenceEquals(web, _mainWeb) 门控，必须先设
 
             // F11 钩子（与真实路径一致）：仅主窗前台时切换并吞键。
+            // 跨线程修复（Step2b）：缓存 hwnd 再进 lambda，避免销毁期 ObjectDisposedException。
+            var probeHwnd = form.Handle;
             using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
-                () => F11LowLevelHook.GetForegroundWindow() == form.Handle);
-            Trace($"ui-probe: f11 hook installed hwnd=0x{form.Handle.ToInt64():X}"); // 诊断：确认走 --ui-probe 分支
+                () => F11LowLevelHook.GetForegroundWindow() == probeHwnd);
+            Trace($"ui-probe: f11 hook installed hwnd=0x{probeHwnd.ToInt64():X}"); // 诊断：确认走 --ui-probe 分支
 
             form.Shown += async (_, _) =>
             {
