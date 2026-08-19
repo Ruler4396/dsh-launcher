@@ -107,9 +107,13 @@ public sealed class SplashForm : Form
                 _confirmTcs.TrySetResult(false);
                 _confirmPanel.Visible = false;
             }
-            // 只撤销后台流水线，不立即关窗——流水线收到取消（ThrowIfCancellationRequested）
-            // 后自行 Close。服务若已在后台下载/启动会继续，下次启动可接管。
+            // v0.4.0 T4：**同步关窗**——此前只 cts.Cancel()，关窗依赖流水线 catch(OCE)→finally→
+            // BeginInvoke(Close) 异步回投，用户反馈"取消要点多次才关"。立即置 CancelledByUser
+            //（Main 读此决定退出，不依赖流水线 catch 时序）+ Close()（Application.Run 返回）。
+            // 后台流水线随进程退出自然终止；Main 对 Result==null 有防御分支。
+            CancelledByUser = true;
             _cts.Cancel();
+            Close();
         };
 
         // ---- 内联确认面板：替代 MessageBox 嵌套模态循环 ----

@@ -424,6 +424,19 @@ public static class ShellLogic
         FollowWindow = 2,
     }
 
+    /// <summary>启动早期待应用更新的处理动作（矩阵 U2，v0.4.0 T2）。</summary>
+    internal enum PendingUpdateAction
+    {
+        /// <summary>无待应用更新。</summary>
+        None = 0,
+        /// <summary>服务未运行：直接应用（npm install -g 固定版本）。</summary>
+        ApplyNow = 1,
+        /// <summary>服务在跑且版本不一致：一次性询问[立即重启应用][稍后]。</summary>
+        PromptRestart = 2,
+        /// <summary>已应用但未清账的历史残留：直接清除 pending。</summary>
+        ClearPending = 3,
+    }
+
     /// <summary>
     /// FormClosing 托盘拦截决策（矩阵 L1）：是否拦截关闭、隐藏到托盘。
     /// 决策 = 生命周期模式为"托盘驻留" 且 未请求真正退出。
@@ -433,6 +446,35 @@ public static class ShellLogic
     /// </summary>
     internal static bool ShouldInterceptCloseToTray(ServiceLifetime mode, bool trayExitRequested)
         => mode == ServiceLifetime.Tray && !trayExitRequested;
+
+    /// <summary>
+    /// 关窗/托盘退出时**是否停止 dsh 服务**决策（矩阵 M1，v0.4.0 T1）：
+    /// - FollowWindow 且服务由本壳管理（本次拉起**或**接管了上次残留）且非外部托管 → true；
+    /// - AlwaysOn（服务常驻）→ false；Tray（托盘退出才停）→ false；external 托管 → 恒 false。
+    /// 关键语义："接管即负责"——TryAdoptOrphanService 成功接管后 shellManaged=true，
+    /// 关窗必须停掉被接管的服务，否则 node 常驻（issue：关窗后 node 未被杀、重开秒进复用旧服务）。
+    /// </summary>
+    internal static bool ShouldStopServiceOnClose(ServiceLifetime mode, bool externallyManaged, bool shellManaged)
+        => mode == ServiceLifetime.FollowWindow && shellManaged && !externallyManaged;
+
+    /// <summary>
+    /// 启动早期"待应用更新"处理决策（矩阵 U2，v0.4.0 T2）：
+    /// 1. pending 且端口关 → ApplyNow（服务未运行，直接应用，保持 v0.3 行为）；
+    /// 2. pending 且端口开且运行版本 != 待应用版本 → PromptRestart（服务在跑，不能现场换版本，
+    ///    一次性询问[立即重启应用][稍后]）；
+    /// 3. pending 且端口开且运行版本 == 待应用版本 → ClearPending（已应用但未清账的历史残留）；
+    /// 4. 无 pending → None。
+    /// 端口开着时绝不允许静默跳过——否则"下载成功→重开又弹更新"死循环（根因 A）。
+    /// </summary>
+    internal static PendingUpdateAction ResolvePendingUpdateAction(
+        bool pendingExists, bool portOpen, string? runningVersion, string? pendingVersion)
+    {
+        if (!pendingExists) return PendingUpdateAction.None;
+        if (!portOpen) return PendingUpdateAction.ApplyNow;
+        if (string.Equals(runningVersion?.Trim(), pendingVersion?.Trim(), StringComparison.Ordinal))
+            return PendingUpdateAction.ClearPending;
+        return PendingUpdateAction.PromptRestart;
+    }
 
     /// <summary>PID 身份校验（防复用误杀，质量治理 P1-2）：pid 文件里的 PID 可能被系统
     /// 复用给无关进程——杀进程前必须确认该 PID 确为 dsh 服务（node 进程）。
