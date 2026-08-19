@@ -38,14 +38,20 @@ public class UiResponsivenessTests
             var splash = await WaitForWindowAsync(automation, SplashTitle, TimeSpan.FromSeconds(10));
             Assert.NotNull(splash);
 
-            // 2. 渲染完整性：取消按钮与状态文本完全可见、尺寸正常
-            var cancel = splash.FindFirstDescendant(cf => cf.ByName("取消"));
+            // 2. 渲染完整性：取消按钮与状态文本完全可见、尺寸正常。
+            // 注意：窗口句柄出现（FindWindowW 命中标题）≠ UIA 控件树就绪——控件树随 WM_PAINT
+            // 异步同步，立即 FindFirstDescendant 偶发 null（CI runner 更明显，见 32238645282）。
+            // 必须轮询等待控件出现（≤3s），窗口已就绪而控件尚未渲染才算真失败。
+            var cancel = await WaitForDescendantAsync(splash,
+                cf => cf.ByName("取消"), TimeSpan.FromSeconds(3));
             Assert.NotNull(cancel);
             Assert.False(cancel.IsOffscreen, "取消按钮 IsOffscreen=true（不可见）");
             Assert.True(cancel.BoundingRectangle.Width >= 60 && cancel.BoundingRectangle.Height >= 20,
                 $"取消按钮 BoundingRectangle 异常（渲染不完整）：{cancel.BoundingRectangle}");
 
-            var status = splash.FindFirstDescendant(cf => cf.ByName("正在准备启动…"));
+            // 阶段 0 会覆盖状态文本为"正在准备启动环境…"（v0.4.0 文案）
+            var status = await WaitForDescendantAsync(splash,
+                cf => cf.ByName("正在准备启动环境…"), TimeSpan.FromSeconds(3));
             Assert.NotNull(status);
             Assert.False(status.IsOffscreen, "状态文本 IsOffscreen=true（不可见）");
             Assert.True(status.BoundingRectangle.Width > 0 && status.BoundingRectangle.Height > 0,
@@ -58,11 +64,14 @@ public class UiResponsivenessTests
             Assert.True(proc.Responding, "2 秒后 UI 线程仍无响应");
 
             // 4. 截图分析：取消按钮区域无大面积空白（全白 = 未绘制）
-            using (var capture = Capture.Rectangle(cancel.BoundingRectangle))
+            var cancelRect = cancel.BoundingRectangle; // 诊断用（DPI 虚拟化时可能是逻辑坐标）
+            using (var capture = Capture.Rectangle(cancelRect))
             using (var bmp = capture.Bitmap)
             {
                 var whiteRatio = ComputeWhiteRatio(bmp);
-                Assert.True(whiteRatio < 0.98, $"取消按钮区域 {whiteRatio:P0} 为空白（渲染异常）");
+                Assert.True(whiteRatio < 0.98,
+                    $"取消按钮区域 {whiteRatio:P0} 为空白：rect={cancelRect} " +
+                    $"work={System.Windows.Forms.Screen.PrimaryScreen!.Bounds}");
             }
 
             // 5. 可交互：触发"取消" → 消息泵处理 → 进程退出
@@ -101,6 +110,22 @@ public class UiResponsivenessTests
             await Task.Delay(100);
         }
         throw new XunitException($"窗口 '{title}' 在 {timeout} 内未出现");
+    }
+
+    /// <summary>轮询等待 UIA 后代控件出现（控件树异步就绪，窗口就绪≠控件就绪）。</summary>
+    private static async Task<FlaUI.Core.AutomationElements.AutomationElement?> WaitForDescendantAsync(
+        FlaUI.Core.AutomationElements.Window window,
+        Func<FlaUI.Core.Conditions.ConditionFactory, FlaUI.Core.Conditions.ConditionBase> condition,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var el = window.FindFirstDescendant(condition);
+            if (el is not null) return el;
+            await Task.Delay(100);
+        }
+        return null;
     }
 
     private static double ComputeWhiteRatio(Bitmap bmp)
