@@ -341,9 +341,10 @@ public class V030FeaturesTests
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3");
-        var (version, failCount) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount);
+        Assert.Null(tarball); // 未传 tarball → 旧兼容（回退线上）
     }
 
     [Fact]
@@ -354,9 +355,60 @@ public class V030FeaturesTests
         StagedUpdate.MarkPending("1.2.3");
         StagedUpdate.MarkApplyFailed();
         StagedUpdate.MarkApplyFailed();
-        var (version, failCount) = StagedUpdate.ReadPending();
+        var (version, failCount, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(2, failCount);
+    }
+
+    [Fact]
+    public void StagedUpdate_MarkPending_WithTarball_PreservedThroughMarkApplyFailed()
+    {
+        // 任务：下载阶段记录本地 tarball，MarkApplyFailed 不得丢弃它（应用失败重试仍需本地安装）
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
+        StagedUpdate.MarkApplyFailed();
+        var (_, _, tarball) = StagedUpdate.ReadPending();
+        Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
+    }
+
+    [Fact]
+    public void StagedUpdate_LocateTarball_PrefersPendingName_ThenRule_ThenGlob()
+    {
+        // 任务：应用时优先本地 tarball（不现场拉）——按 pending 名 → 命名规则 → staging 模糊匹配三级定位
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var staging = Path.Combine(tmp.Path, "staging");
+        Directory.CreateDirectory(staging);
+
+        // ① 无 staging → null
+        Directory.Delete(staging, recursive: true);
+        Assert.Null(StagedUpdate.LocateTarball("1.2.3", "deepseek-ai-dsh-1.2.3.tgz"));
+        Directory.CreateDirectory(staging);
+
+        // ② pending 名精确匹配
+        File.WriteAllText(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"), "pack");
+        Assert.Equal(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"),
+            StagedUpdate.LocateTarball("1.2.3", "deepseek-ai-dsh-1.2.3.tgz"));
+
+        // ③ pending 名缺失（旧记录）→ 命名规则兜底
+        File.Delete(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"));
+        File.WriteAllText(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"), "pack");
+        Assert.Equal(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"),
+            StagedUpdate.LocateTarball("1.2.3", null));
+
+        // ④ 命名规则文件名大小写/后缀差异 → 命中实际存在的 tarball
+        // （Windows 文件系统大小写不敏感：规则兜底构造的小写路径也能打开大写文件，
+        //   断言"返回路径指向存在的文件"而非精确字符串，避免大小写差异的假失败）
+        File.Delete(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"));
+        File.WriteAllText(Path.Combine(staging, "DEEPSEEK-AI-DSH-1.2.3.tgz"), "pack");
+        var located = StagedUpdate.LocateTarball("1.2.3", null);
+        Assert.NotNull(located);                       // 能找到
+        Assert.True(File.Exists(located), "返回路径必须指向已存在的 tarball");
+
+        // ⑤ 完全找不到 → null（回退线上拉取）
+        Directory.Delete(staging, recursive: true);
+        Assert.Null(StagedUpdate.LocateTarball("9.9.9", null));
     }
 
     [Fact]
@@ -375,9 +427,10 @@ public class V030FeaturesTests
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
             "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
-        var (version, failCount) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount); // 旧格式兼容：无 failCount → 0
+        Assert.Null(tarball);       // 旧格式兼容：无 tarball → null（回退线上）
     }
 
     [Fact]
@@ -413,9 +466,10 @@ public class V030FeaturesTests
         Logger.Init(log);
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"), "{broken");
-        var (version, failCount) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball) = StagedUpdate.ReadPending();
         Assert.Null(version);          // 容错按无记录处理
         Assert.Equal(0, failCount);
+        Assert.Null(tarball);
         Assert.Contains("pending-update.json is corrupt", File.ReadAllText(log)); // 但必须留痕
     }
 

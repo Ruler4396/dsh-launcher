@@ -1058,7 +1058,7 @@ internal static class Program
             ApplyPendingDshUpdate(ct, progress);
             return;
         }
-        var (pendingVersion, _) = StagedUpdate.ReadPending();
+        var (pendingVersion, _, _) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(pendingVersion)) return;
         var action = ShellLogic.ResolvePendingUpdateAction(
             pendingExists: true,
@@ -1387,7 +1387,7 @@ internal static class Program
     {
         try
         {
-            var (_, failCount) = StagedUpdate.ReadPending();
+            var (_, failCount, _) = StagedUpdate.ReadPending();
             if (failCount >= StagedUpdate.MaxNotifyFailures)
             {
                 Logger.Warn($"staged dsh update {version} kept failing to apply ({failCount} tries); " +
@@ -1399,7 +1399,7 @@ internal static class Program
             var tray = WindowManager.Instance.TrayIcon;
             if (tray is null) return;
             tray.ShowBalloonTip(15000, "dsh 更新待应用",
-                $"更新 dsh {version} 已下载完成。下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）。",
+                $"dsh {version} 已下载。下次重启启动器时将直接安装，无需再次下载。",
                 ToolTipIcon.Info);
         }
         catch { /* 气泡提示失败忽略 */ }
@@ -1430,8 +1430,8 @@ internal static class Program
         try { form.Activate(); } catch { /* 窗体已关闭则忽略 */ }
         var r = MessageBox.Show(
             form,
-            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台下载并安排更新？\n" +
-            "（下载不打扰当前会话；下次重启启动器时将自动安装，预计需要 1-2 分钟，期间请耐心等待）",
+            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台静默下载，下次重启时直接安装？\n" +
+            "（下载在后台进行，不影响你当前使用；下次重启启动器时自动应用，安装无需再次下载）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
@@ -1501,7 +1501,10 @@ internal static class Program
         catch { /* 弹窗失败：记日志不打断启动 */ }
     }
 
-    /// <summary>后台执行：npm pack 下载指定版本到 staging；成功 → MarkPending（下次启动应用）。</summary>
+    /// <summary>后台执行：npm pack 下载指定版本到 staging；成功 → MarkPending（下次启动应用）。
+    /// 下载过程与成功均不打断当前会话（v0.4.0：不弹 Modal，仅托盘气泡轻提示——用户可能正用
+    /// harness，弹窗会打断工作流；失败仍需显式告知）。下载的是完整 tarball（本地安装包），
+    /// 下次重启**直接本地安装**、不现场拉取（真正"已下载完成"）。</summary>
     private static void DownloadDshUpdateStaged(Form form, string latest)
     {
         try
@@ -1511,16 +1514,24 @@ internal static class Program
             var ok = RunNpmCommand($"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + staging + "\"", out var errorTail);
             if (ok)
             {
-                StagedUpdate.MarkPending(latest);
+                // npm pack 的 scoped 包产物名：@deepseek-ai/dsh → deepseek-ai-dsh-{version}.tgz
+                var tarball = $"deepseek-ai-dsh-{latest}.tgz";
+                StagedUpdate.MarkPending(latest, tarball);
                 _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
+                // 后台静默下载：仅托盘气泡轻提示（不打断当前 harness 使用），不弹 Modal。
+                // 文案如实：已下载完整安装包，下次重启直接安装（不再现场下载）。
                 try
                 {
-                    form.BeginInvoke(() => MessageBox.Show(
-                        $"更新 dsh {latest} 已下载完成。下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）。",
-                        "dsh 更新", MessageBoxButtons.OK, MessageBoxIcon.Information));
+                    form.BeginInvoke(() =>
+                    {
+                        if (WindowManager.Instance.TrayIcon is null) return;
+                        WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新已就绪",
+                            $"dsh {latest} 已下载。下次重启启动器时将直接安装，无需再次下载。",
+                            ToolTipIcon.Info);
+                    });
                 }
                 catch { /* 窗体已关闭则下次启动再说 */ }
-                Logger.Info($"staged dsh update downloaded: {latest}");
+                Logger.Info($"staged dsh update downloaded: {latest}", ctx: new { tarball });
             }
             else
             {
@@ -1560,10 +1571,19 @@ internal static class Program
         }
         // 任务一：更新安装阶段显式上报——Splash Label 更新为"正在应用更新 (vX)…"，
         // 并在后台应用期间持续上报 npm 实时日志，缓解"卡死"焦虑。
-        progress?.Invoke($"正在应用更新 (v{version})…");
-        Logger.Info($"applying staged dsh update to {version}");
+        // 任务（v0.4.0 改）：优先用下载时落地的本地 tarball 安装（npm install -g <tarball>，
+        // 秒级、不现场拉取，真正"已下载完成"）；tarball 缺失（缓存被清/旧记录）才回退线上拉取，
+        // 此时文案如实"将现场下载"（用户：下载≠npx 现场拉，必须诚实）。
+        var pending = StagedUpdate.ReadPending();
+        var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
+        progress?.Invoke(localTarball is not null
+            ? $"正在应用更新 (v{version})…（本地安装，无需下载）"
+            : $"正在应用更新 (v{version})…（需要现场下载 dsh 组件，预计 1-2 分钟）");
+        Logger.Info($"applying staged dsh update to {version}",
+            ctx: new { version, source = localTarball is not null ? "local-tarball" : "registry" });
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
-        if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail, ct, progress))
+        var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
+        if (RunNpmCommand($"install -g \"{installSpec}\"", out var errorTail, ct, progress))
         {
             progress?.Invoke($"更新 v{version} 已应用完成。");
             StagedUpdate.ClearPending();
