@@ -2616,6 +2616,24 @@ internal static class Program
                 }
             }
         };
+
+        // Task 0.2 e2e 白屏断言钩子（纯诊断，不改行为）：DSH_WEBVIEW2_READYSTATE=路径 时，
+        // 仅对主窗 WebView2，每次导航成功后把 document.readyState 写入该文件。供 e2e 探针
+        // 验证"主窗非白屏"（托盘恢复用例复用此钩子）。弹窗不触发（ReferenceEquals 门控）。
+        var readyStatePath = Environment.GetEnvironmentVariable("DSH_WEBVIEW2_READYSTATE");
+        if (!string.IsNullOrEmpty(readyStatePath) && ReferenceEquals(web, _mainWeb))
+        {
+            web.CoreWebView2.NavigationCompleted += async (_, e) =>
+            {
+                if (!e.IsSuccess) return;
+                try
+                {
+                    var state = await web.CoreWebView2.ExecuteScriptAsync("document.readyState");
+                    File.WriteAllText(readyStatePath, state);
+                }
+                catch { /* 测试钩子失败不影响功能 */ }
+            };
+        }
     }
 
     /// 插件内部弹窗用的轻量窗口（与主窗口共享 WebView2 用户数据，保持登录态/会话）。

@@ -123,13 +123,41 @@ class Probe {
     [DllImport("user32.dll")] static extern bool MoveWindow(IntPtr hwnd, int x, int y, int w, int h, bool repaint);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
+    [DllImport("user32.dll")] static extern bool SendMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern int GetClassName(IntPtr hwnd, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO mi);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO {
+        public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT {
+        public ushort wVk, wScan, dwFlags, time; public IntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public KEYBDINPUT ki; }
+    delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
     const uint WM_CLOSE = 0x0010;
+    const uint WM_SYSCOMMAND = 0x0112;
+    const uint SC_MAXIMIZE = 0xF030, SC_RESTORE = 0xF120;
+    const uint MONITOR_DEFAULTTONEAREST = 2;
+    const uint INPUT_KEYBOARD = 1;
+    const ushort KEYEVENTF_KEYUP = 0x0002;
+    const ushort VK_F11 = 0x7A;
 
     static void Main(string[] args) {
         var exe = args[0]; var home = args[1]; var url = args[2]; var mode = args[3];
+        if (mode == "geo") {
+            GeoProbe(exe, home, url);
+            return;
+        }
         if (mode == "run1") {
             Start(exe, home, url);
             var h = WaitMain(30000, exe);
@@ -159,6 +187,78 @@ class Probe {
             Thread.Sleep(5000);
             return;
         }
+    }
+
+    // Task 0.2 几何/F11/标题栏/白屏探针：
+    // 1) G1/G10: MonitorFromWindow+GetMonitorInfo(rcWork) 取物理工作区，WM_SYSCOMMAND SC_MAXIMIZE
+    //    后与 GetWindowRect 比对（容差≤2px）——替代逻辑像素陷阱，覆盖多屏物理像素。
+    // 2) F1: SendInput 注入 VK_F11（低级钩子 WH_KEYBOARD_LL 可捕获注入键），断言最大化状态翻转。
+    // 3) G3/G7: 最大化→还原循环后，EnumChildWindows 找自绘标题栏子控件存在、Visible、高≈32×DPI。
+    // 4) W6: 读壳侧 DSH_WEBVIEW2_READYSTATE 钩子写入的 document.readyState，断言非白屏。
+    static void GeoProbe(string exe, string home, string url) {
+        var readyStateFile = System.IO.Path.Combine(home, "webview-ready-state.txt");
+        Start(exe, home, url);
+        var h = WaitMain(30000, exe);
+        Console.WriteLine("found=" + (h != IntPtr.Zero));
+        if (h == IntPtr.Zero) return;
+
+        // ---- 几何断言（G1/G10）：最大化窗口矩形 == 物理工作区 ----
+        var mon = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        var mi = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
+        GetMonitorInfo(mon, ref mi);
+        SendMessage(h, WM_SYSCOMMAND, (IntPtr)SC_MAXIMIZE, IntPtr.Zero);
+        Thread.Sleep(1500);
+        GetWindowRect(h, out var mr);
+        var geoOk = Math.Abs(mr.L - mi.rcWork.L) <= 2 && Math.Abs(mr.T - mi.rcWork.T) <= 2
+            && Math.Abs(mr.R - mi.rcWork.R) <= 2 && Math.Abs(mr.B - mi.rcWork.B) <= 2;
+        Console.WriteLine($"maxrect=({mr.L},{mr.T},{mr.R},{mr.B}) work=({mi.rcWork.L},{mi.rcWork.T},{mi.rcWork.R},{mi.rcWork.B}) geo={geoOk}");
+        SendMessage(h, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero);
+        Thread.Sleep(800);
+
+        // ---- F11 断言（F1）：注入 F11 → 最大化；再注入 → 还原 ----
+        SetForegroundWindow(h);
+        Thread.Sleep(400);
+        SendKey(VK_F11);
+        Thread.Sleep(800);
+        var f11Up = IsZoomed(h);
+        SendKey(VK_F11);
+        Thread.Sleep(800);
+        var f11Down = IsZoomed(h);
+        Console.WriteLine($"f11=up:{f11Up} down:{f11Down}");
+
+        // ---- 标题栏断言（G3/G7）：最大化→还原循环后子控件存在可见且高≈32×DPI ----
+        var children = new System.Collections.Generic.List<IntPtr>();
+        EnumChildWindows(h, (c, _) => { children.Add(c); return true; }, IntPtr.Zero);
+        var dpi = GetDpiForWindow(h);
+        var titleH = (int)Math.Round(32.0 * dpi / 96.0);
+        bool titleOk = false;
+        foreach (var c in children) {
+            if (!IsWindowVisible(c)) continue;
+            GetWindowRect(c, out var cr);
+            var hh = cr.B - cr.T;
+            var ww = cr.R - cr.L;
+            // 自绘标题栏：高度≈32×DPI，宽度≈窗口宽（排除 WebView2 的 Chromium 子窗口）
+            if (Math.Abs(hh - titleH) <= 3 && ww > 200 && cr.T >= mr.T) { titleOk = true; break; }
+        }
+        Console.WriteLine($"title=ok:{titleOk} titleH:{titleH} children:{children.Count} dpi:{dpi}");
+
+        // ---- 白屏断言（W6）：读 readyState 文件，断言主 WebView2 加载完成 ----
+        var ready = "";
+        for (var i = 0; i < 40 && string.IsNullOrEmpty(ready); i++) {
+            if (System.IO.File.Exists(readyStateFile)) ready = System.IO.File.ReadAllText(readyStateFile);
+            if (string.IsNullOrEmpty(ready)) Thread.Sleep(500);
+        }
+        Console.WriteLine("readystate=" + ready);
+
+        PostMessage(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        Thread.Sleep(6000);
+    }
+
+    static void SendKey(ushort vk) {
+        var inp = new INPUT[2];
+        inp[0].type = INPUT_KEYBOARD; inp[0].ki.wVk = vk;
+        inp[1].type = INPUT_KEYBOARD; inp[1].ki.wVk = vk; inp[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(2, inp, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
     }
 
     static IntPtr WaitMain(int ms, string exe) {
@@ -197,6 +297,8 @@ class Probe {
         // WebView2 数据目录隔离铁律：测试实例绝不能与真实实例共用 user-data-dir
         // （共用会导致 WebView2 互锁、真实启动器整窗灰死——2026-08-16 实测事故）
         psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh-e2e-wv2-" + System.Guid.NewGuid().ToString("N"));
+        // Task 0.2 白屏断言钩子：壳在主窗导航完成后把 document.readyState 写入该文件（见壳侧测试钩子）。
+        psi.EnvironmentVariables["DSH_WEBVIEW2_READYSTATE"] = System.IO.Path.Combine(home, "webview-ready-state.txt");
         Process.Start(psi);
     }
 }
@@ -252,6 +354,17 @@ if ($guiEligible) {
     $out2 = & $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" run2 2>&1
     $out2 | ForEach-Object { Write-Host "  probe2: $_" }
     Assert-T (($out2 -join ' ') -match 'rect=\(120,90,900x620\)') "E4: 重启后窗口恢复到 (120,90) 900x620（记忆生效）"
+
+    # ---- Task 0.2 新增 5 组断言（几何/F11/标题栏/白屏）----
+    Write-Host "`n=== E3b: 几何 + F11 + 标题栏 + 白屏 断言 ===" -ForegroundColor Cyan
+    $outGeo = & $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" geo 2>&1
+    $outGeo | ForEach-Object { Write-Host "  probeGeo: $_" }
+    $geoText = $outGeo -join ' '
+    Assert-T ($geoText -match 'found=True') "G1: 主窗口出现（geo 探针）"
+    Assert-T ($geoText -match 'geo=True') "G1/G10: 最大化窗口矩形 == 物理工作区（MonitorFromWindow+GetMonitorInfo，容差≤2px，覆盖多屏物理像素）"
+    Assert-T ($geoText -match 'f11=up:True down:False') "F1: SendInput 注入 F11 → 最大化，再注入 → 还原（低级钩子捕获注入键）"
+    Assert-T ($geoText -match 'title=ok:True') "G3/G7: 最大化→还原后自绘标题栏子控件存在、Visible、高度≈32×DPI（防按钮消失）"
+    Assert-T ($geoText -match 'readystate="complete"') "W6: 主 WebView2 document.readyState=complete（非白屏，白屏断言基础设施就位）"
 } else {
     Write-Host "`n=== E3/E4: 跳过（无桌面会话或依赖缺失；GUI 用例需交互桌面）===" -ForegroundColor Yellow
 }

@@ -83,6 +83,22 @@ Assert-True ($shellSrc -match '--diagnose') "壳支持 --diagnose 诊断导出"
 Assert-True ($shellSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级）"
 Assert-True ($shellSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged）"
 Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-web.log 路径"
+
+# ---- Task 0.2.5 完成态静态断言（重构收尾时启用，重构中保持"旧结构基线"锁定）----
+# 目标（Step 6 收尾）：Program.cs 不再含 `: Form` 子类、WndProc、CreateParams、WebView2 事件接线，
+# 窗体/WebView 逻辑下沉到 Managers/，Program.Main 退化为纯编排。
+# ⚠️ 基线阶段下方断言锁定"当前仍是旧结构"，重构完成时【反转】为断言"已不再含以下字样"：
+#   - Program.cs 不得含 `class DshShellForm : Form` / `: Form`
+#   - Program.cs 不得含 `WndProc` / `CreateParams`
+#   - Program.cs 不得含 `web.CoreWebView2.` 事件接线（PermissionRequested 等）
+# 反转示例：
+#   Assert-True ($shellSrc -notmatch ': Form')        "Program.cs 不含 Form 子类"
+#   Assert-True ($shellSrc -notmatch 'WndProc')       "Program.cs 不含 WndProc"
+#   Assert-True ($shellSrc -notmatch 'PermissionRequested') "WebView2 事件接线已迁出 Program"
+Assert-True ($shellSrc -match 'class DshShellForm : Form') "【基线】Program.cs 当前仍含 DshShellForm:Form（重构前锁定；收尾反转）"
+Assert-True ($shellSrc -match 'protected override void WndProc') "【基线】Program.cs 当前仍含 WndProc（重构前锁定；收尾反转）"
+Assert-True ($shellSrc -match 'protected override CreateParams') "【基线】Program.cs 当前仍含 CreateParams（重构前锁定；收尾反转）"
+Assert-True ($shellSrc -match 'PermissionRequested') "【基线】Program.cs 当前仍含 WebView2 事件接线（重构前锁定；收尾反转）"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
 $caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
 Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"
