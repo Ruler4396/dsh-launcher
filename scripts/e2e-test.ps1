@@ -313,7 +313,17 @@ try {
 $svcPort = 39041
 $svcHome = Join-Path $base "svc-home"
 New-Item -ItemType Directory -Force -Path $svcHome | Out-Null
-$dshJs = Join-Path $env:APPDATA "npm\node_modules\@deepseek-ai\dsh\lib\bin.js"
+# dsh 服务端包定位：优先 npm 全局根（setup-node 的全局 prefix 可能不是 %APPDATA%\npm），
+# 回退到 %APPDATA%\npm（Windows npm 默认）。CI runner 与本地都需找到 bin.js 才能跑 E3+。
+$dshJs = ""
+try {
+    $globalRoot = (npm root -g 2>$null | Select-Object -First 1)
+    if ($globalRoot) { $cand = Join-Path $globalRoot "@deepseek-ai\dsh\lib\bin.js"; if (Test-Path $cand) { $dshJs = $cand } }
+} catch { }
+if (-not $dshJs) {
+    $cand = Join-Path $env:APPDATA "npm\node_modules\@deepseek-ai\dsh\lib\bin.js"
+    if (Test-Path $cand) { $dshJs = $cand }
+}
 
 function Start-IsoService {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
