@@ -1,4 +1,5 @@
 using DshWeb;
+using DshWeb.Windows;
 
 namespace DshWeb.Chrome;
 
@@ -11,7 +12,7 @@ namespace DshWeb.Chrome;
 /// </summary>
 internal sealed class CustomTitleBar : Panel
 {
-    private readonly Program.DshShellForm _owner;
+    private readonly DshShellForm _owner;
     private float _scale;
     private int _btnWidth;
     private bool _dark;
@@ -26,7 +27,7 @@ internal sealed class CustomTitleBar : Panel
     private static readonly Color LightHover = Color.FromArgb(229, 229, 229);
     private static readonly Color CloseHover = Color.FromArgb(232, 17, 35);
 
-    public CustomTitleBar(Program.DshShellForm owner, bool dark)
+    public CustomTitleBar(DshShellForm owner, bool dark)
     {
         _owner = owner;
         _dark = dark;
