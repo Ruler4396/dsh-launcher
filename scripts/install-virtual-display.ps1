@@ -101,7 +101,11 @@ if (-not $zip) {
     $defaultUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/latest/download/VirtualDisplayDriver-x86.Driver.Only.zip"
     $zip = Join-Path $work "idd.zip"
     Write-Host "  下载虚拟显示驱动: $defaultUrl"
-    Invoke-WebRequest -Uri $defaultUrl -OutFile $zip -UseBasicParsing
+    # 60s 硬超时：GitHub release download 在 CI 偶发慢连接/重定向悬挂，必须快速失败而非无限卡。
+    Invoke-WebRequest -Uri $defaultUrl -OutFile $zip -UseBasicParsing -TimeoutSec 60
+    if (-not (Test-Path $zip) -or (Get-Item $zip).Length -lt 10000) {
+        throw "虚拟显示驱动下载失败或包过小（$((Get-Item $zip -ErrorAction SilentlyContinue).Length) bytes）"
+    }
 }
 $infDir = Join-Path $work "inf"
 Expand-Archive -Path $zip -DestinationPath $infDir -Force
@@ -111,15 +115,33 @@ Expand-Archive -Path $zip -DestinationPath $infDir -Force
 $inf = Get-ChildItem -Path $infDir -Filter *.inf -Recurse | Select-Object -First 1
 if (-not $inf) { throw "驱动包内未找到 .inf 文件：$zip" }
 Write-Host "  安装驱动 INF: $($inf.FullName)"
-# 1) 创建 root enumerated device
 $pnputil = "pnputil"
-& $pnputil /add-driver $inf.FullName /install 2>&1 | Write-Host
-# 2) 通过 devcon/New-PnpDevice 注册 Root\IddSampleDriver 实例
-& $pnputil /add-driver $inf.FullName /install 2>&1 | Out-Null
-# 用 PnP 工具枚举/创建
-try {
-    & "devcon.exe" /add "@ROOT\DISPLAY\0000" 2>&1 | Out-Null
-} catch { }
+
+# pnputil 包装 90s 超时：CI 上 /install 偶发在 DriverStore 签名校验阶段悬挂，
+# 必须快速失败而非无限卡（此前 CI 卡 20+ 分钟即此根因）。
+function Invoke-PnPUtil {
+    param([string[]]$Args)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new("pnputil")
+    foreach ($a in $Args) { $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    if (-not $p.WaitForExit(90000)) {
+        $p.Kill()
+        Write-Warning "pnputil $($Args -join ' ') 超时（90s），已终止。"
+        return $false
+    }
+    return $p.ExitCode -eq 0
+}
+
+# 1) 创建 root enumerated device
+Invoke-PnPUtil @("/add-driver", $inf.FullName, "/install") | Out-Null
+# 2) 通过 devcon（若存在）注册 Root\IddSampleDriver 实例；不存在则跳过（驱动 Add 已覆盖）
+$devcon = Get-Command "devcon.exe" -ErrorAction SilentlyContinue
+if ($devcon) {
+    try { & $devcon.Source /add "@ROOT\DISPLAY\0000" 2>&1 | Out-Null } catch { }
+} else {
+    Write-Host "  devcon.exe 不可用（CI 未自带），跳过 Root\DISPLAY\0000 显式注册（依赖 /add-driver 自动实例化）"
+}
 
 # 触发 DWM 重新枚举（枚举虚拟屏需 DWM 重建，短等待）
 Start-Sleep -Seconds 5

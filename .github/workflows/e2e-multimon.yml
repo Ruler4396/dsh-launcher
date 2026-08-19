@@ -30,7 +30,9 @@ jobs:
           dotnet-version: "10.0.x"
 
       # 1) 注入虚拟副屏（管理员；IDD 用户态驱动，无需物理硬件）
+      # timeout-minutes=8：脚本内部已有下载/安装超时，此层兜底防 CI 队列被悬挂步骤占死。
       - name: Install virtual display driver (1 virtual secondary)
+        timeout-minutes: 8
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass `
