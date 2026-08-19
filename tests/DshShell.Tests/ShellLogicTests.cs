@@ -442,4 +442,16 @@ public class ShellLogicTests
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, ShellLogic.ParseLifetimeMode("{\"other\":1}"));
         Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, ShellLogic.ParseLifetimeMode("{\"other\":1}", ShellLogic.ServiceLifetime.AlwaysOn));
     }
+
+    [Fact]
+    public void ShouldInterceptCloseToTray_Decision()
+    {
+        // 矩阵 L1：托盘驻留 + 未请求退出 → 拦截（隐藏到托盘）
+        Assert.True(ShellLogic.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.Tray, false));
+        // 托盘驻留 + 已请求退出（托盘菜单"退出"）→ 放行真关
+        Assert.False(ShellLogic.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.Tray, true));
+        // 常驻 / 跟随窗口 → 不拦截
+        Assert.False(ShellLogic.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.AlwaysOn, false));
+        Assert.False(ShellLogic.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.FollowWindow, false));
+    }
 }

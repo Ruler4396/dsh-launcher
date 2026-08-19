@@ -406,6 +406,16 @@ public static class ShellLogic
         FollowWindow = 2,
     }
 
+    /// <summary>
+    /// FormClosing 托盘拦截决策（矩阵 L1）：是否拦截关闭、隐藏到托盘。
+    /// 决策 = 生命周期模式为"托盘驻留" 且 未请求真正退出。
+    /// 铁律（0.1.10 血泪）：此拦截判定必须**先于** WebView2 销毁——WebView2 一旦 Dispose，
+    /// 从托盘唤起时控件已销毁，窗口只剩空白（历史上销毁在拦截之前 → 必然白屏）。
+    /// 调用方保证语句顺序：ShouldInterceptCloseToTray → (拦截则 return) → 才走销毁/退出路径。
+    /// </summary>
+    internal static bool ShouldInterceptCloseToTray(ServiceLifetime mode, bool trayExitRequested)
+        => mode == ServiceLifetime.Tray && !trayExitRequested;
+
     /// <summary>PID 身份校验（防复用误杀，质量治理 P1-2）：pid 文件里的 PID 可能被系统
     /// 复用给无关进程——杀进程前必须确认该 PID 确为 dsh 服务（node 进程）。
     /// dsh 服务由 wscript→cmd→node 链路拉起，监听端口的进程名是 node（便携/系统均为）。
