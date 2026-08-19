@@ -129,4 +129,12 @@ public static class StagedUpdate
         if (_pendingPath.Length == 0) return;
         try { if (File.Exists(_pendingPath)) File.Delete(_pendingPath); } catch { /* 清理失败忽略 */ }
     }
+
+    /// <summary>staging 根目录（下载/预热缓存所在；无 pending 路径记录时返回 null）。</summary>
+    public static string? StagingDir =>
+        _pendingPath.Length > 0 ? Path.Combine(Path.GetDirectoryName(_pendingPath)!, "staging") : null;
+
+    /// <summary>后台依赖预热临时目录（任务一：prefetch_temp）——预热在 staging 下进行，应用成功后整体清理。</summary>
+    public static string? PrefetchTempDir =>
+        StagingDir is null ? null : Path.Combine(StagingDir, "prefetch_temp");
 }

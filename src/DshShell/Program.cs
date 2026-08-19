@@ -1478,7 +1478,9 @@ internal static class Program
                 var pending = StagedUpdate.ReadPending();
                 var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
                 var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
-                if (RunNpmCommand($"install -g \"{installSpec}\"", out var errorTail))
+                // 任务二一致性：--no-audit --no-fund + registry 与预热匹配（秒级 cache 命中）
+                if (RunNpmCommand($"install -g \"{installSpec}\" --no-audit --no-fund" + GetNpmRegistryArgs(),
+                    out var errorTail))
                 {
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
@@ -1512,41 +1514,25 @@ internal static class Program
         catch { /* 弹窗失败：记日志不打断启动 */ }
     }
 
-    /// <summary>后台执行：npm pack 下载指定版本到 staging；成功 → MarkPending（下次启动应用）。
-    /// 下载过程与成功均不打断当前会话（v0.4.0：不弹 Modal，仅托盘气泡轻提示——用户可能正用
-    /// harness，弹窗会打断工作流；失败仍需显式告知）。下载的是完整 tarball（本地安装包），
-    /// 下次重启**直接本地安装**、不现场拉取（真正"已下载完成"）。</summary>
+    /// <summary>后台执行（任务一：依赖预热 Staging Pipeline）：npm pack 下载主包 tarball → 在
+    /// prefetch_temp 中完整 npm install 预热全局 npm cache → MarkPending（下次启动应用）。
+    /// 核心收益：预热把所有 @deepseek-ai/* 依赖子包拉进 npm cache，重启时的 npm install -g
+    /// **完全命中本地缓存**（秒级），从根上消除"重启卡 1-2 分钟"（用户痛点）。
+    /// 预热失败（网络/超时）**不中断流程**：Warn 降级，仍保留 tarball，重启回退在线安装（任务三）。
+    /// 下载/预热全程后台，不打断当前会话（v0.4.0：不弹 Modal，仅托盘气泡轻提示）。
+    /// </summary>
     private static void DownloadDshUpdateStaged(Form form, string latest)
     {
+        var staging = Path.Combine(DataDir, "staging");
+        var prefetchDir = Path.Combine(staging, "prefetch_temp");
         try
         {
-            var staging = Path.Combine(DataDir, "staging");
             Directory.CreateDirectory(staging);
-            var ok = RunNpmCommand($"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + staging + "\"", out var errorTail);
-            if (ok)
-            {
-                // npm pack 的 scoped 包产物名：@deepseek-ai/dsh → deepseek-ai-dsh-{version}.tgz
-                var tarball = $"deepseek-ai-dsh-{latest}.tgz";
-                StagedUpdate.MarkPending(latest, tarball);
-                _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
-                // 后台静默下载：仅托盘气泡轻提示（不打断当前 harness 使用），不弹 Modal。
-                // 文案如实（用户反馈"下载完成太快、重启还是等很久"）：npm pack 只下载了主包 tarball
-                //（约 30KB，秒级是正常的）；dsh 有 50+ 个 @deepseek-ai/* 依赖子包，重启安装时
-                // npm 仍需在线解析依赖。因此不说"无需再次下载"，如实告知"主程序已就绪 + 安装需联网"。
-                try
-                {
-                    form.BeginInvoke(() =>
-                    {
-                        if (WindowManager.Instance.TrayIcon is null) return;
-                        WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新已就绪",
-                            $"dsh {latest} 主程序已下载。重启启动器后自动安装（需联网解析依赖，预计 1-2 分钟）。",
-                            ToolTipIcon.Info);
-                    });
-                }
-                catch { /* 窗体已关闭则下次启动再说 */ }
-                Logger.Info($"staged dsh update downloaded: {latest}", ctx: new { tarball });
-            }
-            else
+            // ---- 步骤 1/2：pack 主包 tarball 到 prefetch_temp ----
+            var ok = RunNpmCommand(
+                $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + prefetchDir + "\"",
+                out var errorTail);
+            if (!ok)
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
                 try
@@ -1557,13 +1543,92 @@ internal static class Program
                         log: false));
                 }
                 catch { /* 窗体已关闭 */ }
+                return;
             }
+
+            // npm pack 的 scoped 包产物名：@deepseek-ai/dsh → deepseek-ai-dsh-{version}.tgz
+            var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
+            var tarballPath = Path.Combine(prefetchDir, tarballName);
+            var prefetched = false;
+
+            // ---- 步骤 3（关键）：在 prefetch_temp 中完整安装一次，把全部依赖拉进 npm cache。
+            // --prefix ./deps：安装到临时 deps 目录（不在全局），仅借 npm 的解析+下载把依赖包
+            // 写入 ~/.npm/_cacache。registry 与重启安装一致，确保 cache 命中。超时 180s。
+            // 预热失败仅降级（Warn + 保留 tarball），绝不中断更新流程（任务三容错）。----
+            if (File.Exists(tarballPath))
+            {
+                try
+                {
+                    Logger.Info($"dependency prefetch starting: {latest}"); // 后台静默预热，进度经日志留痕
+                    prefetched = RunNpmCommand(
+                        $"install \"./{tarballName}\" --prefix \"./deps\" --no-audit --no-fund"
+                            + GetNpmRegistryArgs(),
+                        out var prefetchTail, timeoutMs: 180000);
+                    if (prefetched)
+                    {
+                        Logger.Info($"dependency prefetch complete: {latest}",
+                            ctx: new { version = latest, registry = GetNpmRegistryArgs() });
+                    }
+                    else
+                    {
+                        // 任务三：预热失败降级——不中断，保留 tarball，重启回退在线安装
+                        Logger.Warn("Dependency prefetch failed, will fallback to online install on next restart",
+                            ErrorCodes.E4001, new { version = latest, tail = prefetchTail });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("Dependency prefetch error, will fallback to online install on next restart",
+                        ErrorCodes.E4001, new { version = latest, error = ex.Message });
+                }
+            }
+
+            // ---- 步骤 4：把 tarball 移到 staging（避免后续清理 prefetch_temp 时误删），
+            // 记录到 pending-update.json；重启时优先本地 tarball + 已预热 cache → 秒级安装。----
+            var finalTarballPath = Path.Combine(staging, tarballName);
+            try
+            {
+                if (File.Exists(finalTarballPath)) File.Delete(finalTarballPath);
+                File.Move(tarballPath, finalTarballPath);
+            }
+            catch { /* 移动失败：保留在 prefetch_temp 也可用，LocateTarball 兜底 staging */ }
+
+            StagedUpdate.MarkPending(latest, tarballName);
+            _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
+
+            // 清理 prefetch_temp 中的临时安装目录（deps/node_modules），仅保留 staging 根下的 tarball。
+            // 注意：prefetch_temp 本身在 CleanupStagingCache 中按 7 天过期清理，这里只删体积大的 deps。
+            TryDeleteDir(Path.Combine(prefetchDir, "deps"));
+            TryDeleteDir(Path.Combine(prefetchDir, "node_modules"));
+
+            // 后台静默下载：仅托盘气泡轻提示（不打断当前 harness 使用），不弹 Modal。
+            // 文案（任务一 UX）：如实区分"预热成功/失败"——预热成功 → 重启秒装；失败 → 重启需联网。
+            var balloon = prefetched
+                ? $"dsh {latest} 主程序与依赖包已就绪。下次重启启动器时秒级安装（无需等待下载）。"
+                : $"dsh {latest} 主程序已下载（依赖未完全预热）。重启后安装需联网解析依赖，预计 1-2 分钟。";
+            try
+            {
+                form.BeginInvoke(() =>
+                {
+                    if (WindowManager.Instance.TrayIcon is null) return;
+                    WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新已就绪", balloon, ToolTipIcon.Info);
+                });
+            }
+            catch { /* 窗体已关闭则下次启动再说 */ }
+            Logger.Info($"staged dsh update downloaded: {latest}",
+                ctx: new { tarball = tarballName, prefetched });
         }
         catch (Exception ex)
         {
             Logger.Error("staged dsh update download error: " + ex.Message, ErrorCodes.E4001);
             try { form.BeginInvoke(() => ShowError(ErrorCodes.E4001, ex.Message, log: false)); } catch { /* 窗体已关闭 */ }
         }
+    }
+
+    /// <summary>递归删除目录（幂等）；失败静默（清理临时目录不阻塞主流程）。</summary>
+    private static void TryDeleteDir(string path)
+    {
+        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { /* 清理失败忽略 */ }
     }
 
     /// <summary>v0.3.0 延迟应用：下次启动拉起服务前，应用已下载的 dsh 新版。
@@ -1589,20 +1654,26 @@ internal static class Program
         // 此时文案如实"将现场下载"（用户：下载≠npx 现场拉，必须诚实）。
         var pending = StagedUpdate.ReadPending();
         var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
-        // 文案如实（用户反馈"已下载完成太快、重启还是等很久"）：主包 tarball 已就绪，但 dsh 有
-        // 50+ 依赖子包，npm install 仍需在线解析。所以即使本地 tarball 也如实说"主程序已就绪"。
+        // 任务四：Splash 实时文案（本地安装中）。后台已预热依赖 → npm install -g 命中本地 cache，
+        // 秒级完成；tarball 缺失（旧记录/缓存被清）→ 如实"在线下载 dsh 组件"。
+        // 任务二：--no-audit --no-fund --registry=镜像 与预热一致（防 cache miss）。
         progress?.Invoke(localTarball is not null
-            ? $"正在应用更新 (v{version})…（主程序已就绪，正在在线解析依赖，预计 1-2 分钟）"
+            ? $"正在应用更新 (v{version})…（本地安装中，依赖已预热，预计 5-10 秒）"
             : $"正在应用更新 (v{version})…（需要在线下载 dsh 组件，预计 1-2 分钟）");
         Logger.Info($"applying staged dsh update to {version}",
             ctx: new { version, source = localTarball is not null ? "local-tarball" : "registry" });
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
         var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
-        if (RunNpmCommand($"install -g \"{installSpec}\"", out var errorTail, ct, progress))
+        // 任务二：安装参数与预热完全一致（--no-audit --no-fund + registry）——若预热已把依赖
+        // 拉进 npm cache，本命令跳过网络仅解压拷贝，秒级完成；预热失败则自然回退在线安装（慢但可靠）。
+        if (RunNpmCommand($"install -g \"{installSpec}\" --no-audit --no-fund" + GetNpmRegistryArgs(),
+            out var errorTail, ct, progress))
         {
             progress?.Invoke($"更新 v{version} 已应用完成。");
             StagedUpdate.ClearPending();
-            CleanupStagingCache(); // 应用成功：清空 staging（下载缓存不留残余）
+            CleanupStagingCache(); // 应用成功：清空 staging 过期文件
+            // 任务二：彻底清理 prefetch_temp（预热临时目录：deps/node_modules，释放磁盘空间）
+            TryDeleteDir(Path.Combine(DataDir, "staging", "prefetch_temp"));
             Logger.Info($"staged dsh update applied: {version}");
         }
         else
@@ -1688,13 +1759,25 @@ internal static class Program
         catch { /* 清理失败不影响启动 */ }
     }
 
-    /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：最多等 120s；输出重定向避免死锁。
+    /// <summary>
+    /// npm registry 镜像参数（与 start-dsh.vbs 的 DSH_NPM_MIRROR 约定一致）：
+    /// 设置 → 追加 "--registry=&lt;mirror&gt;"；未设置 → 返回空串（用 npm 默认 registry）。
+    /// 预热与安装都用同一镜像，保证 cache 命中（任务一/二：不同 registry 会 miss 缓存）。</summary>
+    private static string GetNpmRegistryArgs()
+    {
+        var mirror = Environment.GetEnvironmentVariable("DSH_NPM_MIRROR");
+        return string.IsNullOrWhiteSpace(mirror) ? "" : " --registry=" + mirror;
+    }
+
+    /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：输出重定向避免死锁。
     /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false——保证启动阶段应用更新
     /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。
+    /// <paramref name="timeoutMs"/>：默认 120s；后台依赖预热（prefetch，任务一）网络重负载
+    /// 场景放宽到 180s，超时强制 kill 进程树并保留已下载的 tarball（任务三超时控制）。
     /// <paramref name="progress"/>（任务一进阶）：逐行转发 npm 实时安装日志（如 "added 50 packages"）
     /// 到 Splash，滚动显示消除"更新卡死"焦虑。收集的 stdout+stderr 仍用于 errorTail 诊断。</summary>
     private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
-        Action<string>? progress = null)
+        Action<string>? progress = null, int timeoutMs = 120000)
     {
         errorTail = "";
         try
@@ -1739,7 +1822,7 @@ internal static class Program
                 try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
             });
             // 任务一进阶：process=null 时不传 progress 也会走完（读取线程仍收集，errorTail 不受影响）
-            if (!p.WaitForExit(120000))
+            if (!p.WaitForExit(timeoutMs))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
                 return false;
