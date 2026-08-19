@@ -48,6 +48,18 @@ internal static class Win32Constants
 
     // ---- MonitorFromWindow 标志（G1/G10 物理像素工作区）----
     public const uint MONITOR_DEFAULTTONEAREST = 2; // 取最近监视器（副屏窗口归属判定）
+
+    // ---- GetSystemMetricsForDpi 索引（多屏 DPI 修复，G1/G10）----
+    // 只有拿到"当前监视器的真实缩放边框厚度"，才能正确补偿 WS_THICKFRAME 在最大化时的
+    // DWM 外扩：Windows 最大化窗口会把窗口物理矩形外扩
+    //   border_x = SM_CXSIZEFRAME + SM_CXPADDEDBORDER
+    //   border_y = SM_CYSIZEFRAME + SM_CXPADDEDBORDER
+    //（每边各外扩 border，右/下方向加 border，左/上方向减 border）。
+    // 因此 WM_GETMINMAXINFO 里不能直接给 rcWork 本身，而要先反向补偿——
+    // 详见 WindowGeometry.ComputeMaximizedMinMaxInfo 的中文注释。
+    public const int SM_CXSIZEFRAME = 32;   // 可缩放边框宽度（物理 px）
+    public const int SM_CYSIZEFRAME = 33;   // 可缩放边框高度（物理 px）
+    public const int SM_CXPADDEDBORDER = 92; // 可缩放边框额外内边距（物理 px）
 }
 
 /// <summary>
@@ -67,6 +79,17 @@ internal static class NativeMethods
     public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    // ---- 多屏 DPI 修复（G1/G10）：PerMonitorV2 下取"窗口所在监视器"的真实物理指标 ----
+    // GetDpiForWindow：PerMonitorV2 感知进程返回该窗口实际所在监视器的 DPI（随窗口移动变化）。
+    // GetSystemMetricsForDpi：按指定 DPI 取系统指标（物理像素）——必须用"窗口所在监视器的
+    //   DPI"而非全局 GetSystemMetrics（后者固定主屏/系统 DPI），否则异构 DPI 副屏上边框厚度错。
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetricsForDpi(int nIndex, uint dpi);
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X, Y; }

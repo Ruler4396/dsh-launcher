@@ -70,7 +70,7 @@ dsh plugin --profile web add dsh-launcher-lifetime
 
 <div align="center">
 
-[![dsh.so](https://www.dsh.so/badges/dsh-launcher.svg)](https://www.dsh.so/artifact/dsh-launcher/)
+[![dsh.so security](https://www.dsh.so/badges/dsh-launcher-shield.svg)](https://www.dsh.so/artifact/dsh-launcher/)
 [![featured on dsh-suite](https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe)](https://whyihaveyou.github.io/dsh-suite/)
 
 </div>

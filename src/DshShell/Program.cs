@@ -296,12 +296,9 @@ internal static class Program
         // 迁入后由它切换旧/新实现，便于运行时对比）。默认 legacy。
         Trace("feature flag: DSH_USE_NEW_LIFECYCLE="
             + (Environment.GetEnvironmentVariable("DSH_USE_NEW_LIFECYCLE") == "1" ? "1 (new)" : "unset (legacy)"));
-        // 轮转仅在"当前无活服务占用日志"时执行：若上次崩溃残留的孤儿服务仍用 `cmd >>` 持有
-        // dsh.log，File.Move 重命名后它会继续写旧名（日志被劈裂，单一日志契约破坏）。
-        // 有活服务占用端口则跳过本轮轮转；WarnIfOversized 兜底提示常驻超长日志。
-        if (!PortOpen(Target.Port))
-            Logger.RotateIfNeeded();
-        Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
+        // 极速启动（v0.4.1）：日志轮转/超长告警所需的端口探测（PortOpen 为同步 TCP connect，
+        // 实测 127.0.0.1 回环探测在部分环境需 2s）已**移出 Main**——进入 SplashForm 后台流水线
+        // 阶段 0（Task.Run），UI 线程不再有任何网络调用，窗口 <500ms 即可见。
 
         // P0-2（质量治理）：崩溃留痕——任何未捕获异常（UI 线程/后台线程/主线程）先写一条
         // E9001 日志再终止，杜绝"窗口突然消失但 dsh.log 无记录"的静默崩溃。只加诊断，不加恢复。
@@ -311,14 +308,11 @@ internal static class Program
         if (Environment.GetEnvironmentVariable("DSH_TEST_CRASH") == "1")
             throw new InvalidOperationException("test crash hook (DSH_TEST_CRASH=1)");
 
-        WindowStateStore.Init(DataDir);
-        StagedUpdate.Init(DataDir);
-        CleanupStagingCache(); // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包（防无限增长）
-
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
-        MigrateLegacyData(); // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME（settings.json 保留、旧目录清理）
-        CleanupProgramDataResidue(); // 清理卸载后 ProgramData 空目录残留
-        EnsureAutoStartRequested(); // 自启落地：MSI 机器级意图标志 → 当前用户 HKCU Run
+        // 极速启动（v0.4.1）：以下"无 UI 的轻量维护 IO"已全部移入 SplashForm 的后台启动流水线
+        //（RunStartupPipelineAsync 阶段 0，Task.Run 执行）：WindowStateStore.Init、StagedUpdate.Init、
+        // CleanupStagingCache、MigrateLegacyData、CleanupProgramDataResidue、EnsureAutoStartRequested。
+        // Main 在创建窗口前只保留：DPI 感知、日志、崩溃留痕、单实例——双击后 <500ms 出现启动窗。
 
         // 单实例：重复启动只把已开窗口带到前台，避免多开 WebView2 进程白白占用内存。
         // 锁按目标端口隔离，不同服务可各开一个壳窗口。
@@ -347,151 +341,38 @@ internal static class Program
         }
         Trace("first instance");
 
-        // 升级场景：检测并提示清理旧版本（per-user 0.1.0-0.1.5 等）。
-        // MSI 的跨作用域 MajorUpgrade 在标准机器上找不到 HKCU 里的 per-user 旧版，
-        // 这里由壳提示用户提权卸载（提权卸载不触发 Config.Msi 1926）。
+        // 升级场景：检测并提示清理旧版本（per-user 0.1.0-0.1.5 等）。刻意保留在 Main 原位而非
+        // 移入 Splash 流水线：正常路径（无旧版/NoUiMode）直接 return，零开销不碰启动延迟；
+        // 且它内部有提权卸载 + WaitForExit 的强交互语义，不适合塞进后台流水线。
         TryPromptOldVersionCleanup();
+        CleanupOrphanShortcuts(); // 自愈孤儿快捷方式（同上：极低频升级场景）
 
-        // 自愈孤儿快捷方式：per-user 旧版被（提权）卸载后，其用户级快捷方式可能残留
-        //（指向已删除的 exe），这里每次启动扫描并清理，避免开始菜单/桌面出现幽灵图标。
-        CleanupOrphanShortcuts();
-
-        // 服务未就绪时自动拉起/等待（仅壳托管模式；DSH_WEB_URL 视为外部托管，直接开窗）。
-        // 就绪 = 端口可连 + HTTP 有响应：dsh 前端在端口监听后可能还需数十秒才提供 HTTP，
-        // 若只等 TCP 就提前"成功"，主窗口会加载失败（白屏，用户以为没反应而多点一次）；
-        // 若探测太早判失败，用户要二次点击才能开窗。这里统一在状态窗里等 HTTP 就绪。
-        if (!ServerManagedExternally && !HttpReady())
+        // ===== 极速启动模型（v0.4.1）：UI 线程立即进入 Application.Run 消息循环 =====
+        // 旧模型（v0.3.x）：HttpReady() 探测（端口开但 HTTP 未就绪时最长阻塞 3s）与数据迁移等
+        // IO 都同步发生在窗口创建之前，且等待期用 DoEvents + Thread.Sleep(50) 手动泵消息——
+        // 用户"双击后干等几秒无反应"，状态窗刷新/取消按钮劣化（组件短暂空白/闪烁）。
+        // 新模型：SplashForm.OnShown 启动后台流水线（Task.Run + IProgress<T> 回填进度），
+        // UI 线程只运行消息泵；Splash 关闭后 Main 按结果接力（建主窗/失败提示/退出）。
+        // 注意：Application.Run(splash) 返回时 splash.Result 必已赋值（OnShown 即启动流水线）。
+        using (var splash = new SplashForm(RunStartupPipelineAsync, visible: !NoUiMode && !ServerManagedExternally))
         {
-            // 并行开窗（Step5）：状态窗先建先显示（TopMost），随后的 Node 检测/服务拉起/轮询
-            // 都在弹窗可见期间同步进行——双击后立即看到加载窗，不再"干等几秒无反应"。
-            // cts/pollTask 在此创建；Show() 非模态 + 下方 DoEvents 消息泵驱动刷新。
-            var logPath = UnifiedLogPath;
-            var cts = new CancellationTokenSource();
-            using var status = CreateStartupStatusForm(onCancel: () => cts.Cancel());
-            status.Show(); // 非模态立即显示（TopMost，前台有窗口也能看到）
-            var pollTask = Task.Run(() => WaitServiceReady(cts.Token, Target.Port, Target.Url, logPath, E2EMode));
-            _ = pollTask.ContinueWith(_ =>
+            Application.Run(splash);
+
+            var outcome = splash.Result;
+            if (outcome is null) return; // 防御分支（正常路径不可达）
+            if (splash.CancelledByUser)
             {
-                try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
-            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-
-            if (!PortOpen(Target.Port))
-            {
-                // v0.3.0 ① 僵尸清扫：上次崩溃记录过、但已不在监听的进程 → 清理（只动我们记录的 PID）
-                SweepStaleServicePid();
-
-                // v0.3.0 ② 延迟更新应用：下次启动拉起服务前应用已下载的 dsh 新版（失败不阻塞启动）
-                ApplyPendingDshUpdate();
-
-                // v0.3.0 ③ Node/npm 本位解析：系统 Node ≥18 优先（尊重用户环境），否则便携
-                //（一次性确认后自动下载到 %LOCALAPPDATA%\dsh-launcher\env\node，绝不打包进安装包）
-                var nodeEnv = RuntimeResolver.ResolveExisting();
-                if (nodeEnv.NodeExe is null)
-                {
-                    // 同步等待（Main 为同步 STA 入口，见 Main 顶部注释）：TryEnsureNodeAsync
-                    // 内部的 ShowDialog 在嵌套消息循环中运行，可正常交互；完成后继续在 STA 线程。
-                    if (!TryEnsureNodeAsync().GetAwaiter().GetResult()) return;
-                    nodeEnv = RuntimeResolver.ResolveExisting();
-                    if (nodeEnv.NodeExe is null) return;
-                }
-                if (nodeEnv.IsPortable)
-                {
-                    RuntimeResolver.PrependToPath(nodeEnv.RootDir!);
-                    Trace("using portable node: " + nodeEnv.RootDir);
-                }
-
-                var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-                if (!File.Exists(vbs))
-                {
-                    ShowError(ErrorCodes.E2001, $"未找到 {vbs}，无法自动拉起 dsh 服务（{Target.Url}）。");
-                    return;
-                }
-
-                // 端口与统一日志路径透传给 start-dsh.vbs（进程级环境变量，wscript → cmd → dsh 依次继承）；
-                // DSH_PORT 不设时 vbs 默认 3080。DSH_HOME 等环境变量同理自动继承。
-                Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
-                Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
-                Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
-                _serviceStartedByShell = true;
-                Trace("service start requested via start-dsh.vbs");
-            }
-            else
-            {
-                // 端口已开但 HTTP 前端尚未就绪（服务可能刚被拉起、正在初始化）：也显示
-                // 状态窗等待，避免直接开窗看到白屏（用户以为没反应而多点一次）。
-                Trace("port open but HTTP not ready; waiting with status window");
-            }
-
-            // 并行开窗（Step5）：状态窗已在进入本块时非模态 Show()（TopMost）。
-            // 等待服务就绪期间用 DoEvents 消息泵驱动状态窗刷新/取消按钮——
-            // 不能阻塞 Main 线程（同一线程无消息泵 → 状态窗挂起不刷新，等同卡死）。
-            string waitResult;
-            if (NoUiMode || E2EMode)
-            {
-                // 测试钩子（DSH_NO_UI=1 / DSH_E2E=1）：不显示状态窗，等待轮询自然结束（无窗口无弹窗）。
-                // e2e 模式下轮询上限已缩至 20s，此处最多等 20s。
-                waitResult = pollTask.GetAwaiter().GetResult();
-            }
-            else
-            {
-                // DoEvents 消息泵：状态窗可见、可取消；pollTask 完成后退出循环。
-                while (!pollTask.IsCompleted)
-                {
-                    Application.DoEvents();
-                    Thread.Sleep(50);
-                }
-                waitResult = pollTask.GetAwaiter().GetResult();
-            }
-            Trace($"status window closed, waitResult={waitResult}");
-
-            if (waitResult != "ready")
-            {
-                // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
-                if (waitResult is "logerror" or "timeout" && _serviceStartedByShell && PortOpen(Target.Port))
-                {
-                    var pid = FindPidListeningOn(Target.Port);
-                    if (pid > 0)
-                    {
-                        Logger.Warn("service failed to become ready; cleaning up", ErrorCodes.E2005, new { pid });
-                        if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
-                    }
-                    else
-                    {
-                        ClearServicePidFile();
-                    }
-                }
-                // P0-1（质量治理）：用户取消 ≠ 放弃服务——后台下载/启动可能仍在进行（与取消文案一致），
-                // 但服务必须可被下次启动接管：已监听则记录 PID（此前无 pid 文件 → TryAdoptOrphanService
-                // 永远无法认领，服务成为永久无主孤儿，占住端口无人管理）。
-                else if (waitResult == "canceled" && _serviceStartedByShell && PortOpen(Target.Port))
-                {
-                    RecordServicePid();
-                    Trace("canceled: service left running; pid recorded for next-start adoption");
-                }
-                var tail = ShellLogic.ReadLogTail(logPath, 12);
-                var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
-                var body = waitResult switch
-                {
-                    "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
-                    "logerror" => "启动过程报错（可能是下载失败、权限或环境问题）。\n\n日志尾部：\n" + tailText,
-                    _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
-                        + "\n\n完整日志：" + logPath,
-                };
-                var code = waitResult switch
-                {
-                    "logerror" => ErrorCodes.E2003,
-                    "timeout" => ErrorCodes.E2002,
-                    "canceled" => ErrorCodes.E2006, // P0-1：取消不是内部错误（此前误归 E9001）
-                    _ => ErrorCodes.E9001,
-                };
-                // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总
-                ShowError(code, "dsh 服务未能就绪。\n\n" + body,
-                    level: waitResult == "canceled" ? Logger.Level.Info : Logger.Level.Error);
+                Trace("startup canceled by user");
                 return;
             }
-
-            // 就绪判定（TCP + HTTP）已在轮询内完成；此处无需再探测。
-            RecordServicePid(); // 记录本次拉起的服务 PID（供下次启动接管残留服务）
+            if (!outcome.Ready)
+            {
+                HandleStartupFailure(outcome); // 失败/取消的统一处理（含日志尾部 + 错误码归类）
+                return;
+            }
+            _serviceStartedByShell = outcome.ServiceStartedByShell;
+            if (outcome.ServiceStartedByShell)
+                RecordServicePid(); // 记录本次拉起的服务 PID（供下次启动接管残留服务）
         }
 
         // 端口已开且本次没拉起服务：接管上次崩溃/退出残留的壳托管服务
@@ -1003,45 +884,196 @@ internal static class Program
         }
     }
 
-    /// <summary>v0.3.0 Node 缺失处理：一次性确认 → 状态窗期间自动下载便携 Node（可取消）。
-    /// 返回是否已具备可用 Node。</summary>
-    private static async Task<bool> TryEnsureNodeAsync()
+    /// <summary>
+    /// 极速启动流水线（v0.4.1）：在 SplashForm 后台执行全部启动步骤，全程不阻塞 UI 线程。
+    /// 由 SplashForm.OnShown 调用；progress/confirm 由 SplashForm 提供（IProgress&lt;T&gt; 自动
+    /// Post 回 UI 线程消息泵，confirm 走窗体**内联确认面板**而非 MessageBox 嵌套模态循环）。
+    /// 返回 Outcome 供 Main 接力。字段 _serviceStartedByShell 只在 UI 线程续体（方法尾部）赋值，
+    /// Task.Run 段不触碰任何 UI 状态。
+    /// </summary>
+    private static async Task<SplashForm.Outcome> RunStartupPipelineAsync(
+        IProgress<SplashForm.Message> progress,
+        Func<string, string, Task<bool>> confirm,
+        CancellationToken ct)
+    {
+        var logPath = UnifiedLogPath;
+        var startedByShell = false;
+        string? waitResult = null;
+
+        // ---- 阶段 0：无 UI 的轻量维护 IO（原 Main 中同步执行的项，全部转后台线程）----
+        await Task.Run(() =>
+        {
+            if (!PortOpen(Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
+            Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
+            WindowStateStore.Init(DataDir);
+            StagedUpdate.Init(DataDir);
+            CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
+            MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
+            CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
+            EnsureAutoStartRequested();    // 自启落地：MSI 机器级意图标志 → 当前用户 HKCU Run
+        }, ct);
+
+        // ---- E2E 测试钩子：模拟"后台启动耗时"，跳过真实服务逻辑（见 tests/DshShell.E2E）。
+        // 设 0/缺省 = 正常流水线；设 >0 = 延迟该毫秒数后直接返回就绪。仅测试使用。
+        if (Environment.GetEnvironmentVariable("DSH_TEST_SPLASH_DELAY_MS") is { } msRaw
+            && int.TryParse(msRaw, out var ms) && ms >= 0)
+        {
+            await Task.Delay(ms, ct);
+            return new SplashForm.Outcome(true, "ready", false, logPath, null, null);
+        }
+
+        // ---- 阶段 1：服务已就绪？（HttpReady 探测移出 UI 线程——端口开但 HTTP 未就绪时
+        // 最长 3s 的网络等待不再卡界面，Splash 全程可见、可取消）
+        progress.Report(new SplashForm.Message("probe", "正在检查 dsh 服务…"));
+        if (ServerManagedExternally || await Task.Run(() => HttpReady(), ct))
+        {
+            Trace("service already ready; skipping startup pipeline");
+            return new SplashForm.Outcome(true, "ready", false, logPath, null, null);
+        }
+
+        // ---- 阶段 2：僵尸清扫 + 延迟更新（仅壳托管；外部托管在阶段 1 已提前返回）
+        await Task.Run(() =>
+        {
+            if (!PortOpen(Target.Port))
+            {
+                SweepStaleServicePid();   // v0.3.0 ① 僵尸清扫：上次崩溃记录过、已不在监听的进程
+                ApplyPendingDshUpdate();  // v0.3.0 ② 延迟更新应用：拉起服务前应用已下载的新版
+            }
+        });
+
+        // ---- 阶段 3：Node 解析/下载（缺失时内联确认，不再 ShowDialog 嵌套模态循环）
+        if (!PortOpen(Target.Port))
+        {
+            progress.Report(new SplashForm.Message("node", "正在准备 Node.js 运行环境…"));
+            var nodeEnv = RuntimeResolver.ResolveExisting();
+            if (nodeEnv.NodeExe is null)
+            {
+                var (ok, code, detail) = await EnsureNodeForStartupAsync(progress, confirm, ct);
+                if (!ok)
+                    return new SplashForm.Outcome(false, null, false, logPath, code, detail);
+                nodeEnv = RuntimeResolver.ResolveExisting();
+                if (nodeEnv.NodeExe is null)
+                    return new SplashForm.Outcome(false, null, false, logPath, ErrorCodes.E1003, "便携 Node 安装失败。可稍后重试，或手动安装 Node.js 18+。");
+            }
+            if (nodeEnv.IsPortable)
+            {
+                RuntimeResolver.PrependToPath(nodeEnv.RootDir!);
+                Trace("using portable node: " + nodeEnv.RootDir);
+            }
+
+            var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
+            if (!File.Exists(vbs))
+                return new SplashForm.Outcome(false, null, false, logPath, ErrorCodes.E2001, $"未找到 {vbs}，无法自动拉起 dsh 服务（{Target.Url}）。");
+
+            // 端口与统一日志路径透传给 start-dsh.vbs（进程级环境变量，wscript → cmd → dsh 依次继承）；
+            // DSH_PORT 不设时 vbs 默认 3080。DSH_HOME 等环境变量同理自动继承。
+            Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
+            Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
+            await Task.Run(() => Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true }));
+            startedByShell = true;
+            _serviceStartedByShell = true; // UI 线程续体赋值（Task.Run 只负责启动 wscript）
+            Trace("service start requested via start-dsh.vbs");
+        }
+        else
+        {
+            // 端口已开但 HTTP 前端尚未就绪（服务可能刚被拉起、正在初始化）：Splash 继续等待，
+            // 避免直接开窗看到白屏（用户以为没反应而多点一次）。
+            Trace("port open but HTTP not ready; waiting with status window");
+        }
+
+        // ---- 阶段 4：轮询 HTTP 就绪（后台线程，上限见 WaitServiceReady；可取消）
+        progress.Report(new SplashForm.Message("wait", "正在等待 dsh 服务就绪…"));
+        waitResult = await Task.Run(() => WaitServiceReady(ct, Target.Port, Target.Url, logPath, E2EMode), ct);
+        ct.ThrowIfCancellationRequested();
+        Trace($"status window closed, waitResult={waitResult}");
+
+        return new SplashForm.Outcome(waitResult == "ready", waitResult, startedByShell, logPath, null, null);
+    }
+
+    /// <summary>v0.3.0 Node 缺失处理（v0.4.1 异步化）：一次性确认（Splash 内联面板，非 MessageBox
+    /// 嵌套模态）→ 后台下载便携 Node（可取消）。返回 (是否具备, 错误码, 详情)。</summary>
+    private static async Task<(bool Ok, string? Code, string? Detail)> EnsureNodeForStartupAsync(
+        IProgress<SplashForm.Message> progress,
+        Func<string, string, Task<bool>> confirm,
+        CancellationToken ct)
     {
         // 测试钩子：DSH_NO_UI 时不弹确认框，直接视为拒绝（自动化环境不打断）
         if (NoUiMode)
-        {
-            ShowError(ErrorCodes.E1002, "未安装 Node.js（DSH_NO_UI 模式：不自动下载）。", level: Logger.Level.Info);
-            return false;
-        }
-        var ask = MessageBox.Show(
+            return (false, ErrorCodes.E1002, "未安装 Node.js（DSH_NO_UI 模式：不自动下载）。");
+
+        var ask = await confirm(
+            "dsh-launcher - 需要 Node.js",
             "检测到 Node.js 问题（dsh 服务运行必需）。\n\n" +
             (RuntimeResolver.NodeMissingReason() == "too-old"
                 ? "系统 Node.js 版本过低或不可用（需要 18 或更高版本）。\n"
                 : "未检测到 Node.js。\n") +
             "是否自动下载便携版 Node.js 到用户目录？\n" +
-            "（约 30MB，仅用于本启动器，不改动系统环境；版本采用 LTS 固定版）",
-            "dsh-launcher - 需要 Node.js", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        if (ask != DialogResult.Yes)
-        {
-            ShowError(ErrorCodes.E1002, "未安装 Node.js，dsh 服务无法启动。可安装 Node.js 18+ 后重新打开。",
-                level: Logger.Level.Info); // 用户主动拒绝，非错误（P1-7）
-            return false;
-        }
-        var cts = new CancellationTokenSource();
-        using var status = CreateStartupStatusForm("正在下载并安装便携 Node.js…（约 30MB，请稍候）", onCancel: () => cts.Cancel());
-        var task = RuntimeResolver.EnsurePortableNodeAsync(cts.Token);
-        _ = task.ContinueWith(_ =>
-        {
-            try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
-        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        if (NoUiMode) await task; else status.ShowDialog();
-        var (ok, code, detail) = await task;
+            "（约 30MB，仅用于本启动器，不改动系统环境；版本采用 LTS 固定版）");
+        if (!ask)
+            return (false, ErrorCodes.E1002, "未安装 Node.js，dsh 服务无法启动。可安装 Node.js 18+ 后重新打开。");
+
+        progress.Report(new SplashForm.Message("node", "正在下载并安装便携 Node.js…（约 30MB，请稍候）"));
+        var (ok, code, detail) = await RuntimeResolver.EnsurePortableNodeAsync(ct);
         if (!ok)
+            return (false, code ?? ErrorCodes.E1003, detail ?? "便携 Node 安装失败。可稍后重试，或手动安装 Node.js 18+。");
+        return (true, null, null);
+    }
+
+    /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。</summary>
+    private static void HandleStartupFailure(SplashForm.Outcome outcome)
+    {
+        var logPath = outcome.LogPath;
+        // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
+        if (outcome.WaitResult is "logerror" or "timeout" && outcome.ServiceStartedByShell && PortOpen(Target.Port))
         {
-            ShowError(code ?? ErrorCodes.E1003, detail ?? "便携 Node 安装失败。可稍后重试，或手动安装 Node.js 18+。");
-            return false;
+            var pid = FindPidListeningOn(Target.Port);
+            if (pid > 0)
+            {
+                Logger.Warn("service failed to become ready; cleaning up", ErrorCodes.E2005, new { pid });
+                if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
+            }
+            else
+            {
+                ClearServicePidFile();
+            }
         }
-        return true;
+        // P0-1（质量治理）：用户取消 ≠ 放弃服务——后台下载/启动可能仍在进行（与取消文案一致），
+        // 但服务必须可被下次启动接管：已监听则记录 PID（此前无 pid 文件 → TryAdoptOrphanService
+        // 永远无法认领，服务成为永久无主孤儿，占住端口无人管理）。
+        else if (outcome.WaitResult == "canceled" && outcome.ServiceStartedByShell && PortOpen(Target.Port))
+        {
+            RecordServicePid();
+            Trace("canceled: service left running; pid recorded for next-start adoption");
+        }
+
+        // Node 缺失/下载失败：错误码随 outcome 直达，无需再读日志
+        if (outcome.ErrorCode is not null)
+        {
+            ShowError(outcome.ErrorCode, outcome.ErrorDetail ?? "启动失败。",
+                level: outcome.ErrorCode == ErrorCodes.E1002 ? Logger.Level.Info : Logger.Level.Error);
+            return;
+        }
+
+        var waitResult = outcome.WaitResult ?? "timeout";
+        var tail = ShellLogic.ReadLogTail(logPath, 12);
+        var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
+        var body = waitResult switch
+        {
+            "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
+            "logerror" => "启动过程报错（可能是下载失败、权限或环境问题）。\n\n日志尾部：\n" + tailText,
+            _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
+                + "\n\n完整日志：" + logPath,
+        };
+        var code = waitResult switch
+        {
+            "logerror" => ErrorCodes.E2003,
+            "timeout" => ErrorCodes.E2002,
+            "canceled" => ErrorCodes.E2006, // P0-1：取消不是内部错误（此前误归 E9001）
+            _ => ErrorCodes.E9001,
+        };
+        // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总
+        ShowError(code, "dsh 服务未能就绪。\n\n" + body,
+            level: waitResult == "canceled" ? Logger.Level.Info : Logger.Level.Error);
     }
 
     /// <summary>v0.3.0 主窗口位置/大小持久化（多显示器记忆）：位置与尺寸存 96dpi 逻辑值（跨 DPI 恢复时按当前 DPI 缩放）。
@@ -2009,61 +2041,9 @@ internal static class Program
         return "timeout";
     }
 
-    /// <summary>
-    /// 服务启动状态窗：显示"正在启动 dsh 服务"（含首次下载提示；v0.3.0 亦可显示
-    /// 便携 Node 下载进度文案），可取消。由外部任务完成后调用 Close() 自动关闭；
-    /// 取消按钮设 DialogResult.Cancel 并关闭。
-    /// </summary>
-    private static Form CreateStartupStatusForm(string? caption = null, Action? onCancel = null)
-    {
-        var f = new Form
-        {
-            // 标题不用主窗口的"DeepSeek Harness"：单实例逻辑按标题找主窗口，
-            // 避免第二次点击把状态窗误当成主窗口聚焦（表现为"点了两次没反应"）。
-            Text = "dsh-launcher 启动中",
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            StartPosition = FormStartPosition.CenterScreen,
-            ClientSize = new Size(440, 150),
-            MinimizeBox = false,
-            MaximizeBox = false,
-            // 并行开窗（Step5）：加载窗必须 TopMost——否则用户前台有其他窗口时，
-            // 加载窗藏在后面根本看不到，用户以为双击没反应。
-            TopMost = true,
-            ShowInTaskbar = true, // 在任务栏可见，配合 TopMost 让用户明确"正在启动"
-            ControlBox = false,
-        };
-        var label = new Label
-        {
-            Text = caption ?? "正在启动 dsh 服务…\n首次运行需要下载 dsh 组件，可能需要几分钟。\n完成后会自动打开窗口，请稍候。",
-            Location = new Point(20, 18),
-            AutoSize = true,
-        };
-        var bar = new ProgressBar
-        {
-            Style = ProgressBarStyle.Marquee,
-            MarqueeAnimationSpeed = 30,
-            Location = new Point(20, 78),
-            Size = new Size(400, 16),
-        };
-        var cancel = new Button
-        {
-            Text = "取消",
-            Location = new Point(350, 110),
-            Size = new Size(70, 26),
-        };
-        cancel.Click += (_, _) =>
-        {
-            f.DialogResult = DialogResult.Cancel;
-            f.Close();
-            // 质量治理 P1-1：取消必须同时撤销后台轮询/下载任务（此前仅关窗，
-            // "canceled" 分支不可达，UI 线程仍同步等待最长 180s 造成假死）。
-            try { onCancel?.Invoke(); } catch { /* 取消回调失败不影响关窗 */ }
-        };
-        f.Controls.Add(label);
-        f.Controls.Add(bar);
-        f.Controls.Add(cancel);
-        return f;
-    }
+    // 服务启动状态窗已迁移为 Windows/SplashForm.cs（v0.4.1 极速启动模型）：
+    // 双缓冲 + 内联确认面板 + IProgress<T> 回填进度，替代旧的 CreateStartupStatusForm
+    //（DoEvents 手动消息泵 + ShowDialog 嵌套模态循环的方案已整体废弃）。
 
     /// <summary>
     /// WebView2 初始化已迁入 <see cref="DshWeb.Managers.WebViewManager.InitializeAsync"/>
