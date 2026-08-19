@@ -25,6 +25,7 @@ public enum LifecycleTrigger
     ServiceReady,
     ReadinessTimedOut,
     UIInitialized,
+    WebViewCrashed,
     ShutdownRequested,
     Fatal,
 }
@@ -65,6 +66,10 @@ public sealed class LauncherLifecycle
 
         [(LifecycleState.Running, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
         [(LifecycleState.Running, LifecycleTrigger.Fatal)] = LifecycleState.Failed,
+        // WebView 渲染进程崩溃：被拦截并触发重载（组合根 HandleWebViewCrashed），自转移保持
+        // Running——崩溃不会终结应用（这是"崩溃自愈而非崩溃"语义的状态机表达，测试见
+        // LauncherLifecycleTests.WebViewCrash_WhileRunning_StaysRunning_WithEvent）。
+        [(LifecycleState.Running, LifecycleTrigger.WebViewCrashed)] = LifecycleState.Running,
 
         [(LifecycleState.ShuttingDown, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown, // 幂等：收尾可再次确认
     };

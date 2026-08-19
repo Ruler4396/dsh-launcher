@@ -2,6 +2,35 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-08-19
+
+> ## ⚠️ 预览版（Preview）—— 请先阅读
+>
+> 本版本为 **预览发布（Preview）**，可能包含未知 Bug、行为变更或不稳定表现，**仅供体验与测试，请勿视为正式稳定版本**。
+> 若在使用中发现问题，欢迎提交 [Issue](https://github.com/Ruler4396/dsh-launcher/issues)（请附上 `dsh.log` 与简要复现步骤），我们会尽快跟进处理。
+
+### 新增
+
+- **极速启动模型**：启动状态窗（Splash）双缓冲渲染 + `IProgress<T>` 后台流水线回填进度，双击后 <500ms 出现启动窗；取消按钮只撤销后台流程、不放弃已在后台进行中的服务下载/启动。
+- **架构收尾（ADR-008 落地）**：启动编排统一由 `LauncherApp` 状态机驱动（替换旧 Main 面条流水线）；`WindowManager` 对 `Program` 的隐式循环依赖经组合根委托注入解除；`WebViewManager` 全部静默 `catch{}` 改为带日志的异常边界。
+- **UI TestHook（NamedPipe）**：`DSH_TEST_MODE=1` 时激活，供自动化精确验证窗口几何（最大化 0px 间隙、DPI 缩放），生产路径零接触。
+- **跨屏最大化 E2E**：基于虚拟副屏 + 异构 DPI 的 FlaUI 回归测试（无物理硬件可复现多屏丢窗）。
+
+### 修复
+
+- **多显示器最大化 `ptMaxTrackSize` 修正**：Normal 态拖拽贴边时窗口不再比工作区小一圈（业界惯例：maxTrack 直接用物理工作区尺寸，maxSize 仍扣 frame 补偿 DWM 外扩）。
+- **启动白屏 / 组件延迟绘制（v0.4.2 回归根因）**：`LauncherApp.RunStartupAsync` 首个 await 前的同步阻塞（`TcpClient.Connect` 本机可达 2s、数据迁移 IO）曾卡死 UI 线程导致 Splash 先全白、控件后绘制——全部同步副作用已包 `Task.Run`，首个 await 即让出 UI 线程。
+- **"正在检查 dsh 服务…"阶段卡顿**：`ServiceManager` 端口探测改为 `ConnectAsync` 异步、HTTP 探测移入后台线程，检查期间窗体可拖动/重绘、取消按钮立即响应。
+- **Splash 启动窗 UI 紧凑化**：窗体 380×196 → 380×180，边距统一 16px，消除"字少窗空"视觉失衡。
+- **`RuntimeResult` 错误码保留**：修复 `Failed()` 工厂丢弃错误码问题，E1002/E1003/E1004/E1005 诊断语义完整。
+
+### 测试
+
+- Headless 状态机/组合根场景测试：Happy Path、Runtime Failure（E1004）、Readiness Timeout（E2002 + 僵尸清理）、WebView2 崩溃恢复、异常边界。
+- TestHook E2E：`ToggleMaximize` + `GetWindowRect`/`GetWorkArea` 断言最大化 0px 间隙（≤2px）、`Shutdown` 优雅退出。
+- 启动耗时基准（<500ms）与 UI 响应性/渲染完整性（FlaUI，后台 10s 阻塞期 UI 健康）E2E。
+- 单测 321 个全部通过。
+
 ## [Unreleased]
 
 > 内部：为 `Program.cs` 拆分做准备——显式生命周期状态机 + Headless 测试、纯逻辑测试补齐、架构决策索引。

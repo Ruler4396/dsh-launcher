@@ -37,6 +37,17 @@ public sealed class WindowManager : IWindowManager
     /// <summary>DSH_HOME 目录（settings.yaml 监听目录）。</summary>
     public Func<string>? DshHomeDirProvider { get; set; }
 
+    // ---- v0.4.2 解耦：以下行为此前直接回调 Program 静态方法（Program↔WindowManager 隐式环），
+    // 改为组合根注入的委托——WindowManager 不再引用 DshWeb.Program，进程级测试不再被污染。----
+    /// <summary>创建同源内部弹窗（Program.CreatePopupForm 注入；null=未注入，调用即抛）。</summary>
+    public Func<(Form Form, WebView2 Web)>? PopupFactory { get; set; }
+    /// <summary>无边框窗口 DWM 阴影（Program.ApplyWindowShadow 注入）。</summary>
+    public Action<IntPtr>? ApplyShadowAction { get; set; }
+    /// <summary>ShowWindow 原生调用（Program.ShowWindowNative 注入；最小化→还原用 SW_RESTORE）。</summary>
+    public Action<IntPtr, int>? ShowWindowAction { get; set; }
+    /// <summary>诊断跟踪（Program.Trace 注入）。</summary>
+    public Action<string>? TraceAction { get; set; }
+
     /// <summary>进程内单例（Program 在 Main 早期创建并注入依赖委托；供托盘/唤起/状态访问）。</summary>
     public static WindowManager Instance { get; set; } = new();
 
@@ -58,9 +69,14 @@ public sealed class WindowManager : IWindowManager
     /// <summary>托盘图标（更新提示/主题切换读用；null=未创建）。</summary>
     internal NotifyIcon? TrayIcon => _trayIcon;
 
-    public (Form Form, WebView2 Web) CreatePopup() => DshWeb.Program.CreatePopupForm();
-    public void ApplyShadow(IntPtr hwnd) => DshWeb.Program.ApplyWindowShadow(hwnd);
-    public bool ResolveDarkMode() => DshWeb.Program.ResolveDarkMode();
+    public (Form Form, WebView2 Web) CreatePopup()
+    {
+        var f = PopupFactory;
+        if (f is null) throw new InvalidOperationException("PopupFactory 未注入（组合根必须在 Main 装配）");
+        return f();
+    }
+    public void ApplyShadow(IntPtr hwnd) => ApplyShadowAction?.Invoke(hwnd);
+    public bool ResolveDarkMode() => ResolveDarkModeProvider?.Invoke() ?? false;
 
     /// <summary>接线自检（Task5）：Debug 断言关键委托已注入——防漏注入导致托盘/唤起静默失效。</summary>
     [System.Diagnostics.Conditional("DEBUG")]
@@ -137,7 +153,7 @@ public sealed class WindowManager : IWindowManager
         if (form.WindowState == FormWindowState.Minimized)
         {
             // 最小化 → 还原（SW_RESTORE），否则 Activate 无效，窗口不会出现
-            DshWeb.Program.ShowWindowNative(form.Handle, 9); // 9 = SW_RESTORE
+            ShowWindowAction?.Invoke(form.Handle, 9); // 9 = SW_RESTORE
             form.WindowState = FormWindowState.Normal;
         }
         form.Activate();
@@ -173,7 +189,7 @@ public sealed class WindowManager : IWindowManager
             }
             if (WebViewManager.MainWeb?.CoreWebView2 is not null)
             {
-                DshWeb.Program.Trace("tray restore: reloading webview after process failure (deferred)");
+                Instance.TraceAction?.Invoke("tray restore: reloading webview after process failure (deferred)");
                 WebViewManager.MainWeb.CoreWebView2.Reload();
             }
         }
@@ -229,7 +245,7 @@ public sealed class WindowManager : IWindowManager
                 {
                     lastDark = nowDark;
                     ApplyWindowThemeAction?.Invoke(form, nowDark);
-                    DshWeb.Program.Trace($"theme changed: {(nowDark ? "dark" : "light")}");
+                    TraceAction?.Invoke($"theme changed: {(nowDark ? "dark" : "light")}");
                 }
             }
             catch
