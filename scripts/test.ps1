@@ -156,7 +156,8 @@ Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn �
 Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
 # ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
 Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
-Assert-True ($shellSrc -match 'new ProcessStartInfo\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
+Assert-True ($shellSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
+Assert-True ($shellSrc -match 'internal static bool RunProcessCaptured') "底层进程执行器 RunProcessCaptured 存在（供 Real-OS 测试零 Mock 调用）"
 Assert-True ($shellSrc -notmatch '(?m)^\s*chcp\s+65001') "已彻底删除 chcp 65001 Hack 代码（编码冲突根除，注释保留说明无害）"
 Assert-True ($shellSrc -notmatch '/c \\"" \+ npmCmd') "已删除 cmd /c 双层引号 Hack（node 引擎替代）"
 Assert-True ($shellSrc -match '未检测到可用的 Node\.js 环境') "node.exe 缺失时给出明确 UI 错误（不继续执行）"

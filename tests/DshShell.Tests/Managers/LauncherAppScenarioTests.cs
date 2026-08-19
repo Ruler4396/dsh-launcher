@@ -192,4 +192,43 @@ public class LauncherAppScenarioTests
         Assert.False(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Failed, app.State);
     }
+
+    // ---------------- 场景 6：阶段 0 真实文件副作用（SDET 支柱二：不只测状态转移，测系统副作用） ----------------
+    // 状态机执行阶段 0 的 BackgroundMaintenance 时，注入的委托应真实写盘 pending-update.json，
+    // 断言 RunStartupAsync 后文件真实存在且内容可读——锁定"状态机驱动真实 IO 副作用"链路。
+
+    [Fact]
+    public async Task Stage0_BackgroundMaintenance_RealFileSideEffect_CreatesPendingUpdateJson()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true })
+        {
+            // 阶段 0 注入真实写盘副作用：写入 pending-update.json（等价组合根 RunBackgroundMaintenance
+            // 中 HandlePendingUpdateAtStartup 的落盘路径）
+            BackgroundMaintenance = _ => StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz"),
+        };
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Running, app.State);
+
+        // 真实文件副作用断言：pending-update.json 真实落盘且内容可解析
+        var pendingPath = Path.Combine(tmp.Path, "pending-update.json");
+        Assert.True(File.Exists(pendingPath), "状态机阶段 0 应驱动真实落盘 pending-update.json");
+        var text = File.ReadAllText(pendingPath);
+        Assert.Contains("\"version\":\"1.2.3\"", text);
+        Assert.Contains("\"tarball\":\"deepseek-ai-dsh-1.2.3.tgz\"", text);
+    }
+
+    /// <summary>每测试用一次性临时目录（与 UpdateFlowContractTests 同风格）。</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "dsh-launcher-scenario-" + Guid.NewGuid().ToString("N"));
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); } catch { }
+        }
+    }
 }
