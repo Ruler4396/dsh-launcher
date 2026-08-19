@@ -461,7 +461,9 @@ internal static class Program
             // 托盘"退出"：置位（FormClosing 放行真关，不再隐藏到托盘）
             WindowManager.Instance.MarkTrayExitRequested();
             // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
-            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
+            // v0.4.0 T1：统一用纯函数决策（FollowWindow 且壳管理 且 非外部托管才停）
+            if (ShellLogic.ShouldStopServiceOnClose(
+                    ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell))
                 StopShellService();
             Application.Exit();
         };
@@ -515,9 +517,10 @@ internal static class Program
             // 质量治理 P2-7：真实退出释放主题监听（SystemEvents/FSW/轮询 Timer）
             WindowManager.Instance.ReleaseThemeWatcher();
 
-            if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
+            if (ShellLogic.ShouldStopServiceOnClose(
+                    mode, ServerManagedExternally, _serviceStartedByShell))
             {
-                // 跟随窗口：关窗即停服务（只停壳本次拉起的）
+                // 跟随窗口：关窗即停服务——含本次拉起的与被接管的孤儿服务（接管即负责，T1）
                 StopShellService();
             }
             WindowManager.Instance.DisposeTray();
@@ -525,6 +528,12 @@ internal static class Program
 
         form.Load += async (_, _) =>
         {
+            // v0.4.0 T2 规则 2：服务在跑且待应用版本不一致 → 主窗就绪后一次性询问[立即重启应用][稍后]
+            if (_applyRestartPendingVersion is { } applyVersion && !_applyRestartDeferred)
+            {
+                PromptApplyRestart(form, applyVersion);
+            }
+
             // v0.3.0：窗口记忆恢复（多显示器容灾）——已保存的状态优先，
             // 否则保持默认 1280×840 逻辑尺寸。
             var savedWindow = WindowStateStore.Load();
@@ -812,6 +821,8 @@ internal static class Program
     private static PendingUpdate _pendingUpdate;
     private static string _pendingLatest = "", _pendingLocal = "";
     private static Form? _pendingForm;
+    /// <summary>本次会话已下载过（MarkPending）的 dsh 版本（v0.4.0 T3：下载成功后又弹"有更新"去重）。</summary>
+    private static readonly HashSet<string> _sessionStagedVersions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>测试钩子：DSH_NO_UI=1 时所有用户弹窗（ShowError/状态窗/确认框）改为仅写日志，
     /// 供自动化/负向测试在无窗口环境运行（不打扰真实桌面）。仅测试使用，文档注明。</summary>
@@ -990,13 +1001,81 @@ internal static class Program
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
-        // 服务未运行时应用已下载的 dsh 新版（npm install -g 可能 30-60s；运行中进程不受影响，
-        // 保留原"服务未运行时才应用"的保守语义）；可取消（用户点取消立即 Kill npm）
-        if (!PortOpen(Target.Port)) ApplyPendingDshUpdate(ct);
+        HandlePendingUpdateAtStartup(ct); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
         CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
         CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
         EnsureAutoStartRequested();    // 自启落地：MSI 机器级意图标志 → 当前用户 HKCU Run
+    }
+
+    /// <summary>本次会话"稍后"标记：PromptRestart 拒绝后同会话不再弹（T2 规则 2）。</summary>
+    private static bool _applyRestartDeferred;
+
+    /// <summary>等待主窗就绪后一次性弹"立即重启应用"提示的版本（T2 规则 2，由主窗 Load 消费）。</summary>
+    private static string? _applyRestartPendingVersion;
+
+    /// <summary>
+    /// 启动早期待应用更新决策（v0.4.0 T2，纯函数矩阵 U2 的接线）：
+    /// - ApplyNow：服务未运行 → 直接应用（可取消）；
+    /// - ClearPending：运行版本 == 待应用版本 → 清账（历史残留）；
+    /// - PromptRestart：服务在跑且版本不一致 → 记版本，主窗就绪后一次性询问；
+    /// - None：无 pending。
+    /// 端口开着时绝不静默跳过（根因 A 修复）。
+    /// </summary>
+    private static void HandlePendingUpdateAtStartup(CancellationToken ct)
+    {
+        var (pendingVersion, _) = StagedUpdate.ReadPending();
+        if (string.IsNullOrWhiteSpace(pendingVersion)) return;
+        var action = ShellLogic.ResolvePendingUpdateAction(
+            pendingExists: true,
+            portOpen: PortOpen(Target.Port),
+            runningVersion: ReadGlobalDshVersion(),
+            pendingVersion: pendingVersion);
+        switch (action)
+        {
+            case ShellLogic.PendingUpdateAction.ApplyNow:
+                ApplyPendingDshUpdate(ct); // 可取消；失败保留 pending 下次再试
+                break;
+            case ShellLogic.PendingUpdateAction.ClearPending:
+                StagedUpdate.ClearPending();
+                Logger.Info($"pending dsh update {pendingVersion} already running; cleared stale pending");
+                break;
+            case ShellLogic.PendingUpdateAction.PromptRestart:
+                _applyRestartPendingVersion = pendingVersion;
+                Logger.Info($"dsh update {pendingVersion} pending while service running; will prompt once on main window");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 读取磁盘上**全局安装的 dsh 版本**（npm root -g 下 package.json 的 version）。
+    /// 不碰网络；npm 不可用/未装 dsh 时返回 null（决策回退 PromptRestart/ApplyNow）。
+    /// </summary>
+    private static string? ReadGlobalDshVersion()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("cmd.exe", "/c npm root -g")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            var root = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(5000);
+            if (root.Length == 0) return null;
+            var pkg = Path.Combine(root, "@deepseek-ai", "dsh", "package.json");
+            if (!File.Exists(pkg)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkg));
+            return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
+        }
+        catch
+        {
+            return null; // 读不到按"未知"处理（决策回退 PromptRestart/ApplyNow，不阻塞启动）
+        }
     }
 
     /// <summary>拉起 dsh 服务（wscript start-dsh.vbs）。返回 false = 拉起失败（E2001）。</summary>
@@ -1156,6 +1235,21 @@ internal static class Program
                 if (!string.IsNullOrWhiteSpace(latest) && !string.IsNullOrWhiteSpace(local)
                     && UpdateChecker.CompareVersions(latest, local) > 0)
                 {
+                    // v0.4.0 T3 去重：已下载待应用（pending）且 pending.Version >= 检测版本 → 不弹
+                    // "有更新"（更新死循环根因 C：下载成功 → pending → 重开又弹）。气泡已由上方
+                    // NotifyPendingApply 提示过一次。
+                    if (!string.IsNullOrWhiteSpace(pendingVersion)
+                        && UpdateChecker.CompareVersions(pendingVersion, latest) >= 0)
+                    {
+                        Trace($"dsh update {latest} already staged (pending={pendingVersion}); skip");
+                        return;
+                    }
+                    // v0.4.0 T3：本次会话已下载过同版本 → 不再重复提示（下载成功后又弹）
+                    if (_sessionStagedVersions.Contains(latest))
+                    {
+                        Trace($"dsh update {latest} already downloaded this session; skip");
+                        return;
+                    }
                     // v0.3.1：用户拒绝过的版本跳过（新版本 > 跳过版本时重新提示）
                     var skipped = ReadSkippedDshVersion();
                     if (skipped is not null && UpdateChecker.CompareVersions(latest, skipped) <= 0)
@@ -1258,7 +1352,7 @@ internal static class Program
             var tray = WindowManager.Instance.TrayIcon;
             if (tray is null) return;
             tray.ShowBalloonTip(15000, "dsh 更新待应用",
-                $"已下载 dsh {version}，重启 dsh-launcher 后自动应用（或手动执行：npm install -g @deepseek-ai/dsh@{version}）。",
+                $"已下载 dsh {version}，将在下次服务启动时自动应用（关闭本窗口后生效；或手动执行：npm install -g @deepseek-ai/dsh@{version}）。",
                 ToolTipIcon.Info);
         }
         catch { /* 气泡提示失败忽略 */ }
@@ -1290,7 +1384,7 @@ internal static class Program
         var r = MessageBox.Show(
             form,
             $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台下载并安排更新？\n" +
-            "（下载完成不打扰当前会话；下次启动 dsh-launcher 时自动应用新版本）",
+            "（下载完成不打扰当前会话；将在下次服务启动时自动应用，即关闭本窗口后）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
@@ -1298,6 +1392,66 @@ internal static class Program
             return;
         }
         _ = Task.Run(() => DownloadDshUpdateStaged(form, latest));
+    }
+
+    /// <summary>
+    /// v0.4.0 T2 规则 2：服务在跑且待应用版本不一致时的一次性询问（主窗 Load 后调用）。
+    /// [立即重启应用] = 停服务 → npm install -g → 拉起服务 → Reload 页面（版本即刻生效）；
+    /// [稍后] = 本次会话不再提示（仅日志，服务保持当前版本）。
+    /// 取消时**不** MarkSkipped（pending 仍在，下次启动继续按决策处理）。
+    /// </summary>
+    private static void PromptApplyRestart(Form form, string version)
+    {
+        try
+        {
+            form.Activate();
+            var r = MessageBox.Show(
+                form,
+                $"已下载 dsh {version}，但 dsh 服务正在运行中。\n\n" +
+                "是否立即重启服务以应用新版本？\n" +
+                "（立即 = 停止服务 → 安装 → 自动重新拉起并刷新页面）",
+                "dsh 更新待应用", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (r != DialogResult.Yes)
+            {
+                _applyRestartDeferred = true; // 本次会话不再提示（仅日志）
+                Logger.Info($"user deferred applying staged dsh update {version}");
+                return;
+            }
+            _ = Task.Run(async () =>
+            {
+                StopShellService(); // 停当前服务（含接管/本次拉起的）
+                if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail))
+                {
+                    StagedUpdate.ClearPending();
+                    Logger.Info($"staged dsh update applied (restart): {version}");
+                    StartDshServiceViaVbs(); // 拉起新版本服务
+                    // 等待就绪后刷新页面（最长 60s）
+                    var deadline = DateTime.UtcNow.AddSeconds(60);
+                    while (DateTime.UtcNow < deadline && !HttpReady())
+                        await Task.Delay(500);
+                    try
+                    {
+                        form.BeginInvoke(() =>
+                        {
+                            if (WebViewManager.MainWeb?.CoreWebView2 is not null)
+                            {
+                                try { WebViewManager.MainWeb.CoreWebView2.Reload(); } catch { /* 页面已关 */ }
+                            }
+                        });
+                    }
+                    catch { /* 窗体已关闭 */ }
+                }
+                else
+                {
+                    Logger.Warn("staged dsh update apply (restart) failed: " + errorTail,
+                        ErrorCodes.E4002, new { version });
+                    try { form.BeginInvoke(() => ShowError(ErrorCodes.E4002,
+                        $"dsh {version} 更新安装失败。\n\n可稍后重试，或在命令行手动执行：\nnpm install -g @deepseek-ai/dsh@{version}",
+                        log: false)); } catch { /* 窗体已关闭 */ }
+                }
+            });
+        }
+        catch { /* 弹窗失败：记日志不打断启动 */ }
     }
 
     /// <summary>后台执行：npm pack 下载指定版本到 staging；成功 → MarkPending（下次启动应用）。</summary>
@@ -1311,10 +1465,11 @@ internal static class Program
             if (ok)
             {
                 StagedUpdate.MarkPending(latest);
+                _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
                 try
                 {
                     form.BeginInvoke(() => MessageBox.Show(
-                        $"dsh {latest} 已下载完成，下次启动 dsh-launcher 时自动应用（不会打断当前会话）。",
+                        $"dsh {latest} 已下载完成，将在下次服务启动时自动应用（即关闭本窗口后，不会打断当前会话）。",
                         "dsh 更新", MessageBoxButtons.OK, MessageBoxIcon.Information));
                 }
                 catch { /* 窗体已关闭则下次启动再说 */ }
@@ -1958,7 +2113,21 @@ internal static class Program
                 ClearServicePidFile();
                 return;
             }
-            if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件，下次启动认领
+            // KillProcess 内部：PID 校验 → 温和（CTRL_BREAK/taskkill）→ 同步等待 → /f /T 兜底
+            if (KillProcess(pid))
+            {
+                // v0.4.0 T1：端口释放探测（≤2s）——进程已死但端口未释放（子进程/TIME_WAIT）
+                // 时同步等待，确保关窗后 node 不残留、不占端口（issue：重开秒进复用旧服务）。
+                var deadline = DateTime.UtcNow.AddSeconds(2);
+                while (DateTime.UtcNow < deadline && FindPidListeningOn(Target.Port) > 0)
+                    Thread.Sleep(100);
+                if (FindPidListeningOn(Target.Port) > 0)
+                    Logger.Warn($"service pid={pid} killed but port {Target.Port} still occupied",
+                        ErrorCodes.E2005, new { pid, port = Target.Port });
+                else
+                    ClearServicePidFile();
+            }
+            // P2-10：杀不干净则保留 pid 文件，下次启动认领
         }
         catch
         {
