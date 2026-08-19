@@ -65,9 +65,9 @@ public static class VD {
     [DllImport("user32.dll")] public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr rc, EnumProc cb, IntPtr lp);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFO mi);
     [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
-    public static int Count(){ int n=0; EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,(h,d,r,l)=>{ n++; return true; },IntPtr.Zero); return n; }
+    public static int Count(){ int n=0; EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,(IntPtr h, IntPtr d, ref RECT r, IntPtr l)=>{ n++; return true; },IntPtr.Zero); return n; }
     public static string[] Rects(){ var s=new System.Collections.Generic.List<string>();
-        EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,(h,d,r,l)=>{
+        EnumDisplayMonitors(IntPtr.Zero,IntPtr.Zero,(IntPtr h, IntPtr d, ref RECT r, IntPtr l)=>{
             var mi=new MONITORINFO{cbSize=Marshal.SizeOf<MONITORINFO>()}; GetMonitorInfo(h,ref mi);
             s.Add($"({mi.rcMonitor.L},{mi.rcMonitor.T},{mi.rcMonitor.R-mi.rcMonitor.L}x{mi.rcMonitor.B-mi.rcMonitor.T})"); return true; },IntPtr.Zero);
         return s.ToArray(); }
@@ -119,22 +119,29 @@ $pnputil = "pnputil"
 
 # pnputil 包装 90s 超时：CI 上 /install 偶发在 DriverStore 签名校验阶段悬挂，
 # 必须快速失败而非无限卡（此前 CI 卡 20+ 分钟即此根因）。
+# 注意：参数用**单字符串**传给 ProcessStartInfo（ArgumentList 在此环境会导致 pnputil
+# 只打印帮助而参数未生效——CI 实测），inf 路径手动加引号防空格。
 function Invoke-PnPUtil {
-    param([string[]]$Args)
-    $psi = [System.Diagnostics.ProcessStartInfo]::new("pnputil")
-    foreach ($a in $Args) { $psi.ArgumentList.Add($a) }
+    param([string]$Arguments)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new("pnputil", $Arguments)
     $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
     $p = [System.Diagnostics.Process]::Start($psi)
     if (-not $p.WaitForExit(90000)) {
         $p.Kill()
-        Write-Warning "pnputil $($Args -join ' ') 超时（90s），已终止。"
+        $p.WaitForExit()
+        Write-Warning "pnputil 超时（90s），已终止：$Arguments"
         return $false
     }
+    $out = $p.StandardOutput.ReadToEnd()
+    if ($out) { Write-Host $out.Trim() }
     return $p.ExitCode -eq 0
 }
 
-# 1) 创建 root enumerated device
-Invoke-PnPUtil @("/add-driver", $inf.FullName, "/install") | Out-Null
+# 1) 创建 root enumerated device（返回码失败不致命：继续尝试实例化并等待枚举）
+$pnputilOk = Invoke-PnPUtil "/add-driver `"$($inf.FullName)`" /install"
+if (-not $pnputilOk) { Write-Warning "pnputil /add-driver 失败，虚拟屏可能无法枚举" }
 # 2) 通过 devcon（若存在）注册 Root\IddSampleDriver 实例；不存在则跳过（驱动 Add 已覆盖）
 $devcon = Get-Command "devcon.exe" -ErrorAction SilentlyContinue
 if ($devcon) {
