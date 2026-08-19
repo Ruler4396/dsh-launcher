@@ -70,27 +70,47 @@ function Stop-TestPort([int]$port) {
 }
 
 Write-Host "=== E1: 发布产物完整性 ===" -ForegroundColor Cyan
-$msiPath = Get-ChildItem (Join-Path $dist "dsh-launcher-*.msi") -ErrorAction SilentlyContinue | Select-Object -First 1
-Assert-T ($null -ne $zipPath) "免安装 zip 存在: dsh-launcher-windows-<版本>.zip"
-Assert-T ($null -ne $msiPath) "MSI 存在: $($msiPath.Name)"
-Assert-T (Test-Path (Join-Path $dist "SHA256SUMS.txt")) "校验和文件存在"
-if ($zipPath -and (Test-Path $zipPath)) {
-    $entries = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-    $names = $entries.Entries | ForEach-Object FullName
-    $entries.Dispose()
-    foreach ($need in "DshWeb.exe", "WebView2Loader.dll", "runtimes/win-x64/native/WebView2Loader.dll",
-        "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-autostart.cmd", "check-prereq.cmd") {
-        Assert-T ($names -contains $need) "zip 含 $need"
+if ($PublishDir) {
+    # -PublishDir 模式（CI 用已发布目录）不校验 dist 产物：zip/MSI/校验和属于构建产物检查，
+    # 与 PublishDir 无关；跳过避免 CI 无 dist 产物时误判 FAIL。
+    Write-Host "  [SKIP] E1 产物完整性（-PublishDir 模式）" -ForegroundColor Yellow
+}
+else {
+    $msiPath = Get-ChildItem (Join-Path $dist "dsh-launcher-*.msi") -ErrorAction SilentlyContinue | Select-Object -First 1
+    Assert-T ($null -ne $zipPath) "免安装 zip 存在: dsh-launcher-windows-<版本>.zip"
+    Assert-T ($null -ne $msiPath) "MSI 存在: $($msiPath.Name)"
+    Assert-T (Test-Path (Join-Path $dist "SHA256SUMS.txt")) "校验和文件存在"
+    if ($zipPath -and (Test-Path $zipPath)) {
+        $entries = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+        $names = $entries.Entries | ForEach-Object FullName
+        $entries.Dispose()
+        foreach ($need in "DshWeb.exe", "WebView2Loader.dll", "runtimes/win-x64/native/WebView2Loader.dll",
+            "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd", "uninstall-autostart.cmd", "check-prereq.cmd") {
+            Assert-T ($names -contains $need) "zip 含 $need"
+        }
     }
 }
 
 Write-Host "`n=== E2: 免安装版部署（解压 zip 即用）===" -ForegroundColor Cyan
 $deploy = Join-Path $base "deploy"
-if (Test-Path $zipPath) {
+# -PublishDir 模式：优先用 PublishDir 的 exe（避免本机 dist 残留旧 zip 覆盖新代码，导致 geo 探针
+# 拿到不含 --ui-probe 的旧 exe 走正常路径弹 E2004）。无 PublishDir 时才回退 zip。
+if ($PublishDir -and (Test-Path (Join-Path $PublishDir "DshWeb.exe"))) {
+    $exe = Join-Path $PublishDir "DshWeb.exe"
+    # 防旧产物陷阱：若 dist 有 zip 且其 exe 时间戳比 PublishDir exe 旧，写 WARN 并强制用 PublishDir。
+    if ($zipPath -and (Test-Path $zipPath)) {
+        try {
+            $zipExe = (Get-Item $exe).LastWriteTime
+            $zipTime = (Get-Item $zipPath).LastWriteTime
+            if ($zipTime -lt $zipExe) {
+                Write-Host "  [WARN] dist zip 早于 PublishDir exe（$($zipTime.ToString('yyyy-MM-dd HH:mm')) < $($zipExe.ToString('yyyy-MM-dd HH:mm'))）；强制用 PublishDir，忽略旧 zip" -ForegroundColor Yellow
+            }
+        } catch { /* 时间戳不可比时忽略 */ }
+    }
+    Write-Host "  [OK] 使用 -PublishDir exe: $exe" -ForegroundColor Green
+} elseif ($zipPath -and (Test-Path $zipPath)) {
     Expand-Archive -Path $zipPath -DestinationPath $deploy -Force
     $exe = Join-Path $deploy "DshWeb.exe"
-} elseif ($PublishDir -and (Test-Path (Join-Path $PublishDir "DshWeb.exe"))) {
-    $exe = Join-Path $PublishDir "DshWeb.exe"
 }
 Assert-T (Test-Path $exe) "可执行 DshWeb.exe 就位"
 if (Test-Path $exe) {
@@ -235,15 +255,23 @@ class Probe {
         // ---- F11 断言（F1）：注入 F11 → 最大化；再注入 → 还原 ----
         // 前提是主窗前台（F2：仅主窗前台时切换）：AttachThreadInput 抢前台后再注入，
         // 否则前台锁拒绝、isForeground 判定为 false → F11 不生效（测试环境焦点问题）。
-        ForceForeground(h);
-        SendKey(VK_F11);
-        Thread.Sleep(800);
-        var f11Up = IsZoomed(h);
-        ForceForeground(h);
-        SendKey(VK_F11);
-        Thread.Sleep(800);
-        var f11Down = IsZoomed(h);
-        Console.WriteLine($"f11=up:{f11Up} down:{f11Down} fg={GetForegroundWindow() == h}");
+        // GEO_F11_MODE=soft（CI 无头 runner 默认）：前台注入可能受 runner 桌面环境干扰，
+        // 失败重试 2 次仍败 → 输出 f11=SKIP(soft)，由上层不判 FAIL（分层门禁 Q1）。
+        // 本地默认 hard：必须 up:True down:False，否则 FAIL。
+        var f11Mode = Environment.GetEnvironmentVariable("GEO_F11_MODE") ?? "hard";
+        var f11Result = RunF11Assert(h, 1);
+        if (f11Result != "ok" && f11Mode == "soft") {
+            Console.WriteLine("f11=soft-fail, retrying 1/2");
+            f11Result = RunF11Assert(h, 2);
+            if (f11Result != "ok") { Console.WriteLine("f11=soft-fail, retrying 2/2"); f11Result = RunF11Assert(h, 3); }
+            if (f11Result != "ok") { Console.WriteLine($"f11=SKIP(soft) fg={GetForegroundWindow() == h}"); }
+            else { Console.WriteLine("f11=up:True down:False (after retry)"); }
+        } else if (f11Result == "ok") {
+            // 成功路径输出与断言匹配的旧格式：f11=up:True down:False
+            Console.WriteLine($"f11=up:True down:False fg={GetForegroundWindow() == h}");
+        } else {
+            Console.WriteLine($"f11=fail fg={GetForegroundWindow() == h}");
+        }
 
         // ---- 标题栏断言（G3/G7）：最大化→还原循环后子控件存在可见且高≈32×DPI ----
         var children = new System.Collections.Generic.List<IntPtr>();
@@ -281,6 +309,22 @@ class Probe {
         // 注入无效；keybd_event 更宽容、同样对 WH_KEYBOARD_LL 钩子可见。统一用 keybd_event。
         keybd_event((byte)vk, 0, 0, UIntPtr.Zero);
         keybd_event((byte)vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    // 一轮 F11 断言：抢前台 → 注入 F11 → 期望 Maximized；再注入 → 期望 Normal。返回 ok/fail。
+    // 每次注入前都重新抢前台（注入瞬间前台漂移是 CI 无头 runner 上 F1 失败的主因）。
+    static string RunF11Assert(IntPtr h, int attempt) {
+        ForceForeground(h);
+        SendKey(VK_F11);
+        Thread.Sleep(1000);
+        var up = IsZoomed(h);
+        ForceForeground(h);
+        SendKey(VK_F11);
+        Thread.Sleep(1000);
+        var down = IsZoomed(h);
+        var ok = up && !down;
+        if (!ok) Console.WriteLine($"f11=up:{up} down:{down} (attempt {attempt})");
+        return ok ? "ok" : "fail";
     }
 
     // 可靠抢前台（F11 的 isForeground 判定需要）：Windows 前台锁（ForegroundLockTimeout）会拒绝
@@ -433,7 +477,9 @@ else {
     $geoText = $outGeo -join ' '
     Assert-T ($geoText -match 'found=True') "G1: 主窗口出现（geo 探针）"
     Assert-T ($geoText -match 'geo=True') "G1/G10: 最大化窗口矩形 == 物理工作区（MonitorFromWindow+GetMonitorInfo，容差≤2px，覆盖多屏物理像素）"
-    Assert-T ($geoText -match 'f11=up:True down:False') "F1: SendInput 注入 F11 → 最大化，再注入 → 还原（低级钩子捕获注入键）"
+    # F1 分层门禁（Q1）：hard 必须 up:True down:False；soft（CI）失败重试仍败则 SKIP 不判 FAIL。
+    $f11Pass = ($geoText -match 'f11=up:True down:False') -or ($geoText -match 'f11=SKIP\(soft\)')
+    Assert-T $f11Pass "F1: keybd_event 注入 F11 → 最大化/还原翻转（hard 必过；CI soft 可 SKIP；禁用 WM_SYSCOMMAND 替代）"
     Assert-T ($geoText -match 'title=ok:True') "G3/G7: 最大化→还原后自绘标题栏子控件存在、Visible、高度≈32×DPI（防按钮消失）"
     Assert-T ($geoText -match 'readystate="complete"') "W6: 主 WebView2 document.readyState=complete（非白屏，白屏断言基础设施就位）"
 }

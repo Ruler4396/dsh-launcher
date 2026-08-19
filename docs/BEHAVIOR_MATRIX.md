@@ -33,7 +33,7 @@
 
 | # | 行为 | 触发 | 迁移落点 | 单测 | e2e | test.ps1 | 冒烟 |
 |---|---|---|---|---|---|---|---|
-| F1 | 物理 F11 切换最大化/还原且吞键（WH_KEYBOARD_LL 系统级钩子） | 物理/注入 F11 | `F11LowLevelHook` + `ShouldHandleF11Hook` | ✅ 现有 F11HookDecisionTests | ✅ SendInput 注入 VK_F11 后窗口状态翻转 | — | ✅ 物理 F11 |
+| F1 | 物理 F11 切换最大化/还原且吞键（WH_KEYBOARD_LL 系统级钩子） | 物理/注入 F11 | `F11LowLevelHook` + `ShouldHandleF11Hook` | ✅ 现有 F11HookDecisionTests | ✅ keybd_event 注入 VK_F11 后窗口状态翻转（分层门禁：hard 必过 / CI soft 可 SKIP；SendInput 因 .NET INPUT 布局被拒 error 87 已弃用） | — | ✅ 物理 F11 |
 | F2 | 仅主窗前台生效（`GetForegroundWindow()==form.Handle`） | 非前台按 F11 | F11 钩子 `isForeground` 闭包（缓存 `var hwnd=form.Handle`） | ✅ 非前台不处理单测 | — | — | ✅ 其他程序 F11 不抢 |
 | F3 | 钩子随窗体销毁（Dispose） | 关窗 | F11 钩子 Dispose 时机 | — | ✅ 关窗后进程退出 | — | ✅ 钩子随窗体销毁 |
 | F4 | 跨线程修复：创建钩子前 UI 线程缓存 `var hwnd = form.Handle`，lambda 比对缓存值 | 窗体销毁期 F11 竞态 | WindowManager 构造 | ✅ 销毁期无 ObjectDisposedException 竞态 | — | — | ✅ Alt+Tab×20 无异常 |
@@ -84,3 +84,30 @@
 - **Step 4**（WebView 迁入）：W1-W8 全绿 + 冒烟门禁 2（弹窗/下载/崩溃节流/托盘恢复非白屏）。
 - **Step 5**（生命周期迁出）：L1-L7 全绿 + 冒烟门禁 3（托盘唤起/单实例/主题/三模式）。
 - **Step 6**（收尾）：静态断言全启 + e2e 全量 + 冒烟全量。
+
+---
+
+## 门禁定义（Phase 1 起强制执行）
+
+**CI e2e-geo 闭环**（`scripts/e2e-test.ps1` E3b 段）：
+- G1/G3/G7/W6 **必须全绿**；
+- F1 分层门禁（Q1）：`GEO_F11_MODE=hard`（本地/真机）必须 `f11=up:True down:False`；
+  `GEO_F11_MODE=soft`（CI e2e-geo job env）失败重试 2 次仍败 → 输出 `f11=SKIP(soft)`，**不计 FAIL**。
+- 禁用 `WM_SYSCOMMAND SC_MAXIMIZE` 替代 F1（那是 G1 语义，测的不是 F11 钩子）。
+
+**每 commit 硬门**：
+1. `dotnet build` 0 err；
+2. `dotnet test` 全绿；
+3. `scripts/test.ps1` 全绿；
+4. 本地 geo 探针 **hard** 5 断言全绿——跑前必须 fresh publish（`dotnet publish` 到临时目录），
+   **禁用旧 dist zip**（e2e 的 -PublishDir 模式已强制优先 PublishDir exe 并 WARN 旧 zip）。
+
+**真机门**：Step 3/4/5/6 跑 Task 3 冒烟矩阵，任一失败即停（`git bisect refactor/baseline..HEAD`）。
+
+**闭环判定**：CI e2e-geo = G1/G3/G7/W6 全绿 且 (F1 绿 或 f11=SKIP(soft))。达闭环才进 Step 1；
+G1/G3/G7/W6 红 → 先修基础设施，不进 Step 1。
+
+### e2e/探针模态硬化（Q1 派生）
+- 壳 `--ui-probe` 或环境 `DSH_E2E=1` 时，`ShowError` 只写日志 + stdout，**不弹模态**。
+- 根治：探针路径上壳误判服务不可用弹 E2004 模态 + 探针 WaitMain 30s → "看似卡死"。
+- 正常 GUI（无 `--ui-probe`/`DSH_E2E`）不受影响。

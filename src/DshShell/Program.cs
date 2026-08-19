@@ -413,6 +413,8 @@ internal static class Program
         // 置于 mutex 之前（同 --ui-selftest）：不受单实例保护约束，本机已有实例时也能开测试窗。
         if (args.Any(a => a.Equals("--ui-probe", StringComparison.OrdinalIgnoreCase)))
         {
+            // e2e 探针模式：ShowError 走日志+stdout，不弹模态（根治探针路径 E2004 挂起）。
+            Environment.SetEnvironmentVariable("DSH_E2E", "1");
             Environment.Exit(RunUiProbe());
             return;
         }
@@ -1041,6 +1043,12 @@ internal static class Program
     private static bool NoUiMode =>
         string.Equals(Environment.GetEnvironmentVariable("DSH_NO_UI"), "1", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>e2e/探针模式（Task 0 模态硬化）：--ui-probe 参数或 DSH_E2E=1 时，ShowError 一律
+    /// 只写日志 + stdout，不弹模态框——根治 E2004 模态窗在探针/e2e 路径挂起问题（探针 WaitMain
+    /// 等窗口 30s + 模态弹窗不关 = 看似卡死）。仅测试路径，正常 GUI 不受影响。</summary>
+    private static bool E2EMode =>
+        string.Equals(Environment.GetEnvironmentVariable("DSH_E2E"), "1", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>统一出错弹窗（v0.3.0 显式差错控制）：正文含 [错误码]，错误一并写入结构化日志；
     /// 消息文本可 Ctrl+C 复制，便于粘贴到 Issue。
     /// 质量治理 P1-7：可指定日志级别——"用户取消/拒绝"类非故障（如 E1002）传 Info，
@@ -1057,6 +1065,14 @@ internal static class Program
             else Logger.Info(detail, code);
         }
         if (NoUiMode) return DialogResult.OK; // 测试钩子：只记录不弹窗
+        // e2e/探针模式（模态硬化）：--ui-probe / DSH_E2E=1 时只写日志 + stdout，不弹模态。
+        // 否则探针路径（如 geo 启壳后服务误判不可用）会弹 E2004 模态窗，与探针 WaitMain 30s
+        // 等待叠加造成"看似卡死"。正常 GUI 不受影响。
+        if (E2EMode)
+        {
+            try { Console.WriteLine($"[{code}] {ErrorCodes.Describe(code)}\n{detail}"); } catch { /* stdout 不可用时忽略 */ }
+            return DialogResult.OK;
+        }
         return MessageBox.Show($"[{code}] {ErrorCodes.Describe(code)}\n\n{detail}", "DeepSeek Harness", buttons, icon);
     }
 
