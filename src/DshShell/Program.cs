@@ -363,6 +363,19 @@ internal static class Program
         // 若探测太早判失败，用户要二次点击才能开窗。这里统一在状态窗里等 HTTP 就绪。
         if (!ServerManagedExternally && !HttpReady())
         {
+            // 并行开窗（Step5）：状态窗先建先显示（TopMost），随后的 Node 检测/服务拉起/轮询
+            // 都在弹窗可见期间同步进行——双击后立即看到加载窗，不再"干等几秒无反应"。
+            // cts/pollTask 在此创建；Show() 非模态 + 下方 DoEvents 消息泵驱动刷新。
+            var logPath = UnifiedLogPath;
+            var cts = new CancellationTokenSource();
+            using var status = CreateStartupStatusForm(onCancel: () => cts.Cancel());
+            status.Show(); // 非模态立即显示（TopMost，前台有窗口也能看到）
+            var pollTask = Task.Run(() => WaitServiceReady(cts.Token, Target.Port, Target.Url, logPath, E2EMode));
+            _ = pollTask.ContinueWith(_ =>
+            {
+                try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
             if (!PortOpen(Target.Port))
             {
                 // v0.3.0 ① 僵尸清扫：上次崩溃记录过、但已不在监听的进程 → 清理（只动我们记录的 PID）
@@ -410,72 +423,9 @@ internal static class Program
                 Trace("port open but HTTP not ready; waiting with status window");
             }
 
-            // 启动状态窗：等待服务就绪。首次运行 npx 需要下载 dsh 组件（可能几分钟），
-            // 此期间明确提示而不是静默干等；可随时取消。
-            // 轮询期间持续检查启动日志：一旦出现明确错误（下载失败/权限/无 npx 等）
-            // 结束等待（有 15 秒宽限期，避免启动过程中的良性告警误判）。
-            var logPath = UnifiedLogPath;
-            var cts = new CancellationTokenSource();
-            using var status = CreateStartupStatusForm(onCancel: () => cts.Cancel());
-            var pollTask = Task.Run(() =>
-            {
-                var lastLogCheck = DateTime.MinValue;
-                var logErrorSeen = false;
-                var logErrorSince = DateTime.MinValue;
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-                // e2e 探针模式（E2EMode）：轮询上限 20s 自动结束（不弹状态窗、不无限等服务）。
-                // 否则无头 CI 上服务未就绪时会一直转圈，探针路径卡死。
-                for (var i = 0; i < (E2EMode ? 20 : 180); i++)
-                {
-                    if (cts.IsCancellationRequested) return "canceled";
-                    if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
-                    {
-                        lastLogCheck = DateTime.Now;
-                        var content = SafeReadText(logPath);
-                        if (ShellLogic.LogShowsStartupError(content))
-                        {
-                            if (!logErrorSeen)
-                            {
-                                logErrorSeen = true;
-                                logErrorSince = DateTime.Now;
-                                // 日志出现错误标志：不立即判死——启动过程中的良性告警（如网络探测）
-                                // 也会命中，误判会导致用户"要多点一次"。给 15 秒宽限期，期间
-                                // HTTP 就绪仍算成功；只有持续失败才判定启动出错。
-                                Trace("poll: log shows error markers, grace 15s");
-                            }
-                        }
-                        else
-                        {
-                            logErrorSeen = false; // 日志恢复干净，重置记时
-                        }
-                    }
-                    if (PortOpen(Target.Port))
-                    {
-                        if (ShellLogic.IsHttpReady(Target.Url, http)) // 契约纯函数（P1-6）
-                        {
-                            Trace("poll: ready (tcp + http)");
-                            return "ready"; // TCP + HTTP 都已就绪
-                        }
-                        // HTTP 尚未就绪（前端还在启动），继续等
-                    }
-                    if (logErrorSeen && DateTime.Now - logErrorSince >= TimeSpan.FromSeconds(15))
-                    {
-                        Trace("poll: log error markers persisted 15s, giving up");
-                        return "logerror";
-                    }
-                    // 启动延迟优化（Step4d）：前 8 次快速轮询（200ms）——node 服务往往在启动
-                    // 临界点就绪，固定 1s 粒度会让"已就绪"最多白等 1s；快速期后恢复 1s（服务
-                    // 尚未就绪说明在下载/初始化，低频即可，避免空转）。
-                    Thread.Sleep(i < 8 ? 200 : 1000);
-                }
-                Trace("poll: timeout after 180s");
-                return "timeout";
-            });
-            _ = pollTask.ContinueWith(_ =>
-            {
-                try { status.Invoke(status.Close); } catch { /* 窗口已关闭 */ }
-            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-
+            // 并行开窗（Step5）：状态窗已在进入本块时非模态 Show()（TopMost）。
+            // 等待服务就绪期间用 DoEvents 消息泵驱动状态窗刷新/取消按钮——
+            // 不能阻塞 Main 线程（同一线程无消息泵 → 状态窗挂起不刷新，等同卡死）。
             string waitResult;
             if (NoUiMode || E2EMode)
             {
@@ -485,7 +435,12 @@ internal static class Program
             }
             else
             {
-                status.ShowDialog();
+                // DoEvents 消息泵：状态窗可见、可取消；pollTask 完成后退出循环。
+                while (!pollTask.IsCompleted)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(50);
+                }
                 waitResult = pollTask.GetAwaiter().GetResult();
             }
             Trace($"status window closed, waitResult={waitResult}");
@@ -2389,6 +2344,66 @@ internal static class Program
     }
 
     /// <summary>
+    /// 服务就绪轮询（并行开窗 Step5 抽取）：后台线程等待 dsh 服务 TCP+HTTP 就绪。
+    /// 逻辑与旧内联轮询逐位一致；由状态窗提前创建后的 pollTask 承载。
+    /// 返回 "ready"/"canceled"/"logerror"/"timeout"。
+    /// </summary>
+    private static string WaitServiceReady(CancellationToken token, int port, string url, string logPath, bool e2eMode)
+    {
+        var lastLogCheck = DateTime.MinValue;
+        var logErrorSeen = false;
+        var logErrorSince = DateTime.MinValue;
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        // e2e 探针模式（E2EMode）：轮询上限 20s 自动结束（不弹状态窗、不无限等服务）。
+        // 否则无头 CI 上服务未就绪时会一直转圈，探针路径卡死。
+        for (var i = 0; i < (e2eMode ? 20 : 180); i++)
+        {
+            if (token.IsCancellationRequested) return "canceled";
+            if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
+            {
+                lastLogCheck = DateTime.Now;
+                var content = SafeReadText(logPath);
+                if (ShellLogic.LogShowsStartupError(content))
+                {
+                    if (!logErrorSeen)
+                    {
+                        logErrorSeen = true;
+                        logErrorSince = DateTime.Now;
+                        // 日志出现错误标志：不立即判死——启动过程中的良性告警（如网络探测）
+                        // 也会命中，误判会导致用户"要多点一次"。给 15 秒宽限期，期间
+                        // HTTP 就绪仍算成功；只有持续失败才判定启动出错。
+                        Trace("poll: log shows error markers, grace 15s");
+                    }
+                }
+                else
+                {
+                    logErrorSeen = false; // 日志恢复干净，重置记时
+                }
+            }
+            if (PortOpen(port))
+            {
+                if (ShellLogic.IsHttpReady(url, http)) // 契约纯函数（P1-6）
+                {
+                    Trace("poll: ready (tcp + http)");
+                    return "ready"; // TCP + HTTP 都已就绪
+                }
+                // HTTP 尚未就绪（前端还在启动），继续等
+            }
+            if (logErrorSeen && DateTime.Now - logErrorSince >= TimeSpan.FromSeconds(15))
+            {
+                Trace("poll: log error markers persisted 15s, giving up");
+                return "logerror";
+            }
+            // 启动延迟优化（Step4d）：前 8 次快速轮询（200ms）——node 服务往往在启动
+            // 临界点就绪，固定 1s 粒度会让"已就绪"最多白等 1s；快速期后恢复 1s（服务
+            // 尚未就绪说明在下载/初始化，低频即可，避免空转）。
+            Thread.Sleep(i < 8 ? 200 : 1000);
+        }
+        Trace("poll: timeout after 180s");
+        return "timeout";
+    }
+
+    /// <summary>
     /// 服务启动状态窗：显示"正在启动 dsh 服务"（含首次下载提示；v0.3.0 亦可显示
     /// 便携 Node 下载进度文案），可取消。由外部任务完成后调用 Close() 自动关闭；
     /// 取消按钮设 DialogResult.Cancel 并关闭。
@@ -2405,7 +2420,10 @@ internal static class Program
             ClientSize = new Size(440, 150),
             MinimizeBox = false,
             MaximizeBox = false,
-            ShowInTaskbar = false,
+            // 并行开窗（Step5）：加载窗必须 TopMost——否则用户前台有其他窗口时，
+            // 加载窗藏在后面根本看不到，用户以为双击没反应。
+            TopMost = true,
+            ShowInTaskbar = true, // 在任务栏可见，配合 TopMost 让用户明确"正在启动"
             ControlBox = false,
         };
         var label = new Label
