@@ -10,6 +10,8 @@ dist/
 ui-selftest-result.txt
 out.txt
 err.txt
+# e2e 本地运行临时日志
+e2e-*.log
 # WiX v5 temp files generated next to the build source
 .tmp-wix/
 # WiX tool cache (defensive)

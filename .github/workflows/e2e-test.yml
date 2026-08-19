@@ -45,6 +45,10 @@ jobs:
       - name: Run e2e (real GUI incl. geo probe)
         shell: pwsh
         continue-on-error: false
+        env:
+          # F1 分层门禁（Q1）：CI 无头 runner 前台注入可能受桌面环境干扰，soft 允许失败→SKIP。
+          # G1/G3/G7/W6 仍必须全绿；本地/真机跑 geo 用默认 hard（必过）。
+          GEO_F11_MODE: soft
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-test.ps1 -PublishDir .publish-ci 2>&1 | Tee-Object -FilePath e2e.log
           $code = $LASTEXITCODE
