@@ -82,8 +82,13 @@ public class UiResponsivenessTests
             var invoke = cancel.Patterns.Invoke.Pattern;
             Assert.NotNull(invoke);
             invoke.Invoke();
-            await Task.Delay(1500);
-            Assert.True(proc.HasExited, "触发取消后进程未退出（取消消息未被 UI 线程处理）");
+            // 轮询等待进程退出（最长 10s）：取消 → cts.Cancel → 流水线收到 OCE → Close →
+            // Application.Run 返回 → Main 退出。CI 冷启动下退出收尾可能 >1.5s（此前固定等待
+            // 偶发误报"进程未退出"）；同时阶段 0 的 npm 安装取消路径（Kill 进程树）也在此验证。
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!proc.HasExited && DateTime.UtcNow < deadline)
+                await Task.Delay(150);
+            Assert.True(proc.HasExited, "触发取消后 10s 内进程未退出（取消消息未被 UI 线程处理）");
         }
         finally
         {

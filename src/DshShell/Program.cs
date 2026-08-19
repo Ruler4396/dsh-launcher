@@ -964,7 +964,7 @@ internal static class Program
             service: new ServiceManager(),
             staleCleanup: _ => SweepStaleServicePid())
         {
-            BackgroundMaintenance = RunBackgroundMaintenance,
+            BackgroundMaintenance = RunBackgroundMaintenance, // Action<CancellationToken>（阶段 0 可取消）
             SweepStaleAndApplyUpdate = () =>
             {
                 // v0.4.0：ApplyPendingDshUpdate 已上移到 BackgroundMaintenance（阶段 0）——
@@ -982,16 +982,17 @@ internal static class Program
 
     /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。
     /// v0.4.0：延迟更新应用（npm install -g）也在此执行——属耗时 IO（30-60s），放阶段 0 后
-    /// 用户看到的"正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。</summary>
-    private static void RunBackgroundMaintenance()
+    /// 用户看到的"正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。
+    /// <paramref name="ct"/> 传给 ApplyPendingDshUpdate → npm 安装可被取消（Splash 取消立即生效）。</summary>
+    private static void RunBackgroundMaintenance(CancellationToken ct)
     {
         if (!PortOpen(Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
         // 服务未运行时应用已下载的 dsh 新版（npm install -g 可能 30-60s；运行中进程不受影响，
-        // 保留原"服务未运行时才应用"的保守语义）
-        if (!PortOpen(Target.Port)) ApplyPendingDshUpdate();
+        // 保留原"服务未运行时才应用"的保守语义）；可取消（用户点取消立即 Kill npm）
+        if (!PortOpen(Target.Port)) ApplyPendingDshUpdate(ct);
         CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
         CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
@@ -1341,12 +1342,13 @@ internal static class Program
 
     /// <summary>v0.3.0 延迟应用：下次启动拉起服务前，应用已下载的 dsh 新版。
     /// 失败不阻塞启动（继续用旧版，错误码 E4002，下次启动重试，幂等）。</summary>
-    private static void ApplyPendingDshUpdate()
+    private static void ApplyPendingDshUpdate(CancellationToken ct = default)
     {
         var version = StagedUpdate.ReadPendingVersion();
         if (string.IsNullOrWhiteSpace(version)) return;
         Logger.Info($"applying staged dsh update to {version}");
-        if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail))
+        if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
+        if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail, ct))
         {
             StagedUpdate.ClearPending();
             CleanupStagingCache(); // 应用成功：清空 staging（下载缓存不留残余）
@@ -1354,6 +1356,8 @@ internal static class Program
         }
         else
         {
+            // 取消导致的失败不算 E4002（否则误累计 ApplyFailed）
+            if (ct.IsCancellationRequested) { Logger.Info("staged dsh update apply canceled; will retry next launch"); return; }
             StagedUpdate.MarkApplyFailed(); // v0.3.1：累计失败次数，持续失败降级为仅日志
             Logger.Warn("staged dsh update apply failed; continuing with current version", ErrorCodes.E4002,
                 new { version, tail = errorTail });
@@ -1385,8 +1389,10 @@ internal static class Program
         catch { /* 清理失败不影响启动 */ }
     }
 
-    /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：最多等 120s；输出重定向避免死锁。</summary>
-    private static bool RunNpmCommand(string args, out string errorTail)
+    /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：最多等 120s；输出重定向避免死锁。
+    /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false——保证启动阶段应用更新
+    /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。</summary>
+    private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default)
     {
         errorTail = "";
         try
@@ -1407,11 +1413,18 @@ internal static class Program
             if (p is null) return false;
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
+            // WaitForExit 期间可被外部取消：注册回调 Kill 进程树，避免"点取消无效"（用户反馈：
+            // 重启卡在启动服务、点取消几十秒才自己关——阶段 0 npm install 不可取消所致）。
+            using var reg = ct.Register(() =>
+            {
+                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
+            });
             if (!p.WaitForExit(120000))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
                 return false;
             }
+            if (ct.IsCancellationRequested) return false;
             var combined = outTask.GetAwaiter().GetResult() + "\n" + errTask.GetAwaiter().GetResult();
             var lines = combined.Split('\n')
                 .Where(l => !string.IsNullOrWhiteSpace(l))
