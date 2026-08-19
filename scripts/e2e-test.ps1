@@ -48,6 +48,8 @@ function Invoke-Probe([string]$Exe, [string]$Arg2, [string]$Arg3, [string]$Arg4,
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile -PassThru -WindowStyle Hidden
         if (-not $p.WaitForExit(30000)) {
             Write-Host "  [WARN] $([System.IO.Path]::GetFileName($Exe)) 30s 超时，taskkill 进程树" -ForegroundColor Yellow
+            # 证据链（V2）：tasklist 转储到 err 文件，随 e2e.log artifact 上传，供定位卡点
+            tasklist /v /fi "imagename eq $([System.IO.Path]::GetFileName($Exe))" 2>&1 | Out-File $errFile -Append -Encoding utf8
             taskkill /pid $p.Id /t /f 2>&1 | Out-Null
             $p.WaitForExit()
         }
@@ -391,13 +393,20 @@ class Probe {
         GetWindowThreadProcessId(h, out var pid);
         try {
             using var p = Process.GetProcessById((int)pid);
-            return p.MainModule?.FileName?.Equals(exe, StringComparison.OrdinalIgnoreCase) == true;
+            // 按文件名匹配（不能整路径 Equals）：CI 上 exe 传相对路径 .publish-ci\DshWeb.exe，
+            // 而 MainModule.FileName 返回绝对路径，整路径匹配永远失败 → WaitMain 30s 超时 → geo 全红。
+            var fn = p.MainModule?.FileName;
+            if (string.IsNullOrEmpty(fn)) return false;
+            return System.IO.Path.GetFileName(fn).Equals(System.IO.Path.GetFileName(exe), StringComparison.OrdinalIgnoreCase);
         } catch { return false; }
     }
 
     static bool SameExe(Process p, string exe) {
-        try { return p.MainModule?.FileName?.Equals(exe, StringComparison.OrdinalIgnoreCase) == true; }
-        catch { return false; }
+        try {
+            var fn = p.MainModule?.FileName;
+            if (string.IsNullOrEmpty(fn)) return false;
+            return System.IO.Path.GetFileName(fn).Equals(System.IO.Path.GetFileName(exe), StringComparison.OrdinalIgnoreCase);
+        } catch { return false; }
     }
 
     static void Start(string exe, string home, string url, string? extraArg = null) {
@@ -529,6 +538,12 @@ else {
     New-Item -ItemType Directory -Force -Path (Join-Path $geoHome "dsh-launcher") | Out-Null
     $outGeo = Invoke-Probe $probeExe $exe $geoHome "http://127.0.0.1:$svcPort" geo
     $outGeo | ForEach-Object { Write-Host "  probeGeo: $_" }
+    # 证据链（V2）：geo 失败（含超时）时输出壳日志尾部，随 e2e.log artifact 上传供定位
+    $geoShellLog = Join-Path $geoHome "dsh-launcher\dsh.log"
+    if (-not ($outGeo -join ' ') -match 'found=True' -and (Test-Path $geoShellLog)) {
+        Write-Host "  [DIAG] geo-home shell log tail:" -ForegroundColor Yellow
+        Get-Content $geoShellLog -Tail 12 -Encoding utf8 | ForEach-Object { Write-Host "    $_" }
+    }
     $geoText = $outGeo -join ' '
     Assert-T ($geoText -match 'found=True') "G1: 主窗口出现（geo 探针）"
     Assert-T ($geoText -match 'geo=True') "G1/G10: 最大化窗口矩形 == 物理工作区（MonitorFromWindow+GetMonitorInfo，容差≤2px，覆盖多屏物理像素）"
