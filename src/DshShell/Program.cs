@@ -463,7 +463,10 @@ internal static class Program
                         Trace("poll: log error markers persisted 15s, giving up");
                         return "logerror";
                     }
-                    Thread.Sleep(1000);
+                    // 启动延迟优化（Step4d）：前 8 次快速轮询（200ms）——node 服务往往在启动
+                    // 临界点就绪，固定 1s 粒度会让"已就绪"最多白等 1s；快速期后恢复 1s（服务
+                    // 尚未就绪说明在下载/初始化，低频即可，避免空转）。
+                    Thread.Sleep(i < 8 ? 200 : 1000);
                 }
                 Trace("poll: timeout after 180s");
                 return "timeout";
