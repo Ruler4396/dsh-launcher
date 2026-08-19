@@ -168,6 +168,14 @@ public class UpdateCheckerTests
     [InlineData(null, null, 0)]
     [InlineData("abc", "0.3.1", -1)]        // 非法 → 0.0.0，不产生"有新版"误报
     [InlineData("0.3.1", "abc", 1)]
+    // ---- v0.4.0：dsh 以 SemVer prerelease 发布（0.1.0-rc.x），旧 Version.TryParse 全解析失败 ----
+    [InlineData("0.1.0-rc.7", "0.1.0-rc.6", 1)]   // rc7 > rc6（本次修复的目标场景）
+    [InlineData("0.1.0-rc.6", "0.1.0-rc.7", -1)]
+    [InlineData("0.1.0-rc.7", "0.1.0-rc.7", 0)]
+    [InlineData("0.1.0-rc.10", "0.1.0-rc.9", 1)]  // prerelease 数值段按数值比，非字符串序
+    [InlineData("0.1.0", "0.1.0-rc.7", 1)]        // 正式版 > prerelease（SemVer 规则）
+    [InlineData("0.1.0-rc.1", "0.1.0-alpha.2", 1)] // 字母数字段字典序：rc > alpha
+    [InlineData("0.1.0-rc.1", "0.1.0-rc.1.1", -1)] // 段多者更大
     public void CompareVersions_ReturnsExpected(string? a, string? b, int expected)
     {
         Assert.Equal(expected, Math.Sign(UpdateChecker.CompareVersions(a, b)));
