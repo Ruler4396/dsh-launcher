@@ -176,6 +176,11 @@ $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
 Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 暴露 prefetch_temp 目录（应用成功后整体清理释放磁盘）"
+# ---- v0.4.0 诚实承诺铁律（用户反馈：cache 未预热时文案却写"预计 5-10 秒"→ 120s 超时）静态断言 ----
+Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 记录 prefetched 预热标志（预热真实成功才为 true）"
+Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于 prefetched 真实状态，不得写死秒数）"
+Assert-True ($shellSrc -match '依赖已就绪') "prefetched=true 时文案如实'依赖已就绪'（不承诺具体秒数）"
+Assert-True ($shellSrc -match '可能需要几分钟') "prefetched=false/线上时如实'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
