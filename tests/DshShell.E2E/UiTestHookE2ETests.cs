@@ -114,8 +114,9 @@ public class UiTestHookE2ETests : IAsyncLifetime
             {
                 using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut);
                 client.Connect(Math.Max(50, (int)(deadline - DateTime.UtcNow).TotalMilliseconds));
-                // leaveOpen: true —— 否则 reader/writer 逆序 Dispose 会先关管道再 flush
-                using var writer = new StreamWriter(client, new UTF8Encoding(false), 1024, leaveOpen: true);
+                // leaveOpen: true —— 否则 reader/writer 逆序 Dispose 会先关管道再 flush。
+                // AutoFlush: true —— 请求必须立即写入管道，否则服务端 ReadLineAsync 永远等不到。
+                using var writer = new StreamWriter(client, new UTF8Encoding(false), 1024, leaveOpen: true) { AutoFlush = true };
                 using var reader = new StreamReader(client, Encoding.UTF8, true, 1024, leaveOpen: true);
                 writer.WriteLine(request);
                 var reply = await reader.ReadLineAsync();
