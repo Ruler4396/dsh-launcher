@@ -128,13 +128,13 @@ if ($Restore) {
 # ---- 取当前 DEVMODE 模板并改写分辨率/缩放 ----
 $mode = New-Object CDS+DEVMODE
 $mode.dmSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][CDS+DEVMODE])
-if (-not [CDS]::EnumDisplaySettingsEx($devName, 0xFFFFFFFF /*ENUM_CURRENT_SETTINGS*/, [ref]$mode, 0)) {
+if (-not [CDS]::EnumDisplaySettingsEx($devName, 0xFFFFFFFF, [ref]$mode, 0)) {  # 0xFFFFFFFF = ENUM_CURRENT_SETTINGS
     throw "EnumDisplaySettingsEx 失败：$devName"
 }
-$mode.dmFields = 0x00080000 /*DM_PELSWIDTH*/ -bor 0x00100000 /*DM_PELSHEIGHT*/ -bor 0x00400000 /*DM_LOGPIXELS*/
+$mode.dmFields = 0x00080000 -bor 0x00100000 -bor 0x00400000  # DM_PELSWIDTH | DM_PELSHEIGHT | DM_LOGPIXELS
 $mode.dmPelsWidth = [uint32]$Width
 $mode.dmPelsHeight = [uint32]$Height
-$mode.dmLogPixels = [uint16]$ScalePercent   // 96=100%,144=150%,192=200%（LOGPIXELS 即"每逻辑英寸像素"）
+$mode.dmLogPixels = [uint16]$ScalePercent  # 96=100%, 144=150%, 192=200%（LOGPIXELS 即"每逻辑英寸像素"）
 
 $result = [CDS]::ChangeDisplaySettingsEx($devName, [ref]$mode, [IntPtr]::Zero, [CDS]::CDS_UPDATEREGISTRY, [IntPtr]::Zero)
 if ($result -ne [CDS]::DISP_CHANGE_SUCCESSFUL) {
