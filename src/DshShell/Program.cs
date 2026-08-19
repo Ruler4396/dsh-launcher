@@ -1529,6 +1529,10 @@ internal static class Program
         try
         {
             Directory.CreateDirectory(staging);
+            // 根因修复（用户 22:0x 报"文件名、目录名或卷标语法不正确" E4001）：prefetch_temp 目录
+            // 从未被创建，npm pack --pack-destination 指向不存在的目录 → Windows 中文系统底层 fs
+            // 返回 ERROR_INVALID_NAME（本地化中文错误）。pack 目标目录必须先存在。
+            Directory.CreateDirectory(prefetchDir);
             // ---- 步骤 1/2：pack 主包 tarball 到 prefetch_temp ----
             var ok = RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + prefetchDir + "\"",
@@ -1848,6 +1852,11 @@ internal static class Program
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                // 编码加固：中文 Windows 的 cmd/npm 输出 GBK，默认 UTF-8 解码会乱码
+                //（实测 stderr 为 �ļ�����Ŀ¼...），导致 errorTail/弹窗不可读。显式 UTF-8
+                // 保证任何系统代码页下错误信息语义正确、可读（铁律：异常透明）。
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
                 // 预热（prefetch）必须在该工作目录执行，否则 `./<tarball>`、`--prefix ./deps`
                 // 相对路径会指向 DshWeb.exe 目录（ENOENT 根因：用户 21:19/21:40 下载秒败）。
                 WorkingDirectory = workingDirectory,
