@@ -426,11 +426,22 @@ $guiEligible = (-not $SkipGui) -and $probeExe -and (Test-Path $exe) -and (Test-P
 if ($guiEligible) {
     Write-Host "`n=== E3/E4: 真实 GUI 链路（首次启动 + 窗口记忆）===" -ForegroundColor Cyan
     $svc = Start-IsoService
+    # 服务就绪探测：用 TcpClient 连接测试（500ms 超时）替代 Invoke-WebRequest。
+    # 教训（CI 卡 13 分钟）：dsh 首次初始化若联网挂起，node 半开连接时 Invoke-WebRequest 的
+    # -TimeoutSec 只作用于响应、连接阶段无可靠超时，60 次循环每次挂起 → 整个 job 卡死。
+    # 外层总超时墙 45s，超时即判未就绪；TcpClient 每轮最多 500ms。
     $ready = $false
-    for ($i = 0; $i -lt 60; $i++) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt 45 -and -not $ready) {
         Start-Sleep -Milliseconds 500
-        try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:$svcPort" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop; if ($r.StatusCode -eq 200) { $ready = $true; break } } catch { }
+        try {
+            $tc = New-Object System.Net.Sockets.TcpClient
+            $ar = $tc.BeginConnect("127.0.0.1", $svcPort, $null, $null)
+            if ($ar.AsyncWaitHandle.WaitOne(500)) { $tc.EndConnect($ar); $ready = $true }
+            $tc.Close()
+        } catch { }
     }
+    $sw.Stop()
     if (-not $ready) {
         # dsh 生态：全新 DSH_HOME 的 web profile 缺 dsh-client-ui-plan 等 bundles，`dsh web` 起不来
         #（ERR_MODULE_NOT_FOUND）。这是环境初始化问题，非本项目回归——显式 SKIP（E3/E4 依赖服务），
