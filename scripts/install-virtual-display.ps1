@@ -141,7 +141,18 @@ function Invoke-PnPUtil {
 
 # 1) 创建 root enumerated device（返回码失败不致命：继续尝试实例化并等待枚举）
 $pnputilOk = Invoke-PnPUtil "/add-driver `"$($inf.FullName)`" /install"
-if (-not $pnputilOk) { Write-Warning "pnputil /add-driver 失败，虚拟屏可能无法枚举" }
+if (-not $pnputilOk) {
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host "  虚拟显示驱动安装未成功（pnputil 失败/超时）。" -ForegroundColor Yellow
+    Write-Host "  本脚本是【本地开发调试工具】：请在管理员交互式 PowerShell 中运行" -ForegroundColor Yellow
+    Write-Host "  以注入虚拟副屏（需真实桌面会话 + 驱动签名信任）。" -ForegroundColor Yellow
+    Write-Host "  CI 已不再依赖本脚本——多显示器回归已迁移为 Headless 纯函数测试" -ForegroundColor Yellow
+    Write-Host "  （tests/DshShell.Tests/Managers/MultiMonitorContractTests.cs）。" -ForegroundColor Yellow
+    Write-Host "  若需在本地手动注入：pnputil /add-driver <inf> /install 后重启或等待枚举。" -ForegroundColor Yellow
+    Write-Host "============================================================" -ForegroundColor Yellow
+    Write-Host ""
+}
 # 2) 通过 devcon（若存在）注册 Root\IddSampleDriver 实例；不存在则跳过（驱动 Add 已覆盖）
 $devcon = Get-Command "devcon.exe" -ErrorAction SilentlyContinue
 if ($devcon) {
