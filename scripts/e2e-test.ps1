@@ -35,6 +35,33 @@ function Assert-T([bool]$Cond, [string]$Msg) {
     else { Write-Host "[FAIL] $Msg" -ForegroundColor Red; $script:failed++ }
 }
 
+# 方向 1：子进程运行器。替代 `& $probeExe ... 2>&1`——
+# 教训（CI 卡 15 分钟）：捕获式 `&` 等待管道 EOF，若探针启动的壳/其 WebView2 孙进程持有管道
+# 句柄，探针即使退出脚本也等不到 EOF 而卡死。改：Start-Process + stdout/stderr 重定向到文件
+#（不经过父进程管道）+ WaitForExit(30s) 显式超时 + 超时 taskkill /t /f 杀进程树。
+# 返回合并输出行（顺序：stdout 后 stderr）。
+function Invoke-Probe([string]$Exe, [string]$Arg2, [string]$Arg3, [string]$Arg4, [string]$Arg5) {
+    $outFile = Join-Path $base ("probe-out-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $errFile = Join-Path $base ("probe-err-" + [guid]::NewGuid().ToString("N") + ".txt")
+    try {
+        $p = Start-Process -FilePath $Exe -ArgumentList @("`"$Arg2`"", "`"$Arg3`"", "`"$Arg4`"", "`"$Arg5`"") `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile -PassThru -WindowStyle Hidden
+        if (-not $p.WaitForExit(30000)) {
+            Write-Host "  [WARN] $([System.IO.Path]::GetFileName($Exe)) 30s 超时，taskkill 进程树" -ForegroundColor Yellow
+            taskkill /pid $p.Id /t /f 2>&1 | Out-Null
+            $p.WaitForExit()
+        }
+        Start-Sleep -Milliseconds 300 # 等文件 flush
+        $lines = @()
+        if (Test-Path $outFile) { $lines += Get-Content $outFile -ErrorAction SilentlyContinue }
+        if (Test-Path $errFile) { $lines += Get-Content $errFile -ErrorAction SilentlyContinue }
+        return $lines
+    }
+    finally {
+        Remove-Item $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---- 隔离区（%TEMP% 铁律）----
 $base = Join-Path $env:TEMP ("dsh-e2e-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $base | Out-Null
@@ -385,6 +412,10 @@ class Probe {
         psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh-e2e-wv2-" + System.Guid.NewGuid().ToString("N"));
         // Task 0.2 白屏断言钩子：壳在主窗导航完成后把 document.readyState 写入该文件（见壳侧测试钩子）。
         psi.EnvironmentVariables["DSH_WEBVIEW2_READYSTATE"] = System.IO.Path.Combine(home, "webview-ready-state.txt");
+        // e2e 模态硬化（方向 3）：所有探针启动的壳（run1/run2/geo）统一注入 DSH_E2E=1——
+        // 壳 ShowError 不弹模态（日志+stdout）、启动状态窗轮询 20s 自动结束。
+        // 根治：CI 无头 runner 上壳连服务失败弹 E2004 模态无限阻塞 + 状态窗无限等待。
+        psi.EnvironmentVariables["DSH_E2E"] = "1";
         Process.Start(psi);
     }
 }
@@ -423,22 +454,33 @@ function Start-IsoService {
 
 $guiEligible = (-not $SkipGui) -and $probeExe -and (Test-Path $exe) -and (Test-Path $dshJs)
 
+# 方向 4（CI 显式 SKIP）：GitHub Actions 等 CI 环境 E3/E4 直接跳过——E3/E4 依赖隔离 dsh 服务
+#（全新 DSH_HOME 的 profile 缺 dsh-client-ui-plan，上游 dsh 生态缺陷起不来），在 CI 上无意义；
+# 留给本机/真机冒烟。geo（E3b）走 --ui-probe 无服务模式，不受影响。
+$ciEnvironment = -not [string]::IsNullOrWhiteSpace($env:CI)
+
 if ($guiEligible) {
     Write-Host "`n=== E3/E4: 真实 GUI 链路（首次启动 + 窗口记忆）===" -ForegroundColor Cyan
+    if ($ciEnvironment) {
+        Write-Host "  [SKIP] CI 环境（CI=$($env:CI)）；E3/E4 依赖隔离 dsh 服务（上游 dsh 生态在全新 DSH_HOME 起不来），留本机/真机冒烟" -ForegroundColor Yellow
+    }
+    else {
     $svc = Start-IsoService
-    # 服务就绪探测：用 TcpClient 连接测试（500ms 超时）替代 Invoke-WebRequest。
-    # 教训（CI 卡 13 分钟）：dsh 首次初始化若联网挂起，node 半开连接时 Invoke-WebRequest 的
-    # -TimeoutSec 只作用于响应、连接阶段无可靠超时，60 次循环每次挂起 → 整个 job 卡死。
-    # 外层总超时墙 45s，超时即判未就绪；TcpClient 每轮最多 500ms。
+    # 服务就绪探测（方向 2）：TCP+HTTP 双语义，对齐壳侧 ShellLogic.IsHttpReady 契约。
+    # 教训 1（CI 卡 13 分钟）：Invoke-WebRequest 连接阶段无可靠超时 → 改 HttpClient+CTS 2s。
+    # 教训 2（CI 卡 15 分钟）：仅 TcpClient 会误判"TCP 通/HTTP 死"为就绪，导致进 else 分支后
+    # 壳连服务失败弹模态挂死 → 必须 HTTP 200 才判就绪。
     $ready = $false
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     while ($sw.Elapsed.TotalSeconds -lt 45 -and -not $ready) {
         Start-Sleep -Milliseconds 500
         try {
-            $tc = New-Object System.Net.Sockets.TcpClient
-            $ar = $tc.BeginConnect("127.0.0.1", $svcPort, $null, $null)
-            if ($ar.AsyncWaitHandle.WaitOne(500)) { $tc.EndConnect($ar); $ready = $true }
-            $tc.Close()
+            $cli = [System.Net.Http.HttpClient]::new()
+            try {
+                $cli.Timeout = [TimeSpan]::FromSeconds(2)
+                $resp = $cli.GetAsync("http://127.0.0.1:$svcPort").GetAwaiter().GetResult()
+                if ($resp.IsSuccessStatusCode) { $ready = $true }
+            } finally { $cli.Dispose() }
         } catch { }
     }
     $sw.Stop()
@@ -446,14 +488,15 @@ if ($guiEligible) {
         # dsh 生态：全新 DSH_HOME 的 web profile 缺 dsh-client-ui-plan 等 bundles，`dsh web` 起不来
         #（ERR_MODULE_NOT_FOUND）。这是环境初始化问题，非本项目回归——显式 SKIP（E3/E4 依赖服务），
         # 不判 FAIL；geo（E3b）走 --ui-probe 无服务模式，不受影响。服务可用时本段照常跑。
-        Write-Host "  [SKIP] 隔离 dsh 服务未就绪 (127.0.0.1:$svcPort)；E3/E4 依赖服务，跳过（geo 已独立）" -ForegroundColor Yellow
-        try { $svc.Kill() } catch { }
+        Write-Host "  [SKIP] 隔离 dsh 服务 45s 内未 HTTP 就绪 (127.0.0.1:$svcPort)；E3/E4 依赖服务，跳过（geo 已独立）" -ForegroundColor Yellow
+        # 方向 1：杀进程树，防 node 孙进程残留持句柄
+        if ($svc) { taskkill /pid $svc.Id /t /f 2>&1 | Out-Null }
     }
     else {
     $isoHome = Join-Path $base "gui-home"
     New-Item -ItemType Directory -Force -Path (Join-Path $isoHome "dsh-launcher") | Out-Null
 
-    $out1 = & $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" run1 2>&1
+    $out1 = Invoke-Probe $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" run1
     $out1 | ForEach-Object { Write-Host "  probe1: $_" }
     Assert-T (($out1 -join ' ') -match 'found=True') "E3: 主窗口出现（服务在跑，壳直接开窗）"
     Assert-T (($out1 -join ' ') -match 'moved=\(120,90,900x620\)') "E4: 窗口已移动到 (120,90) 900x620"
@@ -464,10 +507,11 @@ if ($guiEligible) {
     Assert-T ($saved -match '"X":120,"Y":90') "E4: window-state.json 保存新位置: $saved"
     Assert-T ($saved -match '"WidthLogical":900') "E4: 保存新尺寸 900"
 
-    $out2 = & $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" run2 2>&1
+    $out2 = Invoke-Probe $probeExe $exe $isoHome "http://127.0.0.1:$svcPort" run2
     $out2 | ForEach-Object { Write-Host "  probe2: $_" }
     Assert-T (($out2 -join ' ') -match 'rect=\(120,90,900x620\)') "E4: 重启后窗口恢复到 (120,90) 900x620（记忆生效）"
     }
+    } # 闭合 if(-not $ready) 的 else
 } else {
     Write-Host "`n=== E3/E4: 跳过（无桌面会话或依赖缺失；GUI 用例需交互桌面）===" -ForegroundColor Yellow
 }
@@ -483,7 +527,7 @@ if ($SkipGui -or -not $probeExe -or -not (Test-Path $exe)) {
 else {
     $geoHome = Join-Path $base "geo-home"
     New-Item -ItemType Directory -Force -Path (Join-Path $geoHome "dsh-launcher") | Out-Null
-    $outGeo = & $probeExe $exe $geoHome "http://127.0.0.1:$svcPort" geo 2>&1
+    $outGeo = Invoke-Probe $probeExe $exe $geoHome "http://127.0.0.1:$svcPort" geo
     $outGeo | ForEach-Object { Write-Host "  probeGeo: $_" }
     $geoText = $outGeo -join ' '
     Assert-T ($geoText -match 'found=True') "G1: 主窗口出现（geo 探针）"

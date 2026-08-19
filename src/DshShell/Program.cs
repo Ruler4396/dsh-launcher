@@ -551,7 +551,9 @@ internal static class Program
                 var logErrorSeen = false;
                 var logErrorSince = DateTime.MinValue;
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-                for (var i = 0; i < 180; i++)
+                // e2e 探针模式（E2EMode）：轮询上限 20s 自动结束（不弹状态窗、不无限等服务）。
+                // 否则无头 CI 上服务未就绪时会一直转圈，探针路径卡死。
+                for (var i = 0; i < (E2EMode ? 20 : 180); i++)
                 {
                     if (cts.IsCancellationRequested) return "canceled";
                     if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
@@ -600,9 +602,10 @@ internal static class Program
             }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
             string waitResult;
-            if (NoUiMode)
+            if (NoUiMode || E2EMode)
             {
-                // 测试钩子（DSH_NO_UI=1）：不显示状态窗，等待轮询自然结束（无窗口无弹窗）
+                // 测试钩子（DSH_NO_UI=1 / DSH_E2E=1）：不显示状态窗，等待轮询自然结束（无窗口无弹窗）。
+                // e2e 模式下轮询上限已缩至 20s，此处最多等 20s。
                 waitResult = pollTask.GetAwaiter().GetResult();
             }
             else
