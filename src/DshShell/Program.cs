@@ -967,10 +967,12 @@ internal static class Program
             BackgroundMaintenance = RunBackgroundMaintenance,
             SweepStaleAndApplyUpdate = () =>
             {
+                // v0.4.0：ApplyPendingDshUpdate 已上移到 BackgroundMaintenance（阶段 0）——
+                // npm install -g 应用更新可能耗时 30-60s，原在"正在启动 dsh 服务…"阶段会让用户
+                // 误以为服务卡死且取消无效。阶段 0 完成后用户看到的"启动服务"即真实拉起。
                 if (!PortOpen(Target.Port))
                 {
                     SweepStaleServicePid();   // 僵尸清扫：上次崩溃记录过、已不在监听的进程
-                    ApplyPendingDshUpdate();  // 延迟更新应用：拉起服务前应用已下载的新版
                 }
             },
             StartService = StartDshServiceViaVbs,
@@ -978,13 +980,18 @@ internal static class Program
         };
     }
 
-    /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。</summary>
+    /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。
+    /// v0.4.0：延迟更新应用（npm install -g）也在此执行——属耗时 IO（30-60s），放阶段 0 后
+    /// 用户看到的"正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。</summary>
     private static void RunBackgroundMaintenance()
     {
         if (!PortOpen(Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
+        // 服务未运行时应用已下载的 dsh 新版（npm install -g 可能 30-60s；运行中进程不受影响，
+        // 保留原"服务未运行时才应用"的保守语义）
+        if (!PortOpen(Target.Port)) ApplyPendingDshUpdate();
         CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
         CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
@@ -1276,7 +1283,11 @@ internal static class Program
     /// v0.3.1：用户拒绝 → 持久化跳过该版本（下次启动不再提示，除非检测到更新的版本）。</summary>
     private static void PromptDshUpdate(Form form, string latest, string local)
     {
+        // 带 owner 的 MessageBox 会居中于 owner 且置于其上层；调用前先 Activate 把主窗提到前台，
+        // 避免"询问弹窗被其他窗口遮挡/不跳到前台"（v0.4.0 用户反馈）。
+        try { form.Activate(); } catch { /* 窗体已关闭则忽略 */ }
         var r = MessageBox.Show(
+            form,
             $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台下载并安排更新？\n" +
             "（下载完成不打扰当前会话；下次启动 dsh-launcher 时自动应用新版本）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);

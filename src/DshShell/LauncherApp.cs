@@ -115,7 +115,9 @@ public sealed class LauncherApp
     public async Task<bool> RunStartupAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
         // ---- 阶段 0：无 UI 的轻量维护 IO（原 Main 同步项）——必须后台执行：内部含同步
-        // PortOpen（TcpClient.Connect）与数据迁移等 IO，同步调用会阻塞 UI 线程导致 Splash 白屏。----
+        // PortOpen（TcpClient.Connect）、数据迁移与延迟更新应用（npm install -g 可能 30-60s）
+        // 等 IO，同步调用会阻塞 UI 线程导致 Splash 白屏。----
+        progress?.Report("正在准备启动环境…");
         if (BackgroundMaintenance is not null)
             await Task.Run(BackgroundMaintenance, ct);
 
