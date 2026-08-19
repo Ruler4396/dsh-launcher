@@ -1141,6 +1141,10 @@ internal static class Program
                 // 2) dsh 新版
                 var latest = await UpdateChecker.FetchLatestDshVersionAsync(http);
                 var local = UpdateChecker.ResolveLocalDshVersion();
+                // 诊断留痕（v0.4.0）：检测未命中时记录原因，用户可查 dsh.log 判断是"无更新"还是
+                // "取不到本地版本/远端版本"（此前完全静默，难排查）。
+                if (string.IsNullOrWhiteSpace(latest) || string.IsNullOrWhiteSpace(local))
+                    Trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"} (skip)");
                 if (!string.IsNullOrWhiteSpace(latest) && !string.IsNullOrWhiteSpace(local)
                     && UpdateChecker.CompareVersions(latest, local) > 0)
                 {
