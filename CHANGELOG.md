@@ -48,7 +48,9 @@
 - **Logger 防锁死 + fallback（诊断盲区修复）**：`File.AppendAllText`（内部 `FileShare.Read`）被残留 `cmd >> dsh.log` 重定向句柄阻塞时静默失败，导致启动诊断日志全丢。改为显式 `FileStream` + `FileShare.ReadWrite`；仍被独占锁死时写入 `%TEMP%\dsh-launcher-fallback-{pid}.log` 并向 `Console.Error` 输出 `[FATAL LOGGER]` 告警，Splash 黄色提示"日志文件被占用"；`WaitServiceReady` 错误标志检查回退读 fallback。
 - **更新安装 UI 联动**：`ApplyPendingDshUpdate` 执行 npm install 期间 Splash 实时显示"正在应用更新 (vX)…"+ npm 逐行安装日志（`BeginOutputReadLine` 滚动转发，"added 50 packages"），并禁用取消按钮（防 npm install 中途强杀损坏 node_modules）；更新失败（非网络类）弹模态"自动应用更新失败，将继续使用旧版本启动，原因：…"，网络/超时类保留 pending 下次重试、权限/包损坏类清 pending 防死循环。
 - **更新文案预期管理**：下载完成弹窗/托盘气泡/询问弹窗统一改为"下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）"，消除"重启即生效"的误导。
-- **更新链路改进（后台静默下载 + 本地直装）**：① 下载成功**不再弹 Modal**（不打断用户当前使用 harness），仅托盘气泡轻提示；② 应用更新**优先用下载时落地的本地 tarball**（`npm install -g <tarball>`，秒级、不现场拉取——"已下载完成"名副其实），`pending-update.json` 记录 tarball 文件名（`StagedUpdate.LocateTarball` 三级定位：pending 名→命名规则→staging 模糊匹配）；③ tarball 缺失（缓存被清/旧记录）才回退线上拉取，Splash 如实显示"需要现场下载 dsh 组件，预计 1-2 分钟"。
+- **更新链路改进（后台静默下载 + 本地直装）**：① 下载成功**不再弹 Modal**（不打断用户当前使用 harness），仅托盘气泡轻提示；② 应用更新**优先用下载时落地的本地 tarball**（`npm install -g <tarball>`，不 npx 现场拉主包），`pending-update.json` 记录 tarball 文件名（`StagedUpdate.LocateTarball` 三级定位：pending 名→命名规则→staging 模糊匹配）；③ tarball 缺失（缓存被清/旧记录）才回退线上拉取，Splash 如实显示"需要在线下载 dsh 组件，预计 1-2 分钟"。
+- **修复主窗崩溃（0xc0000005，ImmSetOpenStatus）**：更新应用完成、主窗初始化 WebView2 时，WinForms 对宿主控件的 IME 状态管理在输入法活跃时偶发无效 HIMC 句柄 → 访问违规崩溃、窗口消失（用户反馈"重启后窗口消失"真凶）。修复：Form 与 WebView2 控件均置 `ImeMode.Disable`（页面输入法由 WebView2/Chromium 内部处理，WinForms 无需介入）。
+- **更新文案诚实化**：`npm pack` 只下载主包 tarball（约 30KB，秒级正常），dsh 有 50+ 个 `@deepseek-ai/*` 依赖子包，重启安装时 npm 仍需在线解析——气泡/弹窗统一改为"主程序已下载，重启后自动安装（需联网解析依赖，预计 1-2 分钟）"，不再误导"已全部下载完、无需再次下载"。
 
 ### 测试
 

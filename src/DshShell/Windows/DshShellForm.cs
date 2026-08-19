@@ -35,6 +35,11 @@ internal sealed class DshShellForm : Form
     internal DshShellForm(IDisplayMetricsProvider? display = null)
     {
         _display = display ?? new Win32DisplayMetricsProvider();
+        // 修复 0xc0000005（ImmSetOpenStatus 访问违规崩溃）：WinForms 对宿主 WebView2 的 IME
+        // 状态管理在输入法活跃时偶发无效 HIMC 句柄导致崩溃（用户 20:53 更新后主窗崩溃真凶）。
+        // 本应用页面输入法由 WebView2（Chromium）内部处理，Form 无需 WinForms IME 介入。
+        // 重写 ImeMode + 控件级 ImeMode.Disable（Program 建窗处）双保险，跳过 ImeContext。
+        ImeMode = ImeMode.Disable;
     }
 
     protected override CreateParams CreateParams

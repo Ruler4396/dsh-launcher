@@ -140,8 +140,9 @@ Assert-True ($shellSrc -match '预计 1-2 分钟') "更新应用 Splash 文案�
 # ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装，不 npx 现场拉）静态断言 ----
 Assert-True ($shellSrc -match 'LocateTarball') "壳含本地 tarball 定位（应用优先本地安装包，不现场拉取）"
 Assert-True ($shellSrc -match 'local-tarball') "壳含安装来源标记（local-tarball vs registry，日志可诊断）"
-Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载，下次重启直接安装'（不打断当前使用）"
-Assert-True ($shellSrc -match '直接安装') "下载完成/待应用气泡文案改为'下次重启直接安装，无需再次下载'（不再误导 npx 现场拉）"
+Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载'（不打断当前使用）"
+Assert-True ($shellSrc -match '需联网解析依赖') "更新气泡/弹窗文案如实'需联网解析依赖，预计 1-2 分钟'（不误导'已全部下载完'）"
+Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程序已下载'与'依赖在线解析'（诚实管理预期）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"

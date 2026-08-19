@@ -435,6 +435,11 @@ internal static class Program
         {
             Bounds = new Rectangle(1, 1 + titleHeight, form.ClientSize.Width - 2, form.ClientSize.Height - titleHeight - 2),
             Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            // 修复 0xc0000005（ImmSetOpenStatus 访问违规，用户 20:53 更新后主窗崩溃真凶）：
+            // WinForms 对 WebView2 宿主控件的 IME 状态管理会调用 ImmSetOpenStatus，在 WebView2
+            // 抢占输入法上下文时偶发无效 HIMC → 崩溃。WebView2 内部自带 IME 处理（Chromium），
+            // 不需要 WinForms 的 ImeMode 介入，置 Disable 让 WinForms 完全跳过 IME 管理。
+            ImeMode = ImeMode.Disable,
         };
         form.Controls.Add(web);
         form.MainWebView2 = web;
@@ -746,6 +751,8 @@ internal static class Program
                 Bounds = new Rectangle(1, 1 + form.TitleBar.Height,
                     form.ClientSize.Width - 2, form.ClientSize.Height - form.TitleBar.Height - 2),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+                // 与主窗一致：禁用 WinForms IME 状态管理（防 ImmSetOpenStatus 崩溃，见主窗注释）
+                ImeMode = ImeMode.Disable,
             };
             form.Controls.Add(web);
             form.MainWebView2 = web;
@@ -1399,7 +1406,7 @@ internal static class Program
             var tray = WindowManager.Instance.TrayIcon;
             if (tray is null) return;
             tray.ShowBalloonTip(15000, "dsh 更新待应用",
-                $"dsh {version} 已下载。下次重启启动器时将直接安装，无需再次下载。",
+                $"dsh {version} 主程序已下载。下次重启启动器后自动安装（需联网解析依赖，预计 1-2 分钟）。",
                 ToolTipIcon.Info);
         }
         catch { /* 气泡提示失败忽略 */ }
@@ -1430,8 +1437,8 @@ internal static class Program
         try { form.Activate(); } catch { /* 窗体已关闭则忽略 */ }
         var r = MessageBox.Show(
             form,
-            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台静默下载，下次重启时直接安装？\n" +
-            "（下载在后台进行，不影响你当前使用；下次重启启动器时自动应用，安装无需再次下载）",
+            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台静默下载，下次重启时自动安装？\n" +
+            "（下载在后台进行，不影响你当前使用；下次重启启动器时自动安装，需联网解析依赖，预计 1-2 分钟）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
@@ -1467,7 +1474,11 @@ internal static class Program
             _ = Task.Run(async () =>
             {
                 StopShellService(); // 停当前服务（含接管/本次拉起的）
-                if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail))
+                // 重启即应用路径同样优先本地 tarball（不 npx 现场拉主包）；tarball 缺失回退线上
+                var pending = StagedUpdate.ReadPending();
+                var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
+                var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
+                if (RunNpmCommand($"install -g \"{installSpec}\"", out var errorTail))
                 {
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
@@ -1519,14 +1530,16 @@ internal static class Program
                 StagedUpdate.MarkPending(latest, tarball);
                 _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
                 // 后台静默下载：仅托盘气泡轻提示（不打断当前 harness 使用），不弹 Modal。
-                // 文案如实：已下载完整安装包，下次重启直接安装（不再现场下载）。
+                // 文案如实（用户反馈"下载完成太快、重启还是等很久"）：npm pack 只下载了主包 tarball
+                //（约 30KB，秒级是正常的）；dsh 有 50+ 个 @deepseek-ai/* 依赖子包，重启安装时
+                // npm 仍需在线解析依赖。因此不说"无需再次下载"，如实告知"主程序已就绪 + 安装需联网"。
                 try
                 {
                     form.BeginInvoke(() =>
                     {
                         if (WindowManager.Instance.TrayIcon is null) return;
                         WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新已就绪",
-                            $"dsh {latest} 已下载。下次重启启动器时将直接安装，无需再次下载。",
+                            $"dsh {latest} 主程序已下载。重启启动器后自动安装（需联网解析依赖，预计 1-2 分钟）。",
                             ToolTipIcon.Info);
                     });
                 }
@@ -1576,9 +1589,11 @@ internal static class Program
         // 此时文案如实"将现场下载"（用户：下载≠npx 现场拉，必须诚实）。
         var pending = StagedUpdate.ReadPending();
         var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
+        // 文案如实（用户反馈"已下载完成太快、重启还是等很久"）：主包 tarball 已就绪，但 dsh 有
+        // 50+ 依赖子包，npm install 仍需在线解析。所以即使本地 tarball 也如实说"主程序已就绪"。
         progress?.Invoke(localTarball is not null
-            ? $"正在应用更新 (v{version})…（本地安装，无需下载）"
-            : $"正在应用更新 (v{version})…（需要现场下载 dsh 组件，预计 1-2 分钟）");
+            ? $"正在应用更新 (v{version})…（主程序已就绪，正在在线解析依赖，预计 1-2 分钟）"
+            : $"正在应用更新 (v{version})…（需要在线下载 dsh 组件，预计 1-2 分钟）");
         Logger.Info($"applying staged dsh update to {version}",
             ctx: new { version, source = localTarball is not null ? "local-tarball" : "registry" });
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
