@@ -44,6 +44,14 @@ internal static class Program
     /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
     private static bool _serviceStartedByShell;
 
+    /// <summary>屏幕拓扑抽象（v0.4.0 Headless 化）：默认 WinForms Screen，测试注入 Fake 拓扑。</summary>
+    internal static DshWeb.Win32.IScreenProvider ScreenProvider { get; set; } = new DshWeb.Win32.WinFormsScreenProvider();
+
+    /// <summary>恢复窗口位置（经 IScreenProvider 取拓扑 → ShellLogic 纯函数；测试注入 Fake 验证）。</summary>
+    internal static (int X, int Y) RestoreWindowPosition(int x, int y, int width, int height)
+        => ShellLogic.RestoreWindowPosition(x, y, width, height,
+            ScreenProvider.GetAllWorkingAreas(), ScreenProvider.PrimaryWorkingArea);
+
     /// 本次会话壳托管服务的监听 PID（内存缓存，关窗时直接使用，避免再跑 netstat 造成卡顿）。
     private static int _servicePid;
 
@@ -539,10 +547,10 @@ internal static class Program
             if (savedWindow is not null)
             {
                 // 越界（副屏拔掉等）→ 主屏居中；可见 → 工作区内钳制（ShellLogic 纯函数）
-                var (x, y) = ShellLogic.RestoreWindowPosition(
-                    savedWindow.X, savedWindow.Y, form.Width, form.Height,
-                    Screen.AllScreens.Select(s => s.WorkingArea).ToList(),
-                    Screen.PrimaryScreen?.WorkingArea ?? Rectangle.Empty);
+                // v0.4.0：经 IScreenProvider 取屏幕拓扑（Headless 可注入 Fake 拓扑测试，
+                // 不再直接依赖 Screen.AllScreens 的进程级缓存）。
+                var (x, y) = RestoreWindowPosition(
+                    savedWindow.X, savedWindow.Y, form.Width, form.Height);
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(x, y);
                 Trace($"window restored to ({x},{y}) size={form.Width}x{form.Height}");

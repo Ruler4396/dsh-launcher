@@ -43,6 +43,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $sig = @'
+#nullable enable
 using System;
 using System.Runtime.InteropServices;
 

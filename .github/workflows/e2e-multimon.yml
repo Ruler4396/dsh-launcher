@@ -1,26 +1,27 @@
 name: e2e-multimon
 
-# Task 2 方案 B：无物理硬件的跨屏最大化回归（多屏 DPI 丢窗修复验证）。
-# 在 windows-latest 交互桌面会话上，用开源 IDD 虚拟显示驱动注入 1 块虚拟副屏，
-# 再通过 Set-VirtualDisplay.ps1 把副屏设为异构 DPI（150%），最后跑 FlaUI E2E：
-#   启动 DshWeb.exe --ui-probe → 搬到副屏 → SC_MAXIMIZE → 断言 BoundingRectangle ⊆ rcWork。
-# 由于虚拟副屏可做成负坐标（放左侧）+ 不同缩放，正好复现"物理≠逻辑"的最大化丢窗根因。
-# 仅 workflow_dispatch / PR / v0.4.0 push（触发路径限定在 src+scripts+workflow），避免每次 push 全量跑。
+# v0.4.0 重构：放弃 CI 内核虚拟显示驱动方案（受限沙箱无法稳定加载第三方 IDD 驱动，
+# pnputil 超时/驱动签名校验在 Server runner 上不稳定）。
+# 多屏边界回归全部迁移为 **Headless 纯函数/Mock 测试**（不依赖真实硬件）：
+#   - tests/DshShell.Tests/Managers/MultiMonitorContractTests.cs
+#       RestoreWindowPosition 极端矩阵：副屏正常 / 拔掉越界容灾 / 高 DPI 逻辑物理混用
+#   - tests/DshShell.Tests/Managers/ScreenProviderIntegrationTests.cs
+#       FakeScreenProvider 注入任意拓扑（4K+1080p 等）验证窗口位置恢复接线
+#   - 真实 UI 跨屏测试 MaximizeAcrossVirtualDisplayTests 保留为本地调试工具（无副屏自动空跑）
+# 原 install-virtual-display.ps1 / Set-VirtualDisplay.ps1 仅作本地开发者调试脚本。
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['src/**', 'scripts/install-virtual-display.ps1', 'scripts/Set-VirtualDisplay.ps1',
-            'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
+    paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
   push:
     branches: [v0.4.0]
-    paths: ['src/**', 'scripts/install-virtual-display.ps1', 'scripts/Set-VirtualDisplay.ps1',
-            'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
+    paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
 
 permissions:
   contents: read
 
 jobs:
-  e2e-multimon:
+  headless-multimon:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,39 +30,24 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      # 1) 注入虚拟副屏（管理员；IDD 用户态驱动，无需物理硬件）
-      # timeout-minutes=8：脚本内部已有下载/安装超时，此层兜底防 CI 队列被悬挂步骤占死。
-      - name: Install virtual display driver (1 virtual secondary)
-        timeout-minutes: 8
+      # 1) Headless 多屏纯函数/Mock 矩阵（含全部单测，CI 不再装虚拟显示驱动）
+      - name: Headless multi-monitor contract + integration tests
         shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass `
-            -File scripts/install-virtual-display.ps1 -Count 1 -TimeoutSec 180
+          dotnet test tests/DshShell.Tests/DshShell.Tests.csproj -c Debug --nologo
 
-      # 2) 把副屏设为异构 DPI（150%），构造"物理≠逻辑"回归面
-      - name: Set secondary to heterogeneous DPI (150%)
+      # 2) E2E：排除 RequiresVirtualDisplay（本地虚拟屏专用），其余 headless 全跑
+      - name: Headless E2E (exclude virtual-display-only)
         shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass `
-            -File scripts/Set-VirtualDisplay.ps1 -DeviceIndex 1 -Width 1920 -Height 1080 -ScalePercent 150
+          dotnet test tests/DshShell.E2E/DshShell.E2E.csproj -c Debug --nologo --filter "Category!=RequiresVirtualDisplay"
 
-      # 3) 编译（含 E2E 项目与生产 exe）
-      - name: Build
-        shell: pwsh
-        run: dotnet build tests/DshShell.E2E/DshShell.E2E.csproj -c Debug --nologo
-
-      # 4) 跑跨屏最大化 E2E
-      - name: Run FlaUI cross-screen maximize E2E
-        shell: pwsh
-        continue-on-error: false
-        run: dotnet test tests/DshShell.E2E/DshShell.E2E.csproj -c Debug --no-build --nologo
-
-      # 5) 收集日志（含失败时）
+      # 3) 收集日志（含失败时）
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: e2e-multimon
           path: |
+            tests/DshShell.Tests/TestResults/**/*.trx
             tests/DshShell.E2E/TestResults/**/*.trx
-            e2e-multimon.log
