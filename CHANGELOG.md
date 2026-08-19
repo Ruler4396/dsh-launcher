@@ -55,6 +55,8 @@
 - **npm 执行机制加固（cmd shim + 路径解析 + 错误暴露）**：① `RunNpmCommand` 经 `cmd.exe /c` 执行（`CreateProcess` 不解析 `.cmd` shim 的基线，历史 E4001 根因）；② 新增 `ResolveNpmCmdPath`——优先从 `RuntimeResolver` 解析的 Node 根目录拼 `npm.cmd` 绝对路径（GUI 进程 PATH 缺 Node 目录时的隔离方案），失败回退 `where npm.cmd`，再失败回退 `cmd /c npm`；③ 下载失败弹窗暴露真实 `errorTail`（不再硬编码"下载失败"把原因藏进日志），并区分"未检测到 npm 环境（请安装 Node.js 18+）"与"网络/registry 问题（保留重试建议）"（`ShellLogic.IsNpmNotFoundError` 纯函数）；④ 预热/下载/安装三路径共享同一 `RunNpmCommand`，统一受益。
 - **修复更新下载 E4001"文件名、目录名或卷标语法不正确"**：`DownloadDshUpdateStaged` 此前只 `CreateDirectory(staging)` 从未创建 `prefetch_temp`，`npm pack --pack-destination` 指向不存在的目录 → Windows 中文系统底层 fs 返回 ERROR_INVALID_NAME。修复：pack 前创建 `prefetchDir`。
 - **修复 E4001 真正根因（cmd /c 引号剥离）**：`ResolveNpmCmdPath` 曾返回带引号的 npm 路径，`cmd /c "D:\node\npm.cmd" pack ...` 时 cmd 剥离首尾引号后引号计数错乱 → ERROR_INVALID_NAME（"文件名、目录名或卷标语法不正确"）。实测锁定正确形式：整行双层引号包裹 `/c ""D:\node\npm.cmd" pack ..."`（含空格路径亦安全）。修复：`ResolveNpmCmdPath` 改返回裸路径，`RunNpmCommand` 按 cmd 标准形式包裹；同时移除 `StandardErrorEncoding=UTF8`（显式 UTF-8 解码中文系统 GBK 输出反致 U+FFFD 乱码，.NET 默认 ANSI 即可正确解码）。
+- **npm 执行引擎彻底重写（node.exe 直接执行 npm-cli.js）**：抛弃 `npm.cmd`/`cmd.exe /c`/`chcp 65001` 全部 Hack——`RuntimeResolver` 解析 node.exe 绝对路径 → `FindNpmCliJs` 两优先级探测 `npm-cli.js` → `node.exe "npm-cli.js" args`（UseShellExecute=false + 双编码 UTF-8）。实测验证：node 直接执行 `--version`/`pack` 均 EXIT=0，彻底根除 .cmd 编码冲突与 cmd /c 引号陷阱。保留 ct/progress/timeoutMs/workingDirectory 增强参数。
+- **真实环境冒烟测试（打破测试幻觉）**：新增 `RealWorldNpmExecutionTests`——**零 Mock** 直接调 `RunNpmCommand("--version")` 验证真实 Node/npm 链路；`test.ps1` 设 `DSH_FORCE_NPM_SMOKE=1` 本地强制运行（无 Node 即失败阻断），CI 无 Node 时自动跳过。
 
 ### 测试
 
@@ -66,7 +68,7 @@
 - **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
 - **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
-- 单测 **397 个全部通过**。
+- 单测 **400 个全部通过**（含 3 个真实环境冒烟测试）。
 
 ## [Unreleased]
 
