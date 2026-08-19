@@ -109,6 +109,34 @@ Assert-True ($caSrc -match 'start-dsh\.vbs') "卸载 CA 兼容清理旧版 start
 Assert-True ($caSrc -match 'CleanUserData') "卸载 CA 提供用户数据清理（仅自有数据）"
 Assert-True ($caSrc -notmatch 'profiles.*Directory\.Delete') "卸载 CA 不删除 dsh profiles/插件目录"
 
+# ---- v0.4.0 生产修复契约（僵尸端口/日志锁/更新进度）静态断言：
+# 即使单测被跳过，CI 也能锁定关键代码路径的存在性与抗回退基线。----
+$logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
+Assert-True ($logicSrc -match 'GetProcessIdByPort') "壳含端口→PID 反查（GetExtendedTcpTable/netstat，僵尸端口归属验证）"
+Assert-True ($logicSrc -match 'GetExtendedTcpTable') "壳含 P/Invoke GetExtendedTcpTable（精确端口归属）"
+Assert-True ($logicSrc -match 'KillProcessTree') "壳含进程树强杀（taskkill /T /F 语义）"
+Assert-True ($logicSrc -match 'GetAncestorPids') "壳含祖先进程链（清理 cmd/npx 外壳）"
+Assert-True ($shellSrc -match 'IsRetryableNpmError') "壳含 npm 失败可重试判定（pending 保留/清理策略）"
+Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗 + pending 策略）"
+Assert-True ($shellSrc -match 'progress\?\.Invoke\(\$?"正在应用更新') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'）"
+Assert-True ($shellSrc -match 'BeginOutputReadLine') "壳以逐行异步方式读取 npm 实时日志（非一次性 ReadToEnd）"
+
+$loggerSrc = Get-Content (Join-Path $root "src\DshShell\Logger.cs") -Raw
+Assert-True ($loggerSrc -match 'FileShare\.ReadWrite') "Logger 用 FileShare.ReadWrite 防日志锁死（兼容 cmd >> 句柄）"
+Assert-True ($loggerSrc -match 'dsh-launcher-fallback') "Logger 含 %TEMP% fallback 路径（主日志被锁时落盘）"
+Assert-True ($loggerSrc -match 'FATAL LOGGER') "Logger fallback 时输出 Console.Error 醒目告警"
+
+$serviceMgr = Get-Content (Join-Path $root "src\DshShell\Managers\ServiceManager.cs") -Raw
+Assert-True ($serviceMgr -match 'ProbePort') "ServiceManager 含端口三重验证（TCP+进程身份+HTTP）"
+Assert-True ($serviceMgr -match 'KillZombieTree') "ServiceManager 含僵尸进程树清理"
+Assert-True ($serviceMgr -match 'ServicePortState\.(Healthy|Zombie|Foreign)') "ServiceManager 区分 Healthy/Zombie/Foreign 三态"
+
+$splashSrc = Get-Content (Join-Path $root "src\DshShell\Windows\SplashForm.cs") -Raw
+Assert-True ($splashSrc -match 'IsApplyingUpdate') "Splash 支持更新安装阶段标志（取消按钮禁用/安装中…）"
+
+# v0.4.0 更新文案预期管理：明示重启后 1-2 分钟安装耗时（不再误导"下次启动即生效"）
+Assert-True ($shellSrc -match '预计需要 1-2 分钟') "更新弹窗/气泡文案明示安装耗时（1-2 分钟），管理用户预期"
+
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
 try {

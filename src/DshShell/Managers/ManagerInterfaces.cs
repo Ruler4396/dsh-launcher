@@ -35,6 +35,14 @@ public interface IServiceManager
 
     /// <summary>就绪前轮询（端口+HTTP），超时返回 false。探针可注入以便测试。</summary>
     Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default);
+
+    /// <summary>端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）：返回端口占用状态，
+    /// 区分"健康运行/僵尸服务/端口被其他程序占用"，供启动决策（跳过/清理重启/快速失败）。</summary>
+    ShellLogic.ServicePortState ProbePort(int port, string url);
+
+    /// <summary>强杀僵尸进程树并等待端口释放（任务一：taskkill /T /F，含 cmd/npx 外壳）。
+    /// 返回是否清理成功（端口最终释放）。</summary>
+    bool KillZombieTree(int port);
 }
 
 /// <summary>WebView2 初始化/崩溃恢复/权限，并管理与主窗的绑定。</summary>

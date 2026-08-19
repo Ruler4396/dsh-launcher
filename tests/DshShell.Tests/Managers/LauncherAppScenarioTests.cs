@@ -33,9 +33,14 @@ public class LauncherAppScenarioTests
     private sealed class FakeService : IServiceManager
     {
         public bool Ready { get; init; }
+        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
+        public bool KillZombieResult { get; init; } = true;
+        public int KillZombieCalls { get; private set; }
         public bool NeedsStart(int port) => false; // 就绪路径（端口已开）
         public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
             => Task.FromResult(Ready);
+        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
+        public bool KillZombieTree(int port) { KillZombieCalls++; return KillZombieResult; }
     }
 
     /// <summary>订阅 StateChanged，返回状态轨迹（含最终 Running/初始化事件时序）。</summary>
@@ -101,6 +106,58 @@ public class LauncherAppScenarioTests
 
         // 超时清理（Kill 孤儿进程，E2005 语义）在组合根超时分支被触发，端口透传正确
         Assert.Equal(3080, cleanedPort);
+    }
+
+    // ---------------- 场景 5：僵尸服务（端口开但 HTTP 死）→ 清理 + 重新拉起 ----------------
+    // 根因修复（任务一）：TCP 已开但 HTTP 不通时不再误判"服务健康"傻等 180s——先强杀进程树
+    //（taskkill /T /F 含 cmd/npx 外壳），清理成功后再走正常拉起；清理失败快速失败 E2004。
+
+    [Fact]
+    public async Task ZombiePort_KillSucceeds_StartServiceInvoked_ThenReadiness()
+    {
+        var startCalls = 0;
+        var service = new FakeService { PortState = ShellLogic.ServicePortState.Zombie, Ready = true };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            StartService = () => { startCalls++; return true; },
+        };
+        var states = Trace(app);
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Running, app.State);
+        // 僵尸清理被触发一次；随后重新拉起服务（start-dsh.vbs 语义）
+        Assert.Equal(1, service.KillZombieCalls);
+        Assert.Equal(1, startCalls);
+        Assert.Contains(LifecycleState.StartingService, states);
+    }
+
+    [Fact]
+    public async Task ZombiePort_KillFails_TransitionsToFailed_WithE2004_NotTimedOut()
+    {
+        var startCalls = 0;
+        var service = new FakeService { PortState = ShellLogic.ServicePortState.Zombie, KillZombieResult = false };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            StartService = () => { startCalls++; return true; },
+        };
+
+        Assert.False(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Failed, app.State); // 清理失败 → 快速失败，不进入 180s 傻等
+        Assert.Equal(ErrorCodes.E2004, app.LastErrorCode);
+        Assert.Equal(0, startCalls); // 清理失败绝不拉起
+        Assert.Equal(1, service.KillZombieCalls);
+    }
+
+    [Fact]
+    public async Task ForeignPort_OccupiedByOtherProgram_TransitionsToFailed_WithE2004()
+    {
+        var service = new FakeService { PortState = ShellLogic.ServicePortState.Foreign };
+        var app = new LauncherApp(new FakeRuntime(), service);
+
+        Assert.False(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Failed, app.State);
+        Assert.Equal(ErrorCodes.E2004, app.LastErrorCode);
+        Assert.Equal(0, service.KillZombieCalls); // 非 dsh 进程 → 不清理（防误杀）
     }
 
     // ---------------- 场景 4：WebView2 Crash Recovery ----------------

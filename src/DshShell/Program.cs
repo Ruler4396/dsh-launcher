@@ -944,16 +944,36 @@ internal static class Program
         CancellationToken ct)
     {
         var app = CreateLauncherApp(confirm);
-        // IProgress<string>（LauncherApp 进度）→ IProgress<Message>（SplashForm 状态标签）
-        var textProgress = new Progress<string>(t => progress.Report(new SplashForm.Message("probe", t)));
-        var ok = await app.RunStartupAsync(textProgress, ct);
-        return new SplashForm.Outcome(
-            ok,
-            app.WaitResult,
-            app.ServiceStartedByShell,
-            UnifiedLogPath,
-            ok ? null : app.LastErrorCode,
-            ok ? null : app.LastErrorDetail);
+        // IProgress<string>（LauncherApp 进度）→ IProgress<Message>（SplashForm 状态标签）。
+        // 任务二："[warn] " 前缀 → 黄色告警（日志 fallback 提示），其余为普通进度。
+        // 任务一："[apply] " 前缀 → 更新安装进度（Splash 据此禁用取消按钮 + 更新 Label）。
+        IProgress<string> textProgress = new Progress<string>(t =>
+        {
+            if (t.StartsWith("[apply] ", StringComparison.Ordinal))
+                progress.Report(new SplashForm.Message("apply", t.Substring("[apply] ".Length), IsApplyingUpdate: true));
+            else if (t.StartsWith("[warn] ", StringComparison.Ordinal))
+                progress.Report(new SplashForm.Message("probe", t.Substring("[warn] ".Length), IsError: false, IsWarn: true));
+            else
+                progress.Report(new SplashForm.Message("probe", t));
+        });
+        // 任务一：把 Splash 进度桥接进 RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志。
+        // 应用更新阶段用 "[apply] " 前缀标记（Splash 更新 Label 并禁用取消按钮）。
+        _updateApplyProgress = s => textProgress.Report("[apply] " + s);
+        try
+        {
+            var ok = await app.RunStartupAsync(textProgress, ct);
+            return new SplashForm.Outcome(
+                ok,
+                app.WaitResult,
+                app.ServiceStartedByShell,
+                UnifiedLogPath,
+                ok ? null : app.LastErrorCode,
+                ok ? null : app.LastErrorDetail);
+        }
+        finally
+        {
+            _updateApplyProgress = null; // 本次会话结束，清理桥接（防跨会话污染）
+        }
     }
 
     /// <summary>装配 LauncherApp：注入真实副作用（与 Program 静态状态解耦，组合根接线）。</summary>
@@ -975,7 +995,7 @@ internal static class Program
             service: new ServiceManager(),
             staleCleanup: _ => SweepStaleServicePid())
         {
-            BackgroundMaintenance = RunBackgroundMaintenance, // Action<CancellationToken>（阶段 0 可取消）
+            BackgroundMaintenance = ct => RunBackgroundMaintenance(ct, _updateApplyProgress), // 阶段 0 可取消；进度桥接到 Splash
             SweepStaleAndApplyUpdate = () =>
             {
                 // v0.4.0：ApplyPendingDshUpdate 已上移到 BackgroundMaintenance（阶段 0）——
@@ -994,14 +1014,16 @@ internal static class Program
     /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。
     /// v0.4.0：延迟更新应用（npm install -g）也在此执行——属耗时 IO（30-60s），放阶段 0 后
     /// 用户看到的"正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。
-    /// <paramref name="ct"/> 传给 ApplyPendingDshUpdate → npm 安装可被取消（Splash 取消立即生效）。</summary>
-    private static void RunBackgroundMaintenance(CancellationToken ct)
+    /// <paramref name="ct"/> 传给 ApplyPendingDshUpdate → npm 安装可被取消（Splash 取消立即生效）。
+    /// <paramref name="progress"/>（任务一）：由组合根桥接 Splash 的 IProgress，把"正在应用更新
+    /// (vX)…"与 npm 实时安装日志（"added 50 packages"）滚动上报，消除更新期间 UI 静默/卡死错觉。</summary>
+    private static void RunBackgroundMaintenance(CancellationToken ct, Action<string>? progress = null)
     {
         if (!PortOpen(Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
-        HandlePendingUpdateAtStartup(ct); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
+        HandlePendingUpdateAtStartup(ct, progress); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
         CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
         CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
@@ -1014,6 +1036,10 @@ internal static class Program
     /// <summary>等待主窗就绪后一次性弹"立即重启应用"提示的版本（T2 规则 2，由主窗 Load 消费）。</summary>
     private static string? _applyRestartPendingVersion;
 
+    /// <summary>更新安装进度桥接（任务一）：RunLauncherAppPipelineAsync 装配时指向 Splash 进度转发，
+    /// RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志逐行上报。会话结束清空防污染。</summary>
+    private static Action<string>? _updateApplyProgress;
+
     /// <summary>
     /// 启动早期待应用更新决策（v0.4.0 T2，纯函数矩阵 U2 的接线）：
     /// - ApplyNow：服务未运行 → 直接应用（可取消）；
@@ -1022,14 +1048,14 @@ internal static class Program
     /// - None：无 pending。
     /// 端口开着时绝不静默跳过（根因 A 修复）。
     /// </summary>
-    private static void HandlePendingUpdateAtStartup(CancellationToken ct)
+    private static void HandlePendingUpdateAtStartup(CancellationToken ct, Action<string>? progress = null)
     {
         // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 模拟"确认更新→重启→应用"全流程（DshUpdateFlowTests）。
         // 直接走 ApplyPendingDshUpdate（其内部 fake 分支清 pending），**不依赖端口状态**——否则
         // 本地残留服务（端口开）时决策走 PromptRestart，pending 保留，测试不稳定。
         if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
         {
-            ApplyPendingDshUpdate(ct);
+            ApplyPendingDshUpdate(ct, progress);
             return;
         }
         var (pendingVersion, _) = StagedUpdate.ReadPending();
@@ -1042,7 +1068,7 @@ internal static class Program
         switch (action)
         {
             case ShellLogic.PendingUpdateAction.ApplyNow:
-                ApplyPendingDshUpdate(ct); // 可取消；失败保留 pending 下次再试
+                ApplyPendingDshUpdate(ct, progress); // 可取消；失败按策略保留/清理 pending
                 break;
             case ShellLogic.PendingUpdateAction.ClearPending:
                 StagedUpdate.ClearPending();
@@ -1373,7 +1399,7 @@ internal static class Program
             var tray = WindowManager.Instance.TrayIcon;
             if (tray is null) return;
             tray.ShowBalloonTip(15000, "dsh 更新待应用",
-                $"已下载 dsh {version}，将在下次服务启动时自动应用（关闭本窗口后生效；或手动执行：npm install -g @deepseek-ai/dsh@{version}）。",
+                $"更新 dsh {version} 已下载完成。下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）。",
                 ToolTipIcon.Info);
         }
         catch { /* 气泡提示失败忽略 */ }
@@ -1405,7 +1431,7 @@ internal static class Program
         var r = MessageBox.Show(
             form,
             $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台下载并安排更新？\n" +
-            "（下载完成不打扰当前会话；将在下次服务启动时自动应用，即关闭本窗口后）",
+            "（下载不打扰当前会话；下次重启启动器时将自动安装，预计需要 1-2 分钟，期间请耐心等待）",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
@@ -1490,7 +1516,7 @@ internal static class Program
                 try
                 {
                     form.BeginInvoke(() => MessageBox.Show(
-                        $"dsh {latest} 已下载完成，将在下次服务启动时自动应用（即关闭本窗口后，不会打断当前会话）。",
+                        $"更新 dsh {latest} 已下载完成。下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）。",
                         "dsh 更新", MessageBoxButtons.OK, MessageBoxIcon.Information));
                 }
                 catch { /* 窗体已关闭则下次启动再说 */ }
@@ -1517,8 +1543,10 @@ internal static class Program
     }
 
     /// <summary>v0.3.0 延迟应用：下次启动拉起服务前，应用已下载的 dsh 新版。
-    /// 失败不阻塞启动（继续用旧版，错误码 E4002，下次启动重试，幂等）。</summary>
-    private static void ApplyPendingDshUpdate(CancellationToken ct = default)
+    /// 失败不阻塞启动（继续用旧版，错误码 E4002，下次启动重试，幂等）。
+    /// <paramref name="progress"/>（任务一）：把"正在应用更新 (vX)…"与 npm 实时安装日志
+    /// （"added 50 packages"）滚动上报到 Splash；任务三：失败时弹模态提示 + 按策略保留/清理 pending。</summary>
+    private static void ApplyPendingDshUpdate(CancellationToken ct = default, Action<string>? progress = null)
     {
         var version = StagedUpdate.ReadPendingVersion();
         if (string.IsNullOrWhiteSpace(version)) return;
@@ -1530,10 +1558,14 @@ internal static class Program
             Logger.Info($"fake apply staged dsh update (test hook): {version}");
             return;
         }
+        // 任务一：更新安装阶段显式上报——Splash Label 更新为"正在应用更新 (vX)…"，
+        // 并在后台应用期间持续上报 npm 实时日志，缓解"卡死"焦虑。
+        progress?.Invoke($"正在应用更新 (v{version})…");
         Logger.Info($"applying staged dsh update to {version}");
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
-        if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail, ct))
+        if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail, ct, progress))
         {
+            progress?.Invoke($"更新 v{version} 已应用完成。");
             StagedUpdate.ClearPending();
             CleanupStagingCache(); // 应用成功：清空 staging（下载缓存不留残余）
             Logger.Info($"staged dsh update applied: {version}");
@@ -1545,8 +1577,56 @@ internal static class Program
             StagedUpdate.MarkApplyFailed(); // v0.3.1：累计失败次数，持续失败降级为仅日志
             Logger.Warn("staged dsh update apply failed; continuing with current version", ErrorCodes.E4002,
                 new { version, tail = errorTail });
+            // 任务三：安装失败必须给用户明确反馈（此前仅记日志，用户"更新莫名其妙失败了"）。
+            NotifyUpdateApplyFailed(version, errorTail);
         }
     }
+
+    /// <summary>
+    /// 任务三：更新安装失败的 UI 反馈 + pending 保留/清理策略。
+    /// - 网络/超时类失败（errorTail 含 timeout/ETIMEDOUT/ECONNRESET/registry error）→ 保留 pending，
+    ///   下次启动自动重试（不打扰）——仅记录日志；
+    /// - 其他失败（权限/包损坏等，重试无意义）→ 清 pending（防死循环）+ 模态弹窗明确告知。
+    /// </summary>
+    private static void NotifyUpdateApplyFailed(string version, string errorTail)
+    {
+        var retryable = IsRetryableNpmError(errorTail);
+        // 网络/超时类：保留 pending，下次启动重试；日志记录（避免每次启动都打扰）
+        if (retryable)
+        {
+            Logger.Info($"update {version} apply failed with retryable error; pending kept for next launch",
+                ctx: new { version, tail = errorTail });
+            return;
+        }
+        // 非重试类（权限/包损坏）：清 pending 防死循环 + 模态弹窗
+        StagedUpdate.ClearPending();
+        Logger.Error($"update {version} apply failed with non-retryable error; pending cleared",
+            ErrorCodes.E4002, new { version, tail = errorTail });
+        try
+        {
+            var detail = string.IsNullOrWhiteSpace(errorTail) ? "未知原因" : errorTail;
+            if (!NoUiMode)
+            {
+                // 任务三：显示主窗口之前必须弹模态，明确告知失败原因与后续动作
+                var dlg = _pendingForm; // 更新提示托盘宿主（可能为 null，回退无 owner）
+                var text = $"自动应用更新失败 (v{version})。\n\n将继续使用旧版本启动。\n\n原因：{detail}\n\n" +
+                           "您可以稍后在设置中重试更新。";
+                if (dlg is not null)
+                {
+                    dlg.BeginInvoke(() => MessageBox.Show(dlg, text, "dsh 更新失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error));
+                }
+                else
+                {
+                    MessageBox.Show(text, "dsh 更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+        catch { /* 弹窗失败不影响启动 */ }
+    }
+
+    /// <summary>判定 npm 失败是否为可重试的网络类错误（任务三 pending 保留依据）。委托 ShellLogic 纯函数。</summary>
+    private static bool IsRetryableNpmError(string tail) => ShellLogic.IsRetryableNpmError(tail);
 
     /// <summary>下载缓存管理：清理 DataDir\staging 中修改时间超过 7 天的文件。
     /// 下载中的当前包（刚写入）不受影响；应用成功后调用方再整体清空。</summary>
@@ -1575,8 +1655,11 @@ internal static class Program
 
     /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：最多等 120s；输出重定向避免死锁。
     /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false——保证启动阶段应用更新
-    /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。</summary>
-    private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default)
+    /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。
+    /// <paramref name="progress"/>（任务一进阶）：逐行转发 npm 实时安装日志（如 "added 50 packages"）
+    /// 到 Splash，滚动显示消除"更新卡死"焦虑。收集的 stdout+stderr 仍用于 errorTail 诊断。</summary>
+    private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
+        Action<string>? progress = null)
     {
         errorTail = "";
         try
@@ -1585,7 +1668,7 @@ internal static class Program
             // Process.Start("npm.cmd", ...) + UseShellExecute=false 走 CreateProcess，
             // **不解析 batch shim**（抛 ERROR_BAD_EXE_FORMAT）→ 点击更新后 E4001 的根因
             //（与 ResolveLocalDshVersion 用 dsh 直接启动同一类 bug）。现改经 cmd.exe /c
-            // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr 保持静默。
+            // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr。
             var psi = new ProcessStartInfo("cmd.exe", "/c npm " + args)
             {
                 UseShellExecute = false,
@@ -1595,21 +1678,42 @@ internal static class Program
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            var outTask = p.StandardOutput.ReadToEndAsync();
-            var errTask = p.StandardError.ReadToEndAsync();
+            // 任务一进阶：逐行读取 stdout/stderr 实时转发到 Splash（异步事件，不阻塞主循环）。
+            var outLines = new List<string>();
+            var errLines = new List<string>();
+            var outLock = new object();
+            var errLock = new object();
+            p.OutputDataReceived += (_, e) =>
+            {
+                if (string.IsNullOrEmpty(e.Data)) return;
+                lock (outLock) outLines.Add(e.Data);
+                progress?.Invoke(e.Data);
+            };
+            p.ErrorDataReceived += (_, e) =>
+            {
+                if (string.IsNullOrEmpty(e.Data)) return;
+                lock (errLock) errLines.Add(e.Data);
+                progress?.Invoke(e.Data);
+            };
+            p.BeginOutputReadLine();
+            p.BeginErrorReadLine();
             // WaitForExit 期间可被外部取消：注册回调 Kill 进程树，避免"点取消无效"（用户反馈：
             // 重启卡在启动服务、点取消几十秒才自己关——阶段 0 npm install 不可取消所致）。
             using var reg = ct.Register(() =>
             {
                 try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
             });
+            // 任务一进阶：process=null 时不传 progress 也会走完（读取线程仍收集，errorTail 不受影响）
             if (!p.WaitForExit(120000))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
                 return false;
             }
             if (ct.IsCancellationRequested) return false;
-            var combined = outTask.GetAwaiter().GetResult() + "\n" + errTask.GetAwaiter().GetResult();
+            // 事件回调可能落后于 WaitForExit 返回，短暂同步读一次剩余流（防 errorTail 缺行）
+            var combined = "";
+            lock (outLock) combined += string.Join("\n", outLines);
+            lock (errLock) { if (combined.Length > 0) combined += "\n"; combined += string.Join("\n", errLines); }
             var lines = combined.Split('\n')
                 .Where(l => !string.IsNullOrWhiteSpace(l))
                 .ToList();
@@ -2232,7 +2336,15 @@ internal static class Program
             if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
             {
                 lastLogCheck = DateTime.Now;
+                // 任务三：主日志被锁时（cmd >> 独占）读取 fallback 日志，错误标志检查不失效——
+                // 两者任一出现启动错误标志都会触发 15s 宽限期提前退出（诊断盲区消除）。
                 var content = SafeReadText(logPath);
+                if (string.IsNullOrWhiteSpace(content)
+                    && !string.Equals(logPath, Logger.FallbackPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var fb = SafeReadText(Logger.FallbackPath);
+                    if (!string.IsNullOrWhiteSpace(fb)) content = fb;
+                }
                 if (ShellLogic.LogShowsStartupError(content))
                 {
                     if (!logErrorSeen)

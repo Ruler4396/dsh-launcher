@@ -28,8 +28,10 @@ public sealed class LauncherApp
 
     // ---------------- 副作用委托（组合根注入；null = 跳过，供 Headless 测试） ----------------
 
-    /// <summary>阶段 0：无 UI 的轻量维护 IO（日志轮转/数据迁移/自启落地/延迟更新应用等）。
-    /// 入参为取消令牌：npm install -g 应用更新可达 30-60s，用户取消 Splash 时必须能中断（v0.4.0）。</summary>
+    /// <summary>阶段 0：无 UI 的轻量维护 IO（日志轮转/数据迁移/自启落地/延迟应用更新等）。
+    /// 入参为取消令牌：npm install -g 应用更新可达 30-60s，用户取消 Splash 时必须能中断（v0.4.0）。
+    /// 组合根把 Splash 的 IProgress 桥接进 RunBackgroundMaintenance → ApplyPendingDshUpdate →
+    /// npm 实时日志逐行上报到 Splash（任务一 UI 联动：缓解"正在安装更新"期间的卡死焦虑）。</summary>
     public Action<CancellationToken>? BackgroundMaintenance { get; set; }
 
     /// <summary>拉起服务前的僵尸清扫 + 延迟更新应用。</summary>
@@ -116,14 +118,26 @@ public sealed class LauncherApp
     public async Task<bool> RunStartupAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
         // ---- 阶段 0：无 UI 的轻量维护 IO（原 Main 同步项）——必须后台执行：内部含同步
-        // PortOpen（TcpClient.Connect）、数据迁移与延迟更新应用（npm install -g 可能 30-60s）
+        // PortOpen（TcpClient.Connect）、数据迁移与延迟应用更新（npm install -g 可能 30-60s）
         // 等 IO，同步调用会阻塞 UI 线程导致 Splash 白屏。----
         // 取消语义：Task.Run 的 ct 只在任务启动前生效；已运行中的 npm install 由
         // BackgroundMaintenance(ct) 内部转发到 RunNpmCommand → ct.Register Kill 进程树（Splash
         // 取消立即生效，不残留"点取消几十秒后才关"）。----
+        // 任务一 UI 联动：后台 ApplyPendingDshUpdate 经组合根桥接把"正在应用更新 (vX)…"与
+        // npm 实时日志上报到 Splash（进度流在组合根，见 RunLauncherAppPipelineAsync）。
         progress?.Report("正在准备启动环境…");
         if (BackgroundMaintenance is not null)
-            await Task.Run(() => BackgroundMaintenance(ct), ct);
+        {
+            var maintenance = BackgroundMaintenance; // 捕获（组合根可能在方法内换属性）
+            await Task.Run(() => maintenance(ct), ct);
+        }
+
+        // ---- 任务二 UI 告警：主日志曾被锁（fallback 已触发）→ 启动窗黄色提示（桥接层把
+        // "[warn]" 前缀映射为 IsWarn）。避免用户误以为"日志没在写"而惊慌，诊断路径可被发现。----
+        if (Logger.FallbackUsed)
+        {
+            progress?.Report("[warn] 日志文件被占用，部分日志已写入临时目录：" + Logger.FallbackPath);
+        }
 
         // ---- E2E 测试钩子：模拟"后台启动耗时"，跳过真实服务逻辑（tests/DshShell.E2E）。
         // 设 0/缺省 = 正常流水线；设 >0 = 延迟该毫秒数后直接返回就绪。仅测试使用。
@@ -166,16 +180,54 @@ public sealed class LauncherApp
         }
         _lifecycle.Fire(LifecycleTrigger.RuntimeResolved); // → StartingService
 
-        // ---- StartingService：端口已开/外部托管 → 直接探测；否则清扫+拉起。
-        // NeedsStart 内部是同步 TcpClient.Connect（本机 2s 级），必须后台执行。----
-        var portOpen = await Task.Run(
-            () => ServerManagedExternally || !_service.NeedsStart(Port), ct);
-        if (portOpen)
+        // ---- StartingService：端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）。
+        // 修复根因：仅凭 TCP PortOpen 决定"跳过拉起"会误判僵尸服务（端口开但 HTTP 死）为
+        // 健康，导致对半死服务傻等 180s。现在 Zombie → 清理并重启；Foreign → 快速失败 E2004；
+        // Healthy → 跳过拉起；Closed → 正常拉起。探针含同步 TcpClient.Connect（本机 2s 级）
+        // 与 taskkill，必须后台执行。----
+        var portState = ServerManagedExternally
+            ? ShellLogic.ServicePortState.Healthy // 外部托管：不拉起、不清理，直接探测就绪
+            : await Task.Run(() => _service.ProbePort(Port, Url), ct);
+
+        // Zombie 清理成功 / Closed → 正常拉起；Healthy → 跳过拉起。统一为 bool 决策，
+        // 避免 switch 内 goto 穿透到后续语句（HappyPath 测试暴露：break 后落入 StartService 块
+        // 二次触发 ServiceStarted → 非法转移 WaitingForReadiness + ServiceStarted）。
+        var needsStart = portState switch
         {
-            _lifecycle.Fire(LifecycleTrigger.ServiceStarted); // → WaitingForReadiness
-            progress?.Report("正在检查 dsh 服务…");
+            ShellLogic.ServicePortState.Healthy => false,
+            ShellLogic.ServicePortState.Zombie => true, // 清理在下面执行后再拉起
+            _ => true, // Closed / Foreign 处理见下（Foreign 提前返回）
+        };
+
+        if (portState == ShellLogic.ServicePortState.Foreign)
+        {
+            // 端口被其他程序占用：快速失败提示冲突（不傻等、不误杀无关进程）
+            var foreignPid = await Task.Run(() => ShellLogic.GetProcessIdByPort(Port), ct);
+            Logger.Error($"port {Port} is occupied by a non-dsh process; aborting startup",
+                ErrorCodes.E2004, new { port = Port, pid = foreignPid, url = Url });
+            LastErrorCode = ErrorCodes.E2004;
+            LastErrorDetail = $"端口 {Port} 已被其他程序占用（PID {(foreignPid > 0 ? foreignPid.ToString() : "未知")}），且无 dsh HTTP 响应。请释放该端口后重试。";
+            _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
+            return false;
         }
-        else
+
+        if (portState == ShellLogic.ServicePortState.Zombie)
+        {
+            // 僵尸服务：TCP 开但 HTTP 不通、占用者是 node → 强杀进程树后重新拉起
+            progress?.Report("检测到残留的 dsh 服务，正在清理并重新启动…");
+            var cleaned = await Task.Run(() => _service.KillZombieTree(Port), ct);
+            if (!cleaned)
+            {
+                // 清理失败（杀不干净/端口未释放）：快速失败，不让用户傻等 180s
+                LastErrorCode = ErrorCodes.E2004;
+                LastErrorDetail = $"dsh 服务残留进程无法清理（端口 {Port} 被僵尸进程占用且 HTTP 无响应）。请关闭占用进程后重试。";
+                Logger.Error(LastErrorDetail, LastErrorCode, new { port = Port, url = Url });
+                _lifecycle.Fire(LifecycleTrigger.Fatal); // StartingService + Fatal → Failed
+                return false;
+            }
+        }
+
+        if (needsStart)
         {
             progress?.Report("正在启动 dsh 服务…");
             var startOk = await Task.Run(() =>
@@ -193,6 +245,11 @@ public sealed class LauncherApp
             }
             ServiceStartedByShell = true;
             _lifecycle.Fire(LifecycleTrigger.ServiceStarted);
+        }
+        else
+        {
+            _lifecycle.Fire(LifecycleTrigger.ServiceStarted); // Healthy：→ WaitingForReadiness
+            progress?.Report("正在检查 dsh 服务…");
         }
 
         // ---- WaitingForReadiness：轮询 HTTP 就绪（异步探测；取消/超时/日志报错三态）----

@@ -20,9 +20,14 @@ public class LauncherAppTests
     private sealed class FakeService : IServiceManager
     {
         public bool Ready { get; init; } = true;
+        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
+        public bool KillZombieResult { get; init; } = true;
+        public int KillZombieCalls { get; private set; }
         public bool NeedsStart(int port) => false;             // 端口已开，走就绪路径
         public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
             => Task.FromResult(Ready);
+        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
+        public bool KillZombieTree(int port) { KillZombieCalls++; return KillZombieResult; }
     }
 
     [Fact]
