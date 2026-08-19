@@ -37,6 +37,13 @@
 - **Splash 启动窗 UI 紧凑化**：窗体 440×232 → 380×196 → 380×180，边距统一 16px，消除"字少窗空"视觉失衡。
 - **`RuntimeResult` 错误码保留**：修复 `Failed()` 工厂丢弃错误码问题，E1002/E1003/E1004/E1005 诊断语义完整。
 - **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → 改为 `Start-Process -Wait -PassThru` + 结果落盘。
+- **更新链路修复（rc6→rc7 检测不到 + 点击下载 E4001 + 应用卡死/取消无效）**：
+  - `CompareVersions` 改完整 SemVer 比较，支持 `0.1.0-rc.x` prerelease（旧 `Version.TryParse` 对 `-rc` 解析失败恒判"无更新"）；
+  - `ResolveLocalDshVersion` / `RunNpmCommand` 改经 `cmd.exe /c` 执行（CreateProcess 不解析 npm/dsh 的 `.cmd`/`.ps1` shim → 版本检测取不到、`npm pack` 下载恒 E4001）；
+  - **更新应用可取消**：`RunNpmCommand` 增 `CancellationToken`，`ct.Register` 立即 `Kill` npm 进程树；`ApplyPendingDshUpdate`/`RunBackgroundMaintenance` 链式传 ct，取消保留 pending 下次启动再应用、不误计 E4002——修复"重启卡在启动服务、点取消几十秒才关"（阶段 0 npm install 30-60s 不可取消所致）；
+  - `ApplyPendingDshUpdate` 上移到阶段 0 后台维护（不再伪装成"正在启动 dsh 服务…"），阶段 0 新增"正在准备启动环境…"文案；
+  - 更新确认 `MessageBox` 带 owner + 调用前 `Activate()`，避免弹窗被遮挡不置前。
+- **最大化 0px 间隙（e2e-geo 8px 缝隙回归）**：去除去 WS_CAPTION 窗口的无效 DWM frame 补偿——该类窗口最大化不外扩，补偿反而把窗口缩一圈（`DshShellForm` 改回无补偿重载 + `WindowGeometry` 文档修正）。
 
 ### 测试
 
@@ -45,7 +52,9 @@
 - 启动耗时基准（`StartupLatencyTests`，Splash 窗口 <500ms）与 UI 响应性/渲染完整性（`UiResponsivenessTests`，后台 10s 阻塞期 UI 健康 + 无空白）。
 - 跨屏最大化 E2E（虚拟副屏，见上）。
 - 纯逻辑测试补齐：`SuggestDownloadName`（RFC5987）、`ShellLogic.AtomicWrite`、`F11HookDecisionTests`、`WindowStateStore` 最大化状态。
-- 单测 **321 个全部通过**。
+- **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
+- **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
+- 单测 **341 个全部通过**。
 
 ## [Unreleased]
 
