@@ -1380,7 +1380,12 @@ internal static class Program
         errorTail = "";
         try
         {
-            var psi = new ProcessStartInfo("npm.cmd", args)
+            // v0.4.0 修复：npm 全局包在 Windows 是 .cmd/.ps1 shim（npm.cmd），
+            // Process.Start("npm.cmd", ...) + UseShellExecute=false 走 CreateProcess，
+            // **不解析 batch shim**（抛 ERROR_BAD_EXE_FORMAT）→ 点击更新后 E4001 的根因
+            //（与 ResolveLocalDshVersion 用 dsh 直接启动同一类 bug）。现改经 cmd.exe /c
+            // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr 保持静默。
+            var psi = new ProcessStartInfo("cmd.exe", "/c npm " + args)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
