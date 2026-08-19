@@ -48,11 +48,8 @@ internal static class Program
     /// 本次会话壳托管服务的监听 PID（内存缓存，关窗时直接使用，避免再跑 netstat 造成卡顿）。
     private static int _servicePid;
 
-    /// 托盘图标（v0.3.0 起按需显示：仅在装了 lifetime 插件或存在待通知更新时创建，见 EnsureTrayIcon）。
-    private static NotifyIcon? _trayIcon;
-
-    /// 托盘"退出"请求（允许 FormClosing 真正关闭，而不是再次隐藏到托盘）。
-    private static bool _trayExitRequested;
+    // Step 5：托盘状态（_trayIcon/_trayExitRequested）已迁入 WindowManager（Instance 单例），
+    // 统一经 WindowManager.Instance 访问，避免双份状态漂移。
 
     /// <summary>
     /// dsh 主目录（与 dsh 生态一致，向其他插件学习：配置不散落在 %LOCALAPPDATA%，
@@ -184,7 +181,10 @@ internal static class Program
     /// 启动轨迹日志：v0.3.0 起统一走 <see cref="Logger"/>（DSH_HOME\dsh-launcher\dsh.log，JSON Lines）。
     /// 保留 Trace 名称以最小化调用点改动；写失败静默（日志不影响启动）。
     /// </summary>
-    private static void Trace(string message) => Logger.Info(message);
+    internal static void Trace(string message) => Logger.Info(message);
+
+    /// <summary>ShowWindow 转发（WindowManager 托盘唤起 SW_RESTORE 用；internal 供 Managers 访问）。</summary>
+    internal static void ShowWindowNative(IntPtr hwnd, int nCmdShow) => ShowWindow(hwnd, nCmdShow);
 
     /// <summary>
     /// P0-2（质量治理）：崩溃留痕钩子。未捕获异常先写日志（E9001 + 异常全文）再终止。
@@ -565,7 +565,20 @@ internal static class Program
 
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
-        EnsureTrayIcon(form);
+        // Step 5：托盘生命周期迁入 WindowManager，依赖委托注入 + 接线自检（防漏注入静默失效）。
+        WindowManager.Instance.IsTrayWantedProvider = () => IsTrayWanted();
+        WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
+        WindowManager.Instance.TrayExitAction = () =>
+        {
+            // 托盘"退出"：放行 FormClosing 真关（不再隐藏到托盘）
+            // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
+            if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
+                StopShellService();
+            Application.Exit();
+        };
+        WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
+        WindowManager.Instance.VerifyDependencies(); // 接线自检（Debug 断言）
+        WindowManager.Instance.EnsureTrayIcon(form);
         // Step 4：WebViewManager 下载完成提示回调注入（解耦 Program 托盘实现）
         WebViewManager.DownloadNotifyAction = NotifyDownloadComplete;
         // 窗口图标跟随主题（深色 → 白色鲸鱼 + 深色标题栏），主题切换时实时更新。
@@ -584,7 +597,7 @@ internal static class Program
             // WebView2 一旦 Dispose，从托盘唤起时控件已销毁，窗口只剩空白。
             // 决策下沉纯函数 ShouldInterceptCloseToTray；下方所有"销毁/退出"路径
             // 都必须在 return 之后才执行（顺序即语义，禁止重排）。
-            if (ShellLogic.ShouldInterceptCloseToTray(mode, _trayExitRequested))
+            if (ShellLogic.ShouldInterceptCloseToTray(mode, WindowManager.Instance.TrayExitRequested))
             {
                 e.Cancel = true;
                 form.Hide();
@@ -608,8 +621,7 @@ internal static class Program
                 // 跟随窗口：关窗即停服务（只停壳本次拉起的）
                 StopShellService();
             }
-            _trayIcon?.Dispose();
-            _trayIcon = null;
+            WindowManager.Instance.DisposeTray();
         };
 
         form.Load += async (_, _) =>
@@ -1150,9 +1162,9 @@ internal static class Program
     {
         try
         {
-            if (_trayIcon is null) return;
-            _trayIcon.ShowBalloonTip(8000, "下载完成",
-                "文件已保存：\n" + filePath + "\n（点击" + _trayIcon.Text + "托盘图标查看）",
+            if (WindowManager.Instance.TrayIcon is null) return;
+            WindowManager.Instance.ShowBalloonTip(8000, "下载完成",
+                "文件已保存：\n" + filePath + "\n（点击 dsh-launcher 托盘图标查看）",
                 ToolTipIcon.Info);
         }
         catch { /* 气泡失败忽略 */ }
@@ -1167,14 +1179,15 @@ internal static class Program
             _pendingLocal = local;
             // v0.3.0：托盘按需显示——有待通知的更新时临时创建托盘（无插件也提示更新）
             if (_pendingForm is null) return;
-            EnsureTrayIcon(_pendingForm);
-            if (_trayIcon is null) return;
-            _trayIcon.BalloonTipClicked -= OnPendingBalloonClicked;
-            _trayIcon.BalloonTipClicked += OnPendingBalloonClicked;
+            WindowManager.Instance.EnsureTrayIcon(_pendingForm);
+            var tray = WindowManager.Instance.TrayIcon;
+            if (tray is null) return;
+            tray.BalloonTipClicked -= OnPendingBalloonClicked;
+            tray.BalloonTipClicked += OnPendingBalloonClicked;
             var (title, body) = type == PendingUpdate.LauncherSecurity
                 ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
                 : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
-            _trayIcon.ShowBalloonTip(25000, title, body, ToolTipIcon.Info); // 驻留 25s，安全更新要让人看到
+            tray.ShowBalloonTip(25000, title, body, ToolTipIcon.Info); // 驻留 25s，安全更新要让人看到
         }
         catch { /* 气泡提示失败忽略 */ }
     }
@@ -1195,9 +1208,10 @@ internal static class Program
                 return;
             }
             if (_pendingForm is null) return;
-            EnsureTrayIcon(_pendingForm, force: true); // 无插件/无待通知更新时也临时建托盘提示
-            if (_trayIcon is null) return;
-            _trayIcon.ShowBalloonTip(15000, "dsh 更新待应用",
+            WindowManager.Instance.EnsureTrayIcon(_pendingForm, force: true); // 无插件/无待通知更新时也临时建托盘提示
+            var tray = WindowManager.Instance.TrayIcon;
+            if (tray is null) return;
+            tray.ShowBalloonTip(15000, "dsh 更新待应用",
                 $"已下载 dsh {version}，重启 dsh-launcher 后自动应用（或手动执行：npm install -g @deepseek-ai/dsh@{version}）。",
                 ToolTipIcon.Info);
         }
@@ -1924,65 +1938,8 @@ internal static class Program
             && ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray;
     }
 
-    /// <summary>创建托盘图标（按策略懒加载，幂等）；左键切换窗口，右键菜单为退出。
-    /// 服务停留模式改由 dsh-launcher-lifetime 插件在 Harness 设置页里配置（不再放托盘菜单）。
-    /// force=true 时无视按需策略（用于"待应用更新"等一次性通知，质量治理 P1-6）。</summary>
-    internal static void EnsureTrayIcon(Form form, bool force = false)
-    {
-        if (_trayIcon is not null) return;
-        if (!force && !IsTrayWanted()) return;
-        try
-        {
-            var tray = new NotifyIcon
-            {
-                // 托盘背景多为深色，固定用白色鲸鱼（深色鲸鱼看不清）
-                Icon = TrayWhaleIcon ?? SystemIcons.Application,
-                Text = "dsh-launcher",
-                Visible = true,
-            };
-            // 左键单击：窗口置顶显示；右键：弹出自绘托盘菜单（浅色毛玻璃层，仅"退出"）。
-            tray.MouseClick += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Left) ShowMainWindow(form);
-                else if (e.Button == MouseButtons.Right) ShowTrayMenu();
-            };
-            _trayIcon = tray;
-        }
-        catch (Exception ex)
-        {
-            // 质量治理 P2-8：托盘创建失败不再静默——记录原因（更新/待应用通知会因此丢失）
-            Logger.Warn("tray icon creation failed; balloon notifications will be lost", ctx: new { error = ex.Message });
-        }
-    }
-
-        /// <summary>在鼠标位置弹出托盘菜单（自绘浅色毛玻璃层）。</summary>
-    private static void ShowTrayMenu()
-    {
-        try
-        {
-            var menu = new TrayMenuForm(() =>
-            {
-                _trayExitRequested = true;
-                // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
-                if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
-                    StopShellService();
-                Application.Exit();
-            });
-            var pt = Cursor.Position;
-            // 默认：菜单位于鼠标左上方（右键弹菜单位置习惯），略微内偏移；
-            // 屏幕边界自适应：左/上越界则翻转到鼠标另一侧，仍越界则贴工作区边缘
-            // （左侧竖排任务栏时托盘图标贴近左边缘，不加保护菜单会被推到屏幕外）。
-            var wa = Screen.FromPoint(pt).WorkingArea;
-            var loc = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
-            if (loc.X < wa.Left) loc.X = pt.X + 12;
-            if (loc.Y < wa.Top) loc.Y = pt.Y + 6;
-            if (loc.X + menu.Width > wa.Right) loc.X = wa.Right - menu.Width;
-            if (loc.Y + menu.Height > wa.Bottom) loc.Y = wa.Bottom - menu.Height;
-            menu.Location = loc;
-            menu.Show();
-        }
-        catch { /* 菜单显示失败不影响壳 */ }
-    }
+    // Step 5：EnsureTrayIcon/ShowTrayMenu 已迁入 WindowManager.Instance（委托注入 IsTrayWanted
+    // /TrayWhaleIcon/TrayExitAction/TrayMenuFactory）。此处仅保留 IsTrayWanted 供委托引用。
 
     /// <summary>
     /// 托盘右键菜单：LayeredWindow 自绘（alpha 平滑圆角无锯齿 + 商务质感）。
@@ -2286,62 +2243,8 @@ internal static class Program
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
     }
-    /// <summary>
-    /// 显示并置顶主窗口（托盘左键单击 / 菜单唤起）：开着就提到最上层并聚焦，
-    /// 隐藏着就显示出来；**最小化时先还原**（Activate 对最小化窗口无效，
-    /// 此前最小化后单击托盘"点不回来"）；含 WebView2 崩溃/长隐藏恢复。
-    /// </summary>
-    private static void ShowMainWindow(Form form)
-    {
-        if (!form.Visible) form.Show();
-        if (form.WindowState == FormWindowState.Minimized)
-        {
-            // 最小化 → 还原（SW_RESTORE），否则 Activate 无效，窗口不会出现
-            ShowWindow(form.Handle, SW_RESTORE);
-            form.WindowState = FormWindowState.Normal;
-        }
-        form.Activate();
-        // WebView2 在窗口隐藏期间可能出问题导致恢复后白屏：
-        // - 渲染/GPU 进程崩溃（ProcessFailed 已置标志）→ 延迟重载页面恢复
-        // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
-        // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
-        // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
-        var longHidden = WebViewManager.HiddenSince != DateTime.MinValue
-            && DateTime.Now - WebViewManager.HiddenSince >= TimeSpan.FromMinutes(5);
-        if (WebViewManager.RecoveryNeeded || longHidden)
-        {
-            WebViewManager.RecoveryNeeded = false;
-            WebViewManager.HiddenSince = DateTime.MinValue;
-            _ = TryReloadWebViewDeferred(form); // fire-and-forget：不等待结果
-        }
-    }
-
-    /// <summary>
-    /// 延迟重载主窗口 WebView2 页面（隐藏/显示后的崩溃恢复）。延迟 500ms 等窗口
-    /// 可见性处理完成；期间窗口若再次隐藏/关闭则放弃本次重载并留待下次恢复（标志复位）。
-    /// </summary>
-    private static async Task TryReloadWebViewDeferred(Form form)
-    {
-        try
-        {
-            await Task.Delay(500);
-            if (form.IsDisposed || !form.Visible || WebViewManager.MainWeb is { IsDisposed: true })
-            {
-                // 窗口又隐藏/关闭了：下次恢复窗口时再处理
-                WebViewManager.RecoveryNeeded = true;
-                return;
-            }
-            if (WebViewManager.MainWeb?.CoreWebView2 is not null)
-            {
-                Trace("tray restore: reloading webview after process failure (deferred)");
-                WebViewManager.MainWeb.CoreWebView2.Reload();
-            }
-        }
-        catch
-        {
-            // 重载失败静默（页面可能已自行恢复）
-        }
-    }
+    // Step 5：ShowMainWindow/TryReloadWebViewDeferred 已迁入 WindowManager.Instance
+    //（托盘唤起：先 SW_RESTORE 再 Activate；崩溃/长隐藏延迟重载）。
 
     /// <summary>
     /// 服务就绪轮询（并行开窗 Step5 抽取）：后台线程等待 dsh 服务 TCP+HTTP 就绪。
@@ -2927,9 +2830,9 @@ internal static class Program
         {
             SetTitleBarDark(form, dark); // 兜底：未自绘标题栏的窗口
         }
-        if (_trayIcon is not null)
+        if (WindowManager.Instance.TrayIcon is not null)
         {
-            try { _trayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
+            try { WindowManager.Instance.TrayIcon.Icon = TrayWhaleIcon ?? SystemIcons.Application; } catch { /* ignore */ }
         }
     }
 
