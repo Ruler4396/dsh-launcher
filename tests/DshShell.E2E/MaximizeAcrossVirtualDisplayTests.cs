@@ -36,9 +36,10 @@ public class MaximizeAcrossVirtualDisplayTests : IAsyncLifetime
     private const string ProcessName = "DshWeb";
     private const string WindowTitle = "dsh"; // DshShellForm.Text（探针窗口标题）
 
-    // WM_SYSCOMMAND / 最大化
+    // WM_SYSCOMMAND / 最大化 / 还原
     private const int WM_SYSCOMMAND = 0x0112;
     private const int SC_MAXIMIZE = 0xF030;
+    private const int SC_RESTORE = 0xF120;
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOZORDER = 0x0004;
     private const uint SWP_NOACTIVATE = 0x0010;
@@ -119,6 +120,50 @@ public class MaximizeAcrossVirtualDisplayTests : IAsyncLifetime
             $"右越界：right={bounds.Right} 要求 ≤ {_secondaryWork.Right + tolerance}");
         Assert.True(bounds.Bottom <= _secondaryWork.Bottom + tolerance,
             $"下越界：bottom={bounds.Bottom} 要求 ≤ {_secondaryWork.Bottom + tolerance}");
+    }
+
+    /// <summary>
+    /// Issue 回归（0.3.4：#17 放大/缩小窗口在扩展屏导致窗口丢失）：
+    /// 窗口移到副屏 → 最大化（F11 语义）→ **还原** → 断言窗口回到副屏且完全可见，
+    /// 不飞到主屏/屏幕外（"在两块屏幕上消失，点两次任务栏才显示"的症状根因）。
+    /// 仅本地虚拟屏环境有效（CI 单屏守卫空跑）。
+    /// </summary>
+    [Fact]
+    public async Task Restore_after_maximize_on_secondary_keeps_window_visible_on_secondary()
+    {
+        if (_secondaryWork.IsEmpty) return; // 无副屏守卫
+
+        var app = FlaUI.Core.Application.Attach(_proc!.Id);
+        var window = WaitForMainWindow(app, WindowTitle);
+        Assert.NotNull(window);
+        var hwnd = window.Properties.NativeWindowHandle.Value;
+
+        // 1. 窗口搬到副屏左下角（Normal 位置基准）
+        var normal = new Rectangle(_secondaryWork.X + 100, _secondaryWork.Y + 100, 400, 300);
+        SetWindowPos(hwnd, IntPtr.Zero, normal.X, normal.Y, normal.Width, normal.Height,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        await Task.Delay(300);
+        Assert.True(IsOnMonitor(hwnd, _secondaryWork), $"起点未落到副屏：{GetWindowRect(hwnd)}");
+
+        // 2. 最大化（issue：放大）
+        PostMessage(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, IntPtr.Zero);
+        await Task.Delay(800);
+        var maximized = GetWindowRect(hwnd);
+        Assert.True(maximized.Left >= _secondaryWork.Left && maximized.Top >= _secondaryWork.Top,
+            $"最大化后窗口飞出副屏：{maximized}");
+
+        // 3. 还原（issue：缩小）——关键回归：还原后窗口必须回到副屏可见区域
+        PostMessage(hwnd, WM_SYSCOMMAND, SC_RESTORE, IntPtr.Zero);
+        await Task.Delay(800);
+        var restored = GetWindowRect(hwnd);
+
+        Assert.True(restored.Left >= _secondaryWork.Left && restored.Top >= _secondaryWork.Top,
+            $"还原后窗口丢失（负坐标/飞出副屏）：{restored}");
+        Assert.True(restored.Width > 0 && restored.Height > 0, $"还原后窗口尺寸异常：{restored}");
+        // 与副屏有实际交集（>=50% 宽度），而非"名义在副屏但实际在别处"
+        var overlap = Math.Min(restored.Right, _secondaryWork.Right) - Math.Max(restored.Left, _secondaryWork.Left);
+        Assert.True(overlap >= restored.Width * 0.5,
+            $"还原后窗口与副屏交集不足：restored={restored} work={_secondaryWork} overlap={overlap}");
     }
 
     // ---------------- Win32 辅助 ----------------
