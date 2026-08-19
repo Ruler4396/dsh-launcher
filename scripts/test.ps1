@@ -118,7 +118,7 @@ Assert-True ($logicSrc -match 'KillProcessTree') "壳含进程树强杀（taskki
 Assert-True ($logicSrc -match 'GetAncestorPids') "壳含祖先进程链（清理 cmd/npx 外壳）"
 Assert-True ($shellSrc -match 'IsRetryableNpmError') "壳含 npm 失败可重试判定（pending 保留/清理策略）"
 Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗 + pending 策略）"
-Assert-True ($shellSrc -match 'progress\?\.Invoke\(\$?"正在应用更新') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'）"
+Assert-True ($shellSrc -match '正在应用更新 \(v') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'）"
 Assert-True ($shellSrc -match 'BeginOutputReadLine') "壳以逐行异步方式读取 npm 实时日志（非一次性 ReadToEnd）"
 
 $loggerSrc = Get-Content (Join-Path $root "src\DshShell\Logger.cs") -Raw
@@ -134,8 +134,17 @@ Assert-True ($serviceMgr -match 'ServicePortState\.(Healthy|Zombie|Foreign)') "S
 $splashSrc = Get-Content (Join-Path $root "src\DshShell\Windows\SplashForm.cs") -Raw
 Assert-True ($splashSrc -match 'IsApplyingUpdate') "Splash 支持更新安装阶段标志（取消按钮禁用/安装中…）"
 
-# v0.4.0 更新文案预期管理：明示重启后 1-2 分钟安装耗时（不再误导"下次启动即生效"）
-Assert-True ($shellSrc -match '预计需要 1-2 分钟') "更新弹窗/气泡文案明示安装耗时（1-2 分钟），管理用户预期"
+# v0.4.0 更新文案预期管理：tarball 缺失回退现场下载时，Splash 如实显示"预计 1-2 分钟"耗时
+Assert-True ($shellSrc -match '预计 1-2 分钟') "更新应用 Splash 文案明示现场下载耗时（预计 1-2 分钟），诚实管理预期"
+
+# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装，不 npx 现场拉）静态断言 ----
+Assert-True ($shellSrc -match 'LocateTarball') "壳含本地 tarball 定位（应用优先本地安装包，不现场拉取）"
+Assert-True ($shellSrc -match 'local-tarball') "壳含安装来源标记（local-tarball vs registry，日志可诊断）"
+Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载，下次重启直接安装'（不打断当前使用）"
+Assert-True ($shellSrc -match '直接安装') "下载完成/待应用气泡文案改为'下次重启直接安装，无需再次下载'（不再误导 npx 现场拉）"
+$stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
+Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
+Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
