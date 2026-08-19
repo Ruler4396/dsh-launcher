@@ -65,10 +65,16 @@ public class UiResponsivenessTests
                 Assert.True(whiteRatio < 0.98, $"取消按钮区域 {whiteRatio:P0} 为空白（渲染异常）");
             }
 
-            // 5. 可交互：点击"取消" → 消息泵处理 → 进程退出
-            cancel.Click();
-            await Task.Delay(1000);
-            Assert.True(proc.HasExited, "点击取消后进程未退出（取消消息未被 UI 线程处理）");
+            // 5. 可交互：触发"取消" → 消息泵处理 → 进程退出
+            // 注意：必须用 UIA InvokePattern 而非鼠标 Click()——FlaUI 的 Click() 不把窗口带到
+            // 前台，鼠标点击前台之外的窗口时第一击只激活窗口、不触发按钮事件（本地复现：
+            // "点击取消后进程未退出"根因）。InvokePattern 直接调用控件 Click 处理器，与前台
+            // 焦点无关，CI/本地一致可靠。
+            var invoke = cancel.Patterns.Invoke.Pattern;
+            Assert.NotNull(invoke);
+            invoke.Invoke();
+            await Task.Delay(1500);
+            Assert.True(proc.HasExited, "触发取消后进程未退出（取消消息未被 UI 线程处理）");
         }
         finally
         {
