@@ -1058,9 +1058,14 @@ internal static class Program
     /// <summary>
     /// 读取磁盘上**全局安装的 dsh 版本**（npm root -g 下 package.json 的 version）。
     /// 不碰网络；npm 不可用/未装 dsh 时返回 null（决策回退 PromptRestart/ApplyNow）。
+    /// 会话级缓存：npm root -g 冷启动可达 1-2s，本次会话只查一次（启动流水线多处决策复用）。
     /// </summary>
+    private static string? _cachedGlobalDshVersion = "unset";
+
     private static string? ReadGlobalDshVersion()
     {
+        if (_cachedGlobalDshVersion != "unset") return _cachedGlobalDshVersion;
+        string? version = null;
         try
         {
             var psi = new ProcessStartInfo("cmd.exe", "/c npm root -g")
@@ -1071,19 +1076,27 @@ internal static class Program
                 RedirectStandardError = true,
             };
             using var p = Process.Start(psi);
-            if (p is null) return null;
-            var root = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit(5000);
-            if (root.Length == 0) return null;
-            var pkg = Path.Combine(root, "@deepseek-ai", "dsh", "package.json");
-            if (!File.Exists(pkg)) return null;
-            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkg));
-            return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
+            if (p is not null)
+            {
+                var root = p.StandardOutput.ReadToEnd().Trim();
+                p.WaitForExit(3000); // npm 冷启动限制 3s，超时按"未知"处理不拖慢启动
+                if (root.Length > 0)
+                {
+                    var pkg = Path.Combine(root, "@deepseek-ai", "dsh", "package.json");
+                    if (File.Exists(pkg))
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkg));
+                        if (doc.RootElement.TryGetProperty("version", out var v)) version = v.GetString();
+                    }
+                }
+            }
         }
         catch
         {
-            return null; // 读不到按"未知"处理（决策回退 PromptRestart/ApplyNow，不阻塞启动）
+            // 读不到按"未知"处理（决策回退 PromptRestart/ApplyNow，不阻塞启动）
         }
+        _cachedGlobalDshVersion = version; // 缓存：本次会话只查一次（含 null，避免重复慢查询）
+        return version;
     }
 
     /// <summary>拉起 dsh 服务（wscript start-dsh.vbs）。返回 false = 拉起失败（E2001）。</summary>
@@ -2088,7 +2101,9 @@ internal static class Program
                 Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid + " /T")
                 { UseShellExecute = false, CreateNoWindow = true });
             }
-            var deadline = DateTime.UtcNow.AddMilliseconds(1500);
+            // v0.4.0：等待从 1.5s 缩短至 800ms——taskkill /T 已发出即任务完成，OS 回收进程
+            // 需要的时间短于此；缩短同步等待消除"关窗卡两秒"（用户反馈，曾修过同类问题）。
+            var deadline = DateTime.UtcNow.AddMilliseconds(800);
             while (DateTime.UtcNow < deadline && IsProcessAlive(pid))
                 Thread.Sleep(100);
             if (IsProcessAlive(pid))
@@ -2096,7 +2111,7 @@ internal static class Program
                 Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid + " /T")
                 { UseShellExecute = false, CreateNoWindow = true });
                 // 质量治理 P2-10：强杀后确认；仍活则不删 pid 文件，留待下次启动认领
-                var hardDeadline = DateTime.UtcNow.AddMilliseconds(500);
+                var hardDeadline = DateTime.UtcNow.AddMilliseconds(300);
                 while (DateTime.UtcNow < hardDeadline && IsProcessAlive(pid))
                     Thread.Sleep(100);
                 if (IsProcessAlive(pid))
@@ -2132,11 +2147,12 @@ internal static class Program
             // KillProcess 内部：PID 校验 → 温和（CTRL_BREAK/taskkill）→ 同步等待 → /f /T 兜底
             if (KillProcess(pid))
             {
-                // v0.4.0 T1：端口释放探测（≤2s）——进程已死但端口未释放（子进程/TIME_WAIT）
-                // 时同步等待，确保关窗后 node 不残留、不占端口（issue：重开秒进复用旧服务）。
-                var deadline = DateTime.UtcNow.AddSeconds(2);
+                // v0.4.0 T1：端口释放探测——进程已死但端口未释放（子进程/TIME_WAIT）时同步
+                // 等待，确保关窗后 node 不残留、不占端口。等待上限 1s（原 2s）：TIME_WAIT 由
+                // SO_REUSEADDR 自动收敛，超过即记日志不阻塞关窗（消除"关窗卡两秒"）。
+                var deadline = DateTime.UtcNow.AddSeconds(1);
                 while (DateTime.UtcNow < deadline && FindPidListeningOn(Target.Port) > 0)
-                    Thread.Sleep(100);
+                    Thread.Sleep(80);
                 if (FindPidListeningOn(Target.Port) > 0)
                     Logger.Warn($"service pid={pid} killed but port {Target.Port} still occupied",
                         ErrorCodes.E2005, new { pid, port = Target.Port });

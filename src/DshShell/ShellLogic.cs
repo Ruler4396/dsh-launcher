@@ -344,14 +344,23 @@ public static class ShellLogic
         }
     }
 
-    /// <summary>端口可连（TCP）契约（C3 前半段）：connect 成功即 true；失败/超时 false。</summary>
+    /// <summary>端口可连（TCP）契约（C3 前半段）：connect 成功即 true；失败/超时 false。
+    /// v0.4.0 性能修复：**connect 加 300ms 硬超时**。实测部分 Windows 环境（杀软/系统 TCP 栈）
+    /// 对回环 connect 存在稳定 ~2s 延迟（无论端口是否监听、是否显式 IPv4 Loopback），而启动
+    /// 流水线多处同步调用 PortOpen（NeedsStart/阶段0/Sweep/就绪探测）叠加会拖慢启动数秒。
+    /// 本机回环正常连接（ACK）毫秒级、未监听端口超时即视为不可用——300ms 足够判定"服务
+    /// 就绪与否"，超时按 false（端口未开）处理不误伤。</summary>
     internal static bool PortOpen(string host, int port)
     {
         try
         {
             using var c = new System.Net.Sockets.TcpClient();
-            c.Connect(host, port);
-            return true;
+            var isLoopback = host is null or "127.0.0.1" or "localhost" or "::1";
+            var task = isLoopback
+                ? c.ConnectAsync(System.Net.IPAddress.Loopback, port)
+                : c.ConnectAsync(host, port);
+            // 300ms 硬超时：本机回环 connect 毫秒级，超时视为不可用（避免系统级 2s 延迟拖慢启动）
+            return task.Wait(300) && c.Connected;
         }
         catch
         {
@@ -366,9 +375,15 @@ public static class ShellLogic
         try
         {
             using var c = new System.Net.Sockets.TcpClient();
+            // 300ms 硬超时（与同步 PortOpen 一致，v0.4.0 性能修复）：本机回环 connect 毫秒级，
+            // 超时视为不可用，避免系统级 ~2s 回环延迟拖慢轮询/启动。
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
-            await c.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(300));
+            var isLoopback = host is null or "127.0.0.1" or "localhost" or "::1";
+            if (isLoopback)
+                await c.ConnectAsync(System.Net.IPAddress.Loopback, port, timeoutCts.Token).ConfigureAwait(false);
+            else
+                await c.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
             return true;
         }
         catch

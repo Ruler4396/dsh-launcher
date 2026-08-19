@@ -51,13 +51,24 @@ If sh.Run("cmd /c where dsh >nul 2>&1", 0, True) = 0 Then
     cmdline = "dsh web --host 127.0.0.1 --port " & port
     note = "using global dsh"
 Else
-    ' dsh 本体经 npx 从 npm registry 下载，国内/弱网访问默认 npmjs 慢易超时。
-    ' 镜像回退：DSH_NPM_MIRROR 显式指定则用（封装 npm 私有 registry 场景）；
-    ' 未指定时默认 npmmirror（公共 npm 镜像，国内可直连、全球亦快，@deepseek-ai/dsh 为公共包）。
-    npmRegistry = env("DSH_NPM_MIRROR")
-    If npmRegistry = "" Then npmRegistry = "https://registry.npmmirror.com"
-    cmdline = "npx -y --registry=" & npmRegistry & " @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
-    note = "dsh not on PATH - npx via " & npmRegistry
+    ' where dsh 失败未必是"没装"——%APPDATA%\npm 可能不在当前 PATH（新装的 npm 全局包，
+    ' 或启动器由旧环境变量启动），但 dsh.cmd 实际存在。先探测 npm 全局 shim 用全路径调用，
+    ' 避免直接落 npx 网络下载导致"卡在等待服务就绪"（2026-08 用户复现：dsh not on PATH -
+    ' npx via npmmirror，npx 解析/下载包极慢甚至挂起）。
+    q2 = Chr(34)
+    npmShim = sh.ExpandEnvironmentStrings("%APPDATA%") & "\npm\dsh.cmd"
+    If fso.FileExists(npmShim) Then
+        cmdline = q2 & npmShim & q2 & " web --host 127.0.0.1 --port " & port
+        note = "using npm shim " & npmShim
+    Else
+        ' 真没装：dsh 本体经 npx 从 npm registry 下载，国内/弱网访问默认 npmjs 慢易超时。
+        ' 镜像回退：DSH_NPM_MIRROR 显式指定则用（封装 npm 私有 registry 场景）；
+        ' 未指定时默认 npmmirror（公共 npm 镜像，国内可直连、全球亦快，@deepseek-ai/dsh 为公共包）。
+        npmRegistry = env("DSH_NPM_MIRROR")
+        If npmRegistry = "" Then npmRegistry = "https://registry.npmmirror.com"
+        cmdline = "npx -y --registry=" & npmRegistry & " @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
+        note = "dsh not installed - npx via " & npmRegistry
+    End If
 End If
 ' 日志重定向目标必须加引号：USERPROFILE 含空格（如 C:\Users\John Smith）时，
 ' 不带引号会把路径截断成命令参数/碎片文件名（实测复现）；含 & 等 cmd 元字符时可注入命令。
