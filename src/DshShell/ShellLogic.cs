@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
@@ -326,6 +327,23 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 判定 npm 失败是否为可重试的网络类错误（任务三：更新安装失败 pending 保留/清理依据）。
+    /// 网络/超时类（ETIMEDOUT/ECONNRESET/ECONNREFUSED/ENOTFOUND/EAI_AGAIN/timed out/registry）
+    /// → 保留 pending 下次启动重试；其余（权限/包损坏）→ 非重试，调用方应清 pending 防死循环。
+    /// 纯函数可单测（UpdateFlowContractTests 锁定契约）。</summary>
+    internal static bool IsRetryableNpmError(string tail)
+    {
+        if (string.IsNullOrWhiteSpace(tail)) return false;
+        return tail.Contains("ETIMEDOUT", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("ECONNRESET", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("ECONNREFUSED", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("registry", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("ENOTFOUND", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("EAI_AGAIN", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// 服务就绪契约（C3，P1-6）：端口有 HTTP 应答即视为就绪。**任何** HTTP 响应（含 4xx/5xx）
     /// 都算"有服务在应答"——dsh 前端监听后可能还需数十秒才提供 HTTP，只探 TCP 会提前"成功"
     /// 导致主窗白屏（历史"要二次点击"根因）；网络异常/超时/拒绝连接 → 未就绪。
@@ -503,6 +521,206 @@ public static class ShellLogic
             return string.Equals(p.ProcessName, "node", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
+    }
+
+    // ---------------- 端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP） ----------------
+
+    /// <summary>端口占用状态（三重验证结果）：决定是否拉起/清理/快速失败。</summary>
+    public enum ServicePortState
+    {
+        /// <summary>端口未开：服务未运行，需要拉起。</summary>
+        Closed,
+        /// <summary>端口已开且 HTTP 就绪：服务健康运行，跳过拉起。</summary>
+        Healthy,
+        /// <summary>端口已开但 HTTP 不通、占用进程确为 dsh（node）：僵尸服务，需清理后重启。</summary>
+        Zombie,
+        /// <summary>端口已开但占用进程不是 dsh（被其他程序占用）：端口冲突，快速失败（E2004）。</summary>
+        Foreign,
+    }
+
+    // ---- P/Invoke：GetExtendedTcpTable（iphlpapi.dll）精确反查端口→监听 PID ----
+    private const int AfInet = 2;                                    // AF_INET（IPv4）
+    private const uint TcpTableOwnerPidListener = 4;                 // TCP_TABLE_OWNER_PID_LISTENER
+    private const uint ErrorNoData = 232;                            // ERROR_NO_DATA（无监听表）
+    private const uint ErrorInsufficientBuffer = 122;                // ERROR_INSUFFICIENT_BUFFER
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MibTcpRowOwnerPid
+    {
+        public uint State;
+        public uint LocalAddr;
+        public uint LocalPort; // 网络字节序（大端）
+        public uint RemoteAddr;
+        public uint RemotePort;
+        public uint OwningPid;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MibTcpTableOwnerPid
+    {
+        public uint DwNumEntries;
+        public MibTcpRowOwnerPid Table; // 数组头（首个元素，后续按 SizeOf 步进）
+    }
+
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint GetExtendedTcpTable(
+        IntPtr pTcpTable, ref int pdwSize, bool bOrder, int ulAf, uint tableClass, uint reserved);
+
+    /// <summary>
+    /// 按端口反查监听进程 PID（任务一：精确端口归属，替代仅靠 netstat 字符串解析）。
+    /// 优先 P/Invoke GetExtendedTcpTable（亚毫秒、无外部进程），失败/无结果回退 netstat -ano
+    /// 解析（兼容异常环境）。找不到返回 0。</summary>
+    internal static int GetProcessIdByPort(int port)
+    {
+        var pid = PidByPortViaTcpTable(port);
+        return pid > 0 ? pid : PidByPortViaNetstat(port);
+    }
+
+    private static int PidByPortViaTcpTable(int port)
+    {
+        try
+        {
+            var size = 0;
+            var rc = GetExtendedTcpTable(IntPtr.Zero, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
+            if (rc == ErrorNoData) return 0; // 无监听表：端口未开
+            if (rc != ErrorInsufficientBuffer || size <= 0) return 0;
+            var buf = Marshal.AllocHGlobal(size);
+            try
+            {
+                rc = GetExtendedTcpTable(buf, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
+                if (rc != 0) return 0; // NO_ERROR
+                var count = Marshal.ReadInt32(buf);
+                var rowSize = Marshal.SizeOf<MibTcpRowOwnerPid>();
+                var rowBase = IntPtr.Add(buf,
+                    Marshal.OffsetOf<MibTcpTableOwnerPid>(nameof(MibTcpTableOwnerPid.Table)).ToInt32());
+                var portBe = (uint)(((port & 0xFF) << 8) | ((port >> 8) & 0xFF)); // 端口转网络字节序
+                for (var i = 0; i < count; i++)
+                {
+                    var row = Marshal.PtrToStructure<MibTcpRowOwnerPid>(IntPtr.Add(rowBase, i * rowSize));
+                    if (row.LocalPort == portBe && row.OwningPid != 0) return (int)row.OwningPid;
+                }
+            }
+            finally { Marshal.FreeHGlobal(buf); }
+        }
+        catch { /* 回退 netstat */ }
+        return 0;
+    }
+
+    /// <summary>netstat -ano 解析（GetExtendedTcpTable 的兼容回退；Program 旧路径同款逻辑）。</summary>
+    private static int PidByPortViaNetstat(int port)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("netstat", "-ano -p tcp")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return 0;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            var token = ":" + port + " ";
+            foreach (var line in output.Split('\n'))
+            {
+                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!line.Contains(token)) continue;
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0 && int.TryParse(parts[^1], out var pid)) return pid;
+            }
+        }
+        catch { }
+        return 0;
+    }
+
+    // ---- 僵尸进程树清理（任务一：taskkill /T /F 强杀整树，含 cmd/npx 外壳） ----
+
+    /// <summary>强杀进程树（taskkill /PID &lt;pid&gt; /T /F）：连同挂死的 cmd / npx 外壳一并结束。
+    /// 返回是否已发起（taskkill 执行成功）；端口释放由调用方轮询确认。</summary>
+    internal static bool KillProcessTree(int pid)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("taskkill", $"/PID {pid} /T /F")
+            { UseShellExecute = false, CreateNoWindow = true };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return false;
+            p.WaitForExit(3000);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    // ---- 进程祖先链（向上清理 cmd/npx 外壳：taskkill /T 只向下，不会结束父外壳） ----
+    private const uint Th32csSnapprocess = 0x2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessEntry32
+    {
+        public uint DwSize;
+        public uint CntUsage;
+        public uint Th32ProcessID;
+        public IntPtr Th32DefaultHeapID;
+        public uint Th32ModuleID;
+        public uint CntThreads;
+        public uint Th32ParentProcessID;
+        public int PcPriClassBase;
+        public uint DwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string SzExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool Process32First(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool Process32Next(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    /// <summary>构建进程 PID→父 PID 快照（CreateToolhelp32Snapshot 单次枚举，无外部依赖）。</summary>
+    private static Dictionary<int, int> SnapshotParentPids()
+    {
+        var map = new Dictionary<int, int>();
+        var snap = CreateToolhelp32Snapshot(Th32csSnapprocess, 0);
+        if (snap == IntPtr.Zero) return map;
+        try
+        {
+            var entry = new ProcessEntry32 { DwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
+            if (Process32First(snap, ref entry))
+            {
+                do
+                {
+                    map[unchecked((int)entry.Th32ProcessID)] = unchecked((int)entry.Th32ParentProcessID);
+                }
+                while (Process32Next(snap, ref entry));
+            }
+        }
+        finally { CloseHandle(snap); }
+        return map;
+    }
+
+    /// <summary>收集指定 PID 的祖先进程链（向上 8 层）：用于清理"cmd/npx 外壳"这类监听端口进程的
+    /// 父进程（taskkill /T 只向下杀子进程，不会结束父外壳）。失败/无祖先返回空列表。</summary>
+    internal static List<int> GetAncestorPids(int pid)
+    {
+        var result = new List<int>();
+        try
+        {
+            var parents = SnapshotParentPids();
+            var seen = new HashSet<int> { pid };
+            var current = pid;
+            for (var i = 0; i < 8; i++)
+            {
+                if (!parents.TryGetValue(current, out var parent) || parent <= 0 || parent == current) break;
+                if (!seen.Add(parent)) break;
+                result.Add(parent);
+                current = parent;
+            }
+        }
+        catch { }
+        return result;
     }
 
     /// <summary>读取 Evergreen WebView2 Runtime 版本（注册表 pv 值）；未安装/读取失败返回 null。

@@ -44,6 +44,10 @@
   - `ApplyPendingDshUpdate` 上移到阶段 0 后台维护（不再伪装成"正在启动 dsh 服务…"），阶段 0 新增"正在准备启动环境…"文案；
   - 更新确认 `MessageBox` 带 owner + 调用前 `Activate()`，避免弹窗被遮挡不置前。
 - **最大化 0px 间隙（e2e-geo 8px 缝隙回归）**：去除去 WS_CAPTION 窗口的无效 DWM frame 补偿——该类窗口最大化不外扩，补偿反而把窗口缩一圈（`DshShellForm` 改回无补偿重载 + `WindowGeometry` 文档修正）。
+- **僵尸端口三重验证（"卡在等待服务就绪"根因修复）**：仅凭 TCP `PortOpen` 决定"跳过拉起"会误判僵尸服务（端口开但 HTTP 死）为健康，导致对半死服务傻等 180s 超时 E2002。新增 `ShellLogic.GetProcessIdByPort`（P/Invoke `GetExtendedTcpTable` + netstat 回退）+ `IsLikelyDshService` 进程身份校验 + 快速 HTTP 探测三重验证：`Healthy`（跳过拉起）/`Zombie`（`taskkill /T /F` 强杀 node + cmd/npx 祖先外壳后重启）/`Foreign`（非 dsh 进程占用，快速失败 E2004 提示端口冲突）。
+- **Logger 防锁死 + fallback（诊断盲区修复）**：`File.AppendAllText`（内部 `FileShare.Read`）被残留 `cmd >> dsh.log` 重定向句柄阻塞时静默失败，导致启动诊断日志全丢。改为显式 `FileStream` + `FileShare.ReadWrite`；仍被独占锁死时写入 `%TEMP%\dsh-launcher-fallback-{pid}.log` 并向 `Console.Error` 输出 `[FATAL LOGGER]` 告警，Splash 黄色提示"日志文件被占用"；`WaitServiceReady` 错误标志检查回退读 fallback。
+- **更新安装 UI 联动**：`ApplyPendingDshUpdate` 执行 npm install 期间 Splash 实时显示"正在应用更新 (vX)…"+ npm 逐行安装日志（`BeginOutputReadLine` 滚动转发，"added 50 packages"），并禁用取消按钮（防 npm install 中途强杀损坏 node_modules）；更新失败（非网络类）弹模态"自动应用更新失败，将继续使用旧版本启动，原因：…"，网络/超时类保留 pending 下次重试、权限/包损坏类清 pending 防死循环。
+- **更新文案预期管理**：下载完成弹窗/托盘气泡/询问弹窗统一改为"下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）"，消除"重启即生效"的误导。
 
 ### 测试
 
@@ -54,7 +58,8 @@
 - 纯逻辑测试补齐：`SuggestDownloadName`（RFC5987）、`ShellLogic.AtomicWrite`、`F11HookDecisionTests`、`WindowStateStore` 最大化状态。
 - **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
-- 单测 **341 个全部通过**。
+- **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
+- 单测 **379 个全部通过**。
 
 ## [Unreleased]
 

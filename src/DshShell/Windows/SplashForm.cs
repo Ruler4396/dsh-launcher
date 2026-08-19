@@ -19,8 +19,10 @@ namespace DshWeb.Windows;
 /// </summary>
 public sealed class SplashForm : Form
 {
-    /// <summary>流水线进度消息（Stage 供诊断；Text 直接显示在状态标签上）。</summary>
-    public sealed record Message(string Stage, string Text, bool IsError = false);
+    /// <summary>流水线进度消息（Stage 供诊断；Text 直接显示在状态标签上）。
+    /// IsError=红色错误；IsWarn=黄色警告（任务二：日志被锁 fallback 提示）。
+    /// IsApplyingUpdate=处于更新安装阶段（任务一：禁用取消按钮，防用户在 npm install 中途强杀）。</summary>
+    public sealed record Message(string Stage, string Text, bool IsError = false, bool IsWarn = false, bool IsApplyingUpdate = false);
 
     /// <summary>启动流水线结果：Main 在 Application.Run 返回后据此接力（建主窗/失败提示/退出）。</summary>
     public sealed record Outcome(
@@ -45,6 +47,8 @@ public sealed class SplashForm : Form
     private readonly Button _confirmYes = new();
     private readonly Button _confirmNo = new();
     private TaskCompletionSource<bool>? _confirmTcs;
+    /// <summary>当前是否处于更新安装阶段（任务一：禁用取消按钮，防 npm install 中途强杀致环境损坏）。</summary>
+    private bool _applyingUpdate;
 
     /// <summary>流水线结果（Application.Run 返回时非 null：OnShown 即启动，同步抛给消息泵）。</summary>
     public Outcome? Result { get; private set; }
@@ -169,7 +173,26 @@ public sealed class SplashForm : Form
         {
             if (IsDisposed) return;
             _statusLabel.Text = m.Text;
-            _statusLabel.ForeColor = m.IsError ? Color.Firebrick : SystemColors.WindowText;
+            // 任务二：IsWarn → 黄色（日志 fallback 告警）；IsError → 红色；默认系统文字色
+            _statusLabel.ForeColor = m.IsError
+                ? Color.Firebrick
+                : m.IsWarn ? Color.Goldenrod : SystemColors.WindowText;
+            // 任务一：更新安装阶段禁用取消按钮（防 npm install 中途强杀致 node_modules 损坏）；
+            // 收到任意非 apply 消息时恢复可取消（更新结束/进入下一阶段）。
+            if (m.IsApplyingUpdate != _applyingUpdate)
+            {
+                _applyingUpdate = m.IsApplyingUpdate;
+                if (m.IsApplyingUpdate)
+                {
+                    _cancelButton.Enabled = false;
+                    _cancelButton.Text = "安装中…";
+                }
+                else
+                {
+                    _cancelButton.Enabled = true;
+                    _cancelButton.Text = "取消";
+                }
+            }
         });
         try
         {
