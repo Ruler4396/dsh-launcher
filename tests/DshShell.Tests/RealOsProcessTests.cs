@@ -46,13 +46,14 @@ public class RealOsProcessTests
         try
         {
             // 真实 .cmd：输出中文。注意：必须用**无 BOM** 的 UTF-8 写入——cmd.exe 遇到 UTF-8 BOM
-            // 会把首行 `@echo off` 解析失败（报"'@echo' 不是内部或外部命令"），产生 GBK 乱码，
-            // 那不是执行引擎的错，而是 .cmd 脚本自身的 BOM 陷阱。引擎应正确 UTF-8 解码中文输出。
+            // 会把首行 `@echo off` 解析失败（报"'@echo' 不是内部或外部命令"）。
+            // 代码页注意：CI（Windows Server 英文代码页）执行含中文的 .cmd 时，cmd 按 ANSI
+            // 代码页解析字节，中文输出可能非标准 UTF-8——因此**中文正确性断言交给 node 脚本**
+            //（node 内部统一 UTF-8，跨代码页稳定），本 .cmd 只验证"进程不秒退 + 引擎正常捕获"。
             var script = Path.Combine(dir, "echo-chinese.cmd");
             File.WriteAllText(script,
                 "@echo off\r\n" +
-                "echo 文件名、目录名或卷标语法不正确\r\n" +
-                "echo 下载失败\r\n" +
+                "echo cmd-script-ok\r\n" +
                 "exit /b 0\r\n",
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)); // 无 BOM
 
@@ -63,10 +64,42 @@ public class RealOsProcessTests
 
             // ① 进程不秒退：ExitCode 正常返回（RunProcessCaptured 内部 WaitForExit 成功）
             Assert.True(ok, "cmd.exe 执行 .cmd 应正常退出（非 Process.Start 秒抛异常）。outputTail=" + outputTail);
-            // ② 捕获到中文输出（引擎确实读到了 stdout）
+            // ② 捕获到脚本输出（引擎确实读到了 stdout，非秒退空捕获）
+            Assert.Contains("cmd-script-ok", outputTail);
+            // ③ 中文无乱码断言由 Regression_NpmCmd_ChineseOutput_ViaNode 覆盖（node 跨代码页稳定）
+        }
+        finally
+        {
+            TryDelete(dir);
+        }
+    }
+
+    [Fact]
+    public void Regression_NpmCmd_ChineseOutput_ViaNode()
+    {
+        // 中文输出 + 无乱码的跨代码页稳定验证：node.exe 内部统一 UTF-8，输出中文经引擎 UTF-8
+        // 捕获必须无乱码（U+FFFD 替换字符 = 解码失败铁证）。CI/本地代码页差异不影响 node。
+        var env = RuntimeResolver.ResolveExisting();
+        if (env?.NodeExe is null || !File.Exists(env.NodeExe))
+        {
+            Assert.True(ForceSmoke, "本地强制模式：未检测到 node.exe，中文输出测试需真实 Node");
+            return;
+        }
+        var dir = MakeTempDir();
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var script = Path.Combine(dir, "chinese.js");
+            File.WriteAllText(script,
+                "console.log('文件名、目录名或卷标语法不正确');\n" +
+                "console.log('下载失败');\n",
+                Encoding.UTF8);
+
+            var ok = Program.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out var outputTail,
+                timeoutMs: 30000);
+            Assert.True(ok, "node 执行中文输出脚本应成功。outputTail=" + outputTail);
             Assert.Contains("文件名", outputTail);
             Assert.Contains("下载失败", outputTail);
-            // ③ 绝无乱码（U+FFFD 替换字符等非法 UTF-8 残渣）
             Assert.False(ContainsGarbage(outputTail),
                 "UTF-8 解码不应产生乱码。outputTail=" + outputTail);
         }
