@@ -98,7 +98,8 @@ Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-w
 Assert-True ($shellSrc -match 'class DshShellForm : Form') "【基线】Program.cs 当前仍含 DshShellForm:Form（重构前锁定；收尾反转）"
 Assert-True ($shellSrc -match 'protected override void WndProc') "【基线】Program.cs 当前仍含 WndProc（重构前锁定；收尾反转）"
 Assert-True ($shellSrc -match 'protected override CreateParams') "【基线】Program.cs 当前仍含 CreateParams（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'PermissionRequested') "【基线】Program.cs 当前仍含 WebView2 事件接线（重构前锁定；收尾反转）"
+# Step 4 完成：WebView2 事件接线已迁入 WebViewManager → 此断言提前反转（完成态）。
+Assert-True ($shellSrc -notmatch 'web\.CoreWebView2\.(PermissionRequested|NewWindowRequested|DownloadStarting|NavigationStarting|ProcessFailed)') "【Step4完成】Program.cs 不含 WebView2 事件接线（已迁入 WebViewManager）"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
 $caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
 Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"
