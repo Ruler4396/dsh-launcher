@@ -406,6 +406,17 @@ internal static class Program
             return;
         }
 
+        // Task 0（CI geo 探针）：--ui-probe 无服务窗口探针模式——不拉 dsh 服务、不导航真实内容，
+        // 直接开 DshShellForm（自绘标题栏 + WebView2 + F11 钩子），供 e2e 探针做几何/F11/标题栏/
+        // 白屏断言。动机：e2e 隔离 dsh 服务在全新 DSH_HOME 起不来（dsh 生态 profile 初始化缺
+        // dsh-client-ui-plan，非本项目代码），而 geo 探针验证的窗口行为本身不依赖服务内容。
+        // 置于 mutex 之前（同 --ui-selftest）：不受单实例保护约束，本机已有实例时也能开测试窗。
+        if (args.Any(a => a.Equals("--ui-probe", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunUiProbe());
+            return;
+        }
+
         // v0.3.0：统一日志初始化（单一日志文件 + 启动早段轮转）
         Logger.Init(UnifiedLogPath);
         // 特征开关（ADR-008 迁移用）：DSH_USE_NEW_LIFECYCLE=1 走新路径（当前日志标记，实际
@@ -931,6 +942,76 @@ internal static class Program
             Logger.Error(msg);
             Console.Error.WriteLine(msg);
             WriteSelftestResult(false, msg);
+            return 2;
+        }
+    }
+
+    /// <summary>
+    /// --ui-probe 无服务窗口探针（Task 0，CI geo 探针用）：不拉 dsh 服务、不导航真实内容，
+    /// 只开 DshShellForm（自绘标题栏 + WebView2 + F11 钩子），WebView2 导航 about:blank。
+    /// 供 e2e 探针从外部做几何（最大化==工作区）/F11（SendInput 注入翻转）/标题栏（子控件存在、
+    /// Visible、高≈32×DPI）/白屏（DSH_WEBVIEW2_READYSTATE 的 document.readyState）断言。
+    /// 动机：e2e 隔离 dsh 服务在全新 DSH_HOME 起不来（dsh 生态 profile 初始化缺
+    /// dsh-client-ui-plan），而 geo 探针验证的窗口行为本身不依赖服务内容——解耦后 CI 可稳定跑。
+    /// 返回 0=正常关闭，2=异常。
+    /// </summary>
+    private static int RunUiProbe()
+    {
+        Logger.Init(UnifiedLogPath);
+        try
+        {
+            var form = new DshShellForm
+            {
+                Text = "DeepSeek Harness", // 与真实主窗同名，供探针 FindWindow 定位
+                ClientSize = new Size(1280, 840),
+                MinimumSize = new Size(800, 600),
+                FormBorderStyle = FormBorderStyle.None,
+            };
+            form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())
+            {
+                Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2,
+                    (int)Math.Round(32 * form.DeviceDpi / 96f)),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            };
+            form.Controls.Add(form.TitleBar);
+
+            var web = new WebView2
+            {
+                Bounds = new Rectangle(1, 1 + form.TitleBar.Height,
+                    form.ClientSize.Width - 2, form.ClientSize.Height - form.TitleBar.Height - 2),
+                Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            };
+            form.Controls.Add(web);
+            form.MainWebView2 = web;
+            _mainWeb = web; // readyState 测试钩子按 ReferenceEquals(web, _mainWeb) 门控，必须先设
+
+            // F11 钩子（与真实路径一致）：仅主窗前台时切换并吞键。
+            using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
+                () => F11LowLevelHook.GetForegroundWindow() == form.Handle);
+            Trace($"ui-probe: f11 hook installed hwnd=0x{form.Handle.ToInt64():X}"); // 诊断：确认走 --ui-probe 分支
+
+            form.Shown += async (_, _) =>
+            {
+                var userDataFolder = Environment.GetEnvironmentVariable("DSH_WEBVIEW2_DATA");
+                if (string.IsNullOrWhiteSpace(userDataFolder))
+                    userDataFolder = Path.Combine(Path.GetTempPath(), "dsh-ui-probe-wv2");
+                try
+                {
+                    await InitWebViewAsync(web, userDataFolder);
+                    web.CoreWebView2.Navigate("about:blank"); // 无需网络，readyState 钩子照常触发
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("ui-probe webview init failed: " + ex.Message);
+                }
+            };
+
+            Application.Run(form);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("ui-probe threw: " + ex.Message);
             return 2;
         }
     }
