@@ -81,7 +81,19 @@ public class UiResponsivenessTests
             // 焦点无关，CI/本地一致可靠。
             var invoke = cancel.Patterns.Invoke.Pattern;
             Assert.NotNull(invoke);
-            invoke.Invoke();
+            // CI runner（Windows Server 2025）上 UIA Invoke 偶发 0x8000FFFF：窗口刚渲染完成时
+            // UIA 元素与控件树同步存在极短竞态窗口，Invoke 直接命中抛 Catastrophic failure。
+            // 防御：短重试（≤5 次，每次 100ms），仍失败才判定为真失败（不掩盖真实问题）。
+            var invokeDeadline = DateTime.UtcNow.AddSeconds(2);
+            while (true)
+            {
+                try { invoke.Invoke(); break; }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                    if (DateTime.UtcNow >= invokeDeadline) throw;
+                    await Task.Delay(100);
+                }
+            }
             // 轮询等待进程退出（最长 10s）：取消 → cts.Cancel → 流水线收到 OCE → Close →
             // Application.Run 返回 → Main 退出。CI 冷启动下退出收尾可能 >1.5s（此前固定等待
             // 偶发误报"进程未退出"）；同时阶段 0 的 npm 安装取消路径（Kill 进程树）也在此验证。
