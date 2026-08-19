@@ -59,11 +59,15 @@ foreach ($script in "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd",
     Copy-Item (Join-Path $root "scripts\$script") $distDir
 }
 
-# 3. zip
+# 3. zip —— 顶层带版本文件夹（解压得到 dsh-launcher-windows-<version>/，不把文件打散到
+# 使用者当前目录，避免一堆文件污染解压位置；v0.4.0 用户反馈）。
+$zipRoot = Join-Path $root "dist\dsh-launcher-windows-$Version"
+if (Test-Path $zipRoot) { Remove-Item $zipRoot -Recurse -Force }
+Rename-Item $distDir (Split-Path $zipRoot -Leaf)
 $zipPath = Join-Path $root "dist\dsh-launcher-windows-$Version.zip"
 Write-Host ">> packaging zip: $zipPath"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $distDir "*") -DestinationPath $zipPath -Force
+Compress-Archive -Path $zipRoot -DestinationPath $zipPath -Force
 
 # 4. checksum
 $sumsPath = Join-Path $root "dist\dsh-launcher-windows-$Version.sha256"
@@ -71,6 +75,6 @@ Get-FileHash $zipPath -Algorithm SHA256 | ForEach-Object {
     "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
 } | Set-Content $sumsPath -Encoding ascii
 
-Remove-Item $distDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $zipRoot -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ">> done: $zipPath"
 Write-Host ">> checksum: $sumsPath"
