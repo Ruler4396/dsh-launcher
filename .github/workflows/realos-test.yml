@@ -13,7 +13,8 @@ name: realos-test
 
 on:
   push:
-    branches: [master]
+    # 开发分支（master/v0.x 等）与正式 tag 都触发 Real-OS 深度验证
+    branches: ["master", "v[0-9]*.*[0-9]*"]
     tags: ["v[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
 
