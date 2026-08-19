@@ -150,6 +150,15 @@ Assert-True ($shellSrc -match '--no-audit --no-fund') "安装/预热统一 --no-
 Assert-True ($shellSrc -match 'GetNpmRegistryArgs') "预热与安装共用镜像 registry（防不同 registry 导致 cache miss）"
 Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn 降级（不中断更新流程，重启回退在线安装）"
 Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
+# ---- v0.4.0 npm 执行机制修复（cmd shim + 绝对路径解析 + 错误暴露）静态断言 ----
+Assert-True ($shellSrc -match 'ResolveNpmCmdPath') "壳含 npm.cmd 绝对路径解析（Node 根目录优先，GUI PATH 缺 Node 时的隔离方案）"
+Assert-True ($shellSrc -match 'new ProcessStartInfo\("cmd\.exe"') "RunNpmCommand 经 cmd.exe /c 执行（CreateProcess 不解析 batch shim 的修复基线）"
+Assert-True ($shellSrc -match '不是内部或外部命令') "npm 环境缺失输出被识别（errorTail 转明确'请装 Node'提示）"
+Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露真实 errorTail（不再硬编码'下载失败'藏原因）"
+Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
+$logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
+Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
+Assert-True ($logicSrc -match 'ResolveNpmCmdPath') "ShellLogic 提供 npm.cmd 解析纯函数（Node 根→where 回退，可单测）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"

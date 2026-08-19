@@ -211,6 +211,52 @@ public class UpdateFlowContractTests
         Assert.Null(v); // pending 清账
     }
 
+    // ---------------- 任务一/四：npm 执行机制（cmd shim + 绝对路径解析 + 错误报告）契约 ----------------
+
+    [Fact]
+    public void ResolveNpmCmdPath_PrefersNodeRoot_ThenWhereFallback()
+    {
+        // NpmCmd_Execution_Works 语义：优先用已解析的 Node 根目录拼 npm.cmd 绝对路径
+        //（GUI PATH 缺 Node 时的隔离方案）；根目录无 npm.cmd 时回退 where 定位结果。
+        using var tmp = new TempDir();
+        var nodeRoot = Path.Combine(tmp.Path, "node");
+        Directory.CreateDirectory(nodeRoot);
+
+        // ① Node 根目录有 npm.cmd → 优先返回它（带引号）
+        var npmRoot = Path.Combine(nodeRoot, "npm.cmd");
+        File.WriteAllText(npmRoot, "npm shim");
+        Assert.Equal("\"" + npmRoot + "\"", ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
+
+        // ② Node 根目录无 npm.cmd → 回退 where 结果
+        File.Delete(npmRoot);
+        var wherePath = Path.Combine(tmp.Path, "where-npm.cmd");
+        File.WriteAllText(wherePath, "npm shim");
+        Assert.Equal("\"" + wherePath + "\"", ShellLogic.ResolveNpmCmdPath(nodeRoot, wherePath));
+
+        // ③ 两者都不可用（不存在）→ null（调用方回退 cmd /c npm 并靠 PATH）
+        Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
+        Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, Path.Combine(tmp.Path, "ghost.cmd")));
+        Assert.Null(ShellLogic.ResolveNpmCmdPath(null, null));
+    }
+
+    [Theory]
+    // NpmCmd_NotFound_FailsGracefully 语义：cmd /c npm 找不到时输出被识别为 npm 环境缺失，
+    // errorTail 转为明确提示（而非裸异常/笼统"下载失败"）
+    [InlineData("'npm' 不是内部或外部命令，也不是可运行的程序", true)]
+    [InlineData("'npm' is not recognized as an internal or external command", true)]
+    [InlineData("系统找不到指定的文件。", true)]
+    [InlineData("Error: Cannot find module 'npm-cli.js'", true)]
+    // 网络/registry 类 → 不误判为 npm 缺失
+    [InlineData("npm ERR! code ETIMEDOUT", false)]
+    [InlineData("npm ERR! network request to registry failed", false)]
+    [InlineData("EACCES permission denied", false)]
+    [InlineData("", false)]
+    [InlineData(null!, false)]
+    public void IsNpmNotFoundError_Classifies_EnvironmentMissing(string tail, bool expected)
+    {
+        Assert.Equal(expected, ShellLogic.IsNpmNotFoundError(tail));
+    }
+
     /// <summary>每测试用一次性临时目录（自动清理，与 V030FeaturesTests 同风格）。</summary>
     private sealed class TempDir : IDisposable
     {
