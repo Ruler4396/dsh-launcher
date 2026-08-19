@@ -1544,10 +1544,21 @@ internal static class Program
                 {
                     // 任务二 UX：暴露真实 errorTail（不再硬编码"下载失败"把原因藏进日志）；
                     // 区分错误类型——npm 环境缺失 vs 网络/registry 问题（不同建议文案）。
-                    var reason = string.IsNullOrWhiteSpace(errorTail) ? "未知原因" : errorTail;
-                    var hint = IsNpmNotFoundError(errorTail)
-                        ? "未检测到 npm 环境，请确保已安装 Node.js 18+ 并将其加入 PATH。"
-                        : "可稍后重试；如持续失败，请检查网络/代理后手动执行：npm install -g @deepseek-ai/dsh@";
+                    // 任务三兜底：errorTail 为空说明底层执行引擎（node.exe/npm-cli.js）都没拉起来，
+                    // 必须给出明确的引擎兜底文案，而不是笼统"未知原因"。
+                    string reason, hint;
+                    if (string.IsNullOrWhiteSpace(errorTail))
+                    {
+                        reason = "底层执行引擎未能启动 Node.js 环境";
+                        hint = "请检查您的 Node.js 安装，或在命令行手动执行：npm install -g @deepseek-ai/dsh@";
+                    }
+                    else
+                    {
+                        reason = errorTail;
+                        hint = IsNpmNotFoundError(errorTail)
+                            ? "未检测到 npm 环境，请确保已安装 Node.js 18+ 并将其加入 PATH。"
+                            : "可稍后重试；如持续失败，请检查网络/代理后手动执行：npm install -g @deepseek-ai/dsh@";
+                    }
                     form.BeginInvoke(() => ShowError(ErrorCodes.E4001,
                         $"dsh {latest} 下载失败。\n\n原因：{reason}\n\n{hint}{latest}",
                         log: false));
@@ -1783,90 +1794,79 @@ internal static class Program
     }
 
     /// <summary>
-    /// 解析 npm.cmd 的绝对路径（任务一：环境隔离与回退——GUI 进程从桌面启动时 PATH 可能不含
-    /// Node 目录，`cmd /c npm` 会报"'npm' 不是内部或外部命令"）。解析顺序：
-    ///   ① RuntimeResolver.ResolveExisting().RootDir（PATH/注册表/便携三源解析出的 Node 根目录，
-    ///      Node 安装目录自带 npm.cmd）→ 拼接 npm.cmd；
-    ///   ② PATH 中 where npm.cmd（Fallback）；
-    ///   ③ 都失败返回 null（调用方回退 `cmd /c npm` 并靠 cmd PATHEXT 解析，errorTail 会给出
-    ///      "'npm' 不是内部或外部命令" 供错误报告区分"未检测到 npm 环境"）。
-    /// 带引号返回（含空格路径安全）。</summary>
-    private static string? ResolveNpmCmdPath()
+    /// 探测 npm-cli.js 的绝对路径（任务：降维打击——彻底绕过 npm.cmd/npm.bat 的编码冲突与
+    /// cmd.exe /c 引号陷阱，用 node.exe 直接执行 npm 核心逻辑）。优先级：
+    ///   a. node.exe 同级 node_modules\npm\bin\npm-cli.js（标准 Node 安装布局）
+    ///   b. %APPDATA%\npm\node_modules\npm\bin\npm-cli.js（全局 npm 目录布局）
+    /// 找不到返回 null（调用方给出明确 UI 错误）。纯探测逻辑，无外部进程依赖。
+    /// internal：供 RealWorldNpmExecutionTests（不 Mock 的真实环境冒烟）直接调用。</summary>
+    internal static string? FindNpmCliJs(string nodeExePath)
     {
-        string? fromPath = null;
         try
         {
-            // Fallback：PATH 中定位 npm.cmd（where 命令，与 ResolveLocalDshVersion 的 cmd shim 同款）
-            var psi = new ProcessStartInfo("where", "npm.cmd")
+            var nodeDir = Path.GetDirectoryName(nodeExePath);
+            if (!string.IsNullOrWhiteSpace(nodeDir))
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-            };
-            using var p = Process.Start(psi);
-            if (p is not null)
-            {
-                var first = p.StandardOutput.ReadLine();
-                p.WaitForExit(3000);
-                if (!string.IsNullOrWhiteSpace(first)) fromPath = first.Trim();
+                var std = Path.Combine(nodeDir, "node_modules", "npm", "bin", "npm-cli.js");
+                if (File.Exists(std)) return std;
             }
+            var appDataNpm = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
+            var global = Path.Combine(appDataNpm, "node_modules", "npm", "bin", "npm-cli.js");
+            if (File.Exists(global)) return global;
         }
-        catch { /* 忽略：交给纯函数判定 */ }
-        // 纯函数（任务一/四）：优先 Node 根目录 → where 结果；均无效返回 null（回退 cmd /c npm）
-        try
-        {
-            var env = RuntimeResolver.ResolveExisting();
-            return ShellLogic.ResolveNpmCmdPath(env.RootDir, fromPath);
-        }
-        catch { return ShellLogic.ResolveNpmCmdPath(null, fromPath); }
+        catch { /* 探测失败返回 null */ }
+        return null;
     }
 
-    /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：输出重定向避免死锁。
-    /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false——保证启动阶段应用更新
-    /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。
-    /// <paramref name="timeoutMs"/>：默认 120s；后台依赖预热（prefetch，任务一）网络重负载
-    /// 场景放宽到 180s，超时强制 kill 进程树并保留已下载的 tarball（任务三超时控制）。
-    /// <paramref name="progress"/>（任务一进阶）：逐行转发 npm 实时安装日志（如 "added 50 packages"）
-    /// 到 Splash，滚动显示消除"更新卡死"焦虑。收集的 stdout+stderr 仍用于 errorTail 诊断。</summary>
-    private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
+    /// <summary>运行 npm 命令（v0.4.0 重写：唯一 npm 执行点）。**直接调用 node.exe 执行
+    /// npm-cli.js**——彻底抛弃 npm.cmd/npm.bat 依赖与 cmd.exe /c 包装，根除 .cmd 编码冲突
+    ///（chcp 65001 无效）与 cmd /c 引号剥离（ERROR_INVALID_NAME）两类陷阱。
+    /// 链路：RuntimeResolver.ResolveExisting() → node.exe 绝对路径 → FindNpmCliJs →
+    /// node.exe "npm-cli.js" args（UseShellExecute=false + 双编码 UTF-8）。
+    /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false（Splash 取消立即生效）。
+    /// <paramref name="timeoutMs"/> 默认 120s；预热放宽 180s，超时强制 kill 保留 tarball。
+    /// <paramref name="progress"/> 逐行转发 npm 实时日志到 Splash（滚动消除卡死焦虑）。
+    /// <paramref name="workingDirectory"/> 供预热（./<tarball>、--prefix ./deps 相对路径）。
+    /// internal：供 RealWorldNpmExecutionTests（不 Mock 的真实环境冒烟）直接调用。</summary>
+    internal static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
         Action<string>? progress = null, int timeoutMs = 120000, string? workingDirectory = null)
     {
         errorTail = "";
         try
         {
-            // v0.4.0 修复：npm 全局包在 Windows 是 .cmd/.ps1 shim（npm.cmd），
-            // Process.Start("npm.cmd", ...) + UseShellExecute=false 走 CreateProcess，
-            // **不解析 batch shim**（抛 ERROR_BAD_EXE_FORMAT）→ 点击更新后 E4001 的根因
-            //（与 ResolveLocalDshVersion 用 dsh 直接启动同一类 bug）。现改经 cmd.exe /c
-            // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr。
-            // v0.4.0 任务一：GUI 进程 PATH 可能不含 Node 目录 → 优先用已解析的 Node 根目录
-            // 拼 npm.cmd 绝对路径（ResolveNpmCmdPath），避免 "'npm' 不是内部或外部命令"。
-            // cmd /c 引号规则（实测锁定，用户 22:2x 下载 E4001 根因）：
-            //   - `cmd /c "D:\node\npm.cmd" pack ...`（npm 路径带引号、外层无包裹）→ cmd 剥离
-            //     首尾引号后引号计数错乱 → ERROR_INVALID_NAME（中文"文件名、目录名或卷标语法不正确"）
-            //   - `cmd /c ""D:\node\npm.cmd" pack ..."`（整行双层引号包裹）→ cmd 剥离最外层，
-            //     内部引号保留给 npm → 正常执行；含空格路径亦安全（实测验证）。
-            // ResolveNpmCmdPath 现返回不带引号的裸路径，这里按 cmd 标准形式包裹。
-            var npmCmd = ResolveNpmCmdPath();
-            var cmdLine = npmCmd is not null
-                ? "/c \"\"" + npmCmd + "\" " + args + "\""
-                : "/c npm " + args; // Fallback：PATH + cmd PATHEXT 解析（errorTail 报"'npm' 不存在"）
-            var psi = new ProcessStartInfo("cmd.exe", cmdLine)
+            // 1) node.exe：RuntimeResolver 三源解析（PATH/注册表/便携），找不到直接明确报错
+            var nodeEnv = RuntimeResolver.ResolveExisting();
+            if (nodeEnv?.NodeExe is null || !File.Exists(nodeEnv.NodeExe))
+            {
+                errorTail = "未检测到可用的 Node.js 环境。请安装 Node.js 18+ 后重试。";
+                return false;
+            }
+            // 2) npm-cli.js：两优先级探测，找不到明确报错
+            var npmCliJs = FindNpmCliJs(nodeEnv.NodeExe);
+            if (npmCliJs is null || !File.Exists(npmCliJs))
+            {
+                Logger.Error($"node.exe found at {nodeEnv.NodeExe} but npm-cli.js not found", ErrorCodes.E4001);
+                errorTail = "已找到 Node.js 但未找到 npm-cli.js，请重新安装 Node.js。";
+                return false;
+            }
+            // 3) 降维打击：node.exe 直接执行 npm-cli.js，绕过 .cmd/.bat/cmd.exe 全部陷阱。
+            //    node 输出统一 UTF-8（npm ≥7 内部即 UTF-8），双编码显式设置保证任何代码页可读。
+            var psi = new ProcessStartInfo(nodeEnv.NodeExe, $"\"{npmCliJs}\" {args}")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                // 编码：不显式设置（.NET 默认用系统 ANSI 代码页解码，中文 Windows 即 GBK，
-                // 中文错误可读）。曾尝试 StandardErrorEncoding=UTF8 反致 GBK 中文变 U+FFFD 乱码
-                //（实测 stderr 变 \uFFFD...），故保持默认，避免二次损坏。
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
                 // 预热（prefetch）必须在该工作目录执行，否则 `./<tarball>`、`--prefix ./deps`
-                // 相对路径会指向 DshWeb.exe 目录（ENOENT 根因：用户 21:19/21:40 下载秒败）。
+                // 相对路径会指向 DshWeb.exe 目录（ENOENT 历史根因）。
                 WorkingDirectory = workingDirectory,
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            // 任务一进阶：逐行读取 stdout/stderr 实时转发到 Splash（异步事件，不阻塞主循环）。
+            // 逐行读取 stdout/stderr 实时转发到 Splash（异步事件，不阻塞主循环）
             var outLines = new List<string>();
             var errLines = new List<string>();
             var outLock = new object();
@@ -1885,16 +1885,15 @@ internal static class Program
             };
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
-            // WaitForExit 期间可被外部取消：注册回调 Kill 进程树，避免"点取消无效"（用户反馈：
-            // 重启卡在启动服务、点取消几十秒才自己关——阶段 0 npm install 不可取消所致）。
+            // WaitForExit 期间可被外部取消：注册回调 Kill 进程树，避免"点取消无效"
             using var reg = ct.Register(() =>
             {
                 try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
             });
-            // 任务一进阶：process=null 时不传 progress 也会走完（读取线程仍收集，errorTail 不受影响）
             if (!p.WaitForExit(timeoutMs))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
+                errorTail = "执行超时 (" + (timeoutMs / 1000) + "s)";
                 return false;
             }
             if (ct.IsCancellationRequested) return false;
@@ -1907,20 +1906,25 @@ internal static class Program
                 .ToList();
             if (lines.Count > 0)
                 errorTail = string.Join("\n", lines.Skip(Math.Max(0, lines.Count - 6)));
-            // 任务一/二：npm 未找到（GUI PATH 无 Node）→ errorTail 转明确提示（用户可诊断"请装 Node"）
-            if (p.ExitCode != 0 && IsNpmNotFoundError(errorTail))
-                errorTail = "未检测到 npm 环境（'npm' 不是内部或外部命令）。请确保已安装 Node.js 18+，并确认其 bin 目录在 PATH 中。";
+            // npm ≥7 的 stderr 大量 "npm notice" 噪音：失败时清理，保留真正的错误尾部
+            if (p.ExitCode != 0)
+            {
+                var meaningful = lines.Where(l => !l.StartsWith("npm notice", StringComparison.OrdinalIgnoreCase)).ToList();
+                if (meaningful.Count > 0)
+                    errorTail = string.Join("\n", meaningful.Skip(Math.Max(0, meaningful.Count - 6)));
+            }
             return p.ExitCode == 0;
         }
         catch (Win32Exception ex)
         {
-            // CreateProcess 失败（cmd.exe 异常环境）：转明确 npm 环境提示而非裸异常
-            errorTail = "无法启动 npm（" + ex.Message + "）。请确保已安装 Node.js 18+。";
+            // node.exe 启动失败（CreateProcess 异常）：转明确 Node 环境提示而非裸异常
+            errorTail = "无法启动 Node.js（" + ex.Message + "）。请确保已安装 Node.js 18+。";
             return false;
         }
         catch (Exception ex)
         {
-            errorTail = ex.Message;
+            errorTail = "系统级执行异常: " + ex.Message;
+            Logger.Error("RunNpmCommand fatal: " + ex);
             return false;
         }
     }

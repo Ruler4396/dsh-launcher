@@ -30,10 +30,14 @@ function Assert-True([bool]$Cond, [string]$Msg) {
 }
 
 Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
+# 任务二硬门禁：DSH_FORCE_NPM_SMOKE=1 强制 RealWorldNpmExecutionTests 真实执行
+#（无 Mock 直接跑 node.exe + npm-cli.js）。本机若无 Node 环境该测试将**失败**并阻断，
+# 打破"测试幻觉"——本地验证真实 npm 链路必须可用（CI 无 Node 时该变量未设，测试自动跳过）。
+$env:DSH_FORCE_NPM_SMOKE = "1"
 $testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
 $testCode = $LASTEXITCODE
 $testOut | Select-Object -Last 12
-Assert-True ($testCode -eq 0) "dotnet test 通过"
+Assert-True ($testCode -eq 0) "dotnet test 通过（含真实环境冒烟测试）"
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
 $webCmd = Get-Content (Join-Path $root "scripts\dsh-web.cmd") -Raw
@@ -150,22 +154,23 @@ Assert-True ($shellSrc -match '--no-audit --no-fund') "安装/预热统一 --no-
 Assert-True ($shellSrc -match 'GetNpmRegistryArgs') "预热与安装共用镜像 registry（防不同 registry 导致 cache miss）"
 Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn 降级（不中断更新流程，重启回退在线安装）"
 Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
-# ---- v0.4.0 npm 执行机制修复（cmd shim + 绝对路径解析 + 错误暴露）静态断言 ----
-Assert-True ($shellSrc -match 'ResolveNpmCmdPath') "壳含 npm.cmd 绝对路径解析（Node 根目录优先，GUI PATH 缺 Node 时的隔离方案）"
-Assert-True ($shellSrc -match 'new ProcessStartInfo\("cmd\.exe"') "RunNpmCommand 经 cmd.exe /c 执行（CreateProcess 不解析 batch shim 的修复基线）"
-Assert-True ($shellSrc -match '不是内部或外部命令') "npm 环境缺失输出被识别（errorTail 转明确'请装 Node'提示）"
+# ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
+Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
+Assert-True ($shellSrc -match 'new ProcessStartInfo\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
+Assert-True ($shellSrc -notmatch '(?m)^\s*chcp\s+65001') "已彻底删除 chcp 65001 Hack 代码（编码冲突根除，注释保留说明无害）"
+Assert-True ($shellSrc -notmatch '/c \\"" \+ npmCmd') "已删除 cmd /c 双层引号 Hack（node 引擎替代）"
+Assert-True ($shellSrc -match '未检测到可用的 Node\.js 环境') "node.exe 缺失时给出明确 UI 错误（不继续执行）"
+Assert-True ($shellSrc -match '未找到 npm-cli\.js') "npm-cli.js 缺失时给出明确错误（提示重装 Node）"
+Assert-True ($shellSrc -match 'StandardErrorEncoding = System\.Text\.Encoding\.UTF8') "stderr 显式 UTF-8（npm≥7 内部即 UTF-8，任何代码页可读）"
 Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露真实 errorTail（不再硬编码'下载失败'藏原因）"
 Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
 $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
-Assert-True ($logicSrc -match 'ResolveNpmCmdPath') "ShellLogic 提供 npm.cmd 解析纯函数（Node 根→where 回退，可单测）"
 # ---- 预热工作目录修复（用户 21:19/21:40 下载秒败 ENOENT 根因）静态断言 ----
 Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
 Assert-True ($shellSrc -match 'workingDirectory: prefetchDir') "预热传入 prefetch_temp 为工作目录（ENOENT 根因修复：此前默认 DshWeb.exe 目录）"
 # ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复静态断言 ----
 Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(prefetchDir\)') "pack 前先创建 prefetch_temp 目录（历史 ERROR_INVALID_NAME 场景 1 的修复）"
-Assert-True ($shellSrc -match '\\"" \+ npmCmd') "npm 命令用整行双层引号包裹（cmd /c 引号剥离的正确形式；修复'带引号路径→ERROR_INVALID_NAME'根因）"
-Assert-True ($shellSrc -notmatch '(?m)^\s*StandardErrorEncoding\s*=') "不显式设置 stderr 编码属性（.NET 默认 ANSI/GBK 解码，中文错误可读；显式 UTF-8 曾致 GBK 变 U+FFFD 乱码）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
