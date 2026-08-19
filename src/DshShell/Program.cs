@@ -37,10 +37,8 @@ internal static class Program
     //（static 字段语义映射见 docs/refactor-static-mapping.md A/B/F 组）。此处不再持有，
     // 统一经 WebViewManager.XXX 访问，避免双份状态漂移。
 
-    /// 主题监听句柄（质量治理 P2-7）：真实退出时由 ReleaseThemeWatcher 统一释放。
-    private static System.Windows.Forms.Timer? _themeTimer;
-    private static FileSystemWatcher? _themeWatcher;
-    private static UserPreferenceChangedEventHandler? _themeEventsHandler;
+    // Step 5b：主题监听句柄（_themeTimer/_themeWatcher/_themeEventsHandler）已迁入
+    // WindowManager.Instance（P2-7 统一释放）。
 
     /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
     private static bool _serviceStartedByShell;
@@ -570,7 +568,8 @@ internal static class Program
         WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
         WindowManager.Instance.TrayExitAction = () =>
         {
-            // 托盘"退出"：放行 FormClosing 真关（不再隐藏到托盘）
+            // 托盘"退出"：置位（FormClosing 放行真关，不再隐藏到托盘）
+            WindowManager.Instance.MarkTrayExitRequested();
             // 常驻模式：只退出壳（服务保留）；托盘驻留/跟随窗口：停掉壳拉起的服务
             if (ReadLifetimeMode() != ShellLogic.ServiceLifetime.AlwaysOn && _serviceStartedByShell)
                 StopShellService();
@@ -579,12 +578,16 @@ internal static class Program
         WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
         WindowManager.Instance.VerifyDependencies(); // 接线自检（Debug 断言）
         WindowManager.Instance.EnsureTrayIcon(form);
+        // Step 5b：主题委托注入（WindowManager 主题监听迁移用）
+        WindowManager.Instance.ResolveDarkModeProvider = () => ResolveDarkMode();
+        WindowManager.Instance.ApplyWindowThemeAction = (f, dark) => ApplyThemeIcon(f);
+        WindowManager.Instance.DshHomeDirProvider = () => DshHomeDir;
         // Step 4：WebViewManager 下载完成提示回调注入（解耦 Program 托盘实现）
         WebViewManager.DownloadNotifyAction = NotifyDownloadComplete;
         // 窗口图标跟随主题（深色 → 白色鲸鱼 + 深色标题栏），主题切换时实时更新。
         ApplyThemeIcon(form);
         form.HandleCreated += (_, _) => ApplyThemeIcon(form); // 句柄创建后应用标题栏配色
-        RegisterThemeWatcher(form);
+        WindowManager.Instance.RegisterThemeWatcher(form);
         form.Shown += (_, _) => Trace("main form shown");
 
         form.FormClosing += (_, e) =>
@@ -614,7 +617,7 @@ internal static class Program
             SaveWindowState(form);
 
             // 质量治理 P2-7：真实退出释放主题监听（SystemEvents/FSW/轮询 Timer）
-            ReleaseThemeWatcher();
+            WindowManager.Instance.ReleaseThemeWatcher();
 
             if (mode == ShellLogic.ServiceLifetime.FollowWindow && _serviceStartedByShell)
             {
@@ -2836,107 +2839,8 @@ internal static class Program
         }
     }
 
-    /// <summary>
-    /// 主题实时刷新（无感切换）：dsh 前端写 settings.yaml 时 FileSystemWatcher 立即触发
-    /// （Changed + Renamed 都监听——dsh 可能原子替换写文件），2s 轮询兜底
-    /// （watcher 漏事件也能 2 个周期内赶上）。两路共用同一去抖状态：
-    /// 主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发会造成"一卡一卡"）。
-    /// P1-2（质量治理）：按 settings.yaml 的 mtime 缓存——文件未变且系统主题事件未触发时，
-    /// 轮询 tick 不再重读文件/注册表（旧实现每 500ms 全量 ReadAllLines，主窗打开期间持续磁盘 IO）。
-    /// 质量治理 P2-7：订阅句柄存字段，真实退出时由 ReleaseThemeWatcher 统一释放。
-    /// </summary>
-    internal static void RegisterThemeWatcher(Form form)
-    {
-        var settingsYamlPath = Path.Combine(DshHomeDir, "settings.yaml");
-        var lastYamlMtime = SafeFileMtime(settingsYamlPath);
-        var lastDark = ResolveDarkMode();
-        var systemDirty = false; // 系统主题事件触发后置脏：settings.yaml 未变也要重估
-
-        void ApplyIfThemeChanged()
-        {
-            try
-            {
-                var mtime = SafeFileMtime(settingsYamlPath);
-                if (mtime == lastYamlMtime && !systemDirty) return; // 文件未变、系统未变 → 不重读
-                lastYamlMtime = mtime;
-                systemDirty = false;
-                var nowDark = ResolveDarkMode();
-                if (nowDark != lastDark)
-                {
-                    lastDark = nowDark;
-                    ApplyThemeIcon(form);
-                    Trace($"theme changed: {(nowDark ? "dark" : "light")}");
-                }
-            }
-            catch
-            {
-                // 轮询失败下次再试
-            }
-        }
-
-        try
-        {
-            UserPreferenceChangedEventHandler handler = (_, e) =>
-            {
-                if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
-                {
-                    systemDirty = true; // 系统主题变化：绕过 mtime 门立即重估
-                    ApplyIfThemeChanged();
-                }
-            };
-            _themeEventsHandler = handler;
-            SystemEvents.UserPreferenceChanged += handler;
-        }
-        catch
-        {
-            // 系统主题监听失败不影响启动
-        }
-
-        try
-        {
-            var dir = DshHomeDir;
-            if (Directory.Exists(dir))
-            {
-                var watcher = new FileSystemWatcher(dir, "settings.yaml")
-                {
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
-                    EnableRaisingEvents = true,
-                };
-                watcher.Changed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
-                watcher.Renamed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
-                _themeWatcher = watcher;
-            }
-        }
-        catch
-        {
-            // 文件监听失败不影响启动（轮询兜底）
-        }
-
-        var timer = new System.Windows.Forms.Timer { Interval = 2000 }; // P1-2：500ms→2s（watcher 已是主通道）
-        timer.Tick += (_, _) => ApplyIfThemeChanged();
-        timer.Start();
-        _themeTimer = timer;
-    }
-
-    /// <summary>settings.yaml 的最后写入时间（不存在/读取失败 → MinValue，视为"未变"）。</summary>
-    private static DateTime SafeFileMtime(string path)
-    {
-        try { return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue; }
-        catch { return DateTime.MinValue; }
-    }
-
-    /// <summary>质量治理 P2-7：真实退出路径释放主题监听（SystemEvents/FSW/轮询 Timer），
-    /// 消除"关窗后、进程退出前"的毫秒级竞态窗口（此前仅靠 try/catch 吞异常）。
-    /// 托盘驻留隐藏路径不调用（隐藏不退出，主题监听需保留）。</summary>
-    private static void ReleaseThemeWatcher()
-    {
-        try { if (_themeEventsHandler is not null) SystemEvents.UserPreferenceChanged -= _themeEventsHandler; } catch { }
-        _themeEventsHandler = null;
-        try { _themeWatcher?.Dispose(); } catch { }
-        _themeWatcher = null;
-        try { _themeTimer?.Stop(); _themeTimer?.Dispose(); } catch { }
-        _themeTimer = null;
-    }
+    // Step 5b：RegisterThemeWatcher/SafeFileMtime/ReleaseThemeWatcher 已迁入
+    // WindowManager.Instance（主题监听：FSW+系统事件+2s 轮询，P2-7 统一释放）。
 
     private static bool PortOpen(int port) => ShellLogic.PortOpen("127.0.0.1", port); // 契约纯函数（P1-6）
 }

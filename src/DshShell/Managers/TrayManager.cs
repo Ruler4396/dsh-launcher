@@ -7,5 +7,5 @@ namespace DshWeb.Managers;
 public sealed class TrayManager : ITrayManager
 {
     public void EnsureTray(Form owner, bool force = false) => WindowManager.Instance.EnsureTrayIcon(owner, force);
-    public void RegisterThemeWatcher(Form form) => DshWeb.Program.RegisterThemeWatcher(form);
+    public void RegisterThemeWatcher(Form form) => WindowManager.Instance.RegisterThemeWatcher(form);
 }

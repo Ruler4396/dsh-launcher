@@ -1,7 +1,9 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using Microsoft.Web.WebView2.WinForms;
 
 namespace DshWeb.Managers;
@@ -27,6 +29,14 @@ public sealed class WindowManager : IWindowManager
     /// <summary>托盘菜单创建委托（Program 注入创建 TrayMenuForm——自绘菜单 UI 保留在 Program）。</summary>
     public Func<Action, Form>? TrayMenuFactory { get; set; }
 
+    // ---- 主题依赖委托（Program 注入，解耦 Program 静态实现与 DshShellForm.TitleBar）----
+    /// <summary>解析当前深浅主题（ResolveDarkMode）。</summary>
+    public Func<bool>? ResolveDarkModeProvider { get; set; }
+    /// <summary>应用主题到窗口（ApplyThemeIcon：标题栏/边框/任务栏图标/托盘图标）。</summary>
+    public Action<Form, bool>? ApplyWindowThemeAction { get; set; }
+    /// <summary>DSH_HOME 目录（settings.yaml 监听目录）。</summary>
+    public Func<string>? DshHomeDirProvider { get; set; }
+
     /// <summary>进程内单例（Program 在 Main 早期创建并注入依赖委托；供托盘/唤起/状态访问）。</summary>
     public static WindowManager Instance { get; set; } = new();
 
@@ -34,8 +44,16 @@ public sealed class WindowManager : IWindowManager
     private NotifyIcon? _trayIcon;
     private bool _trayExitRequested;
 
+    // ---- 主题监听状态（进程级，从 Program 迁入；P2-7 真实退出统一释放）----
+    private System.Windows.Forms.Timer? _themeTimer;
+    private FileSystemWatcher? _themeWatcher;
+    private UserPreferenceChangedEventHandler? _themeEventsHandler;
+
     /// <summary>托盘"退出"请求（FormClosing 读：放行真关，不再次隐藏到托盘，矩阵 L1）。</summary>
     public bool TrayExitRequested => _trayExitRequested;
+
+    /// <summary>托盘菜单"退出"时置位（FormClosing 据此放行真关，不再隐藏到托盘）。</summary>
+    public void MarkTrayExitRequested() => _trayExitRequested = true;
 
     /// <summary>托盘图标（更新提示/主题切换读用；null=未创建）。</summary>
     internal NotifyIcon? TrayIcon => _trayIcon;
@@ -181,5 +199,105 @@ public sealed class WindowManager : IWindowManager
     {
         _trayIcon?.Dispose();
         _trayIcon = null;
+    }
+
+    /// <summary>
+    /// 主题实时刷新（无感切换）（Step5b 迁入）：dsh 前端写 settings.yaml 时 FileSystemWatcher
+    /// 立即触发（Changed + Renamed 都监听——dsh 可能原子替换写文件），2s 轮询兜底。
+    /// 两路共用同一去抖状态：主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发
+    /// 会造成"一卡一卡"）。P1-2：按 settings.yaml 的 mtime 缓存——文件未变且系统主题事件
+    /// 未触发时，轮询 tick 不再重读文件/注册表。P2-7：句柄存字段，真实退出统一释放。
+    /// </summary>
+    public void RegisterThemeWatcher(Form form)
+    {
+        var dshHome = DshHomeDirProvider?.Invoke() ?? "";
+        var settingsYamlPath = Path.Combine(dshHome, "settings.yaml");
+        var lastYamlMtime = SafeFileMtime(settingsYamlPath);
+        var lastDark = ResolveDarkModeProvider?.Invoke() ?? false;
+        var systemDirty = false; // 系统主题事件触发后置脏：settings.yaml 未变也要重估
+
+        void ApplyIfThemeChanged()
+        {
+            try
+            {
+                var mtime = SafeFileMtime(settingsYamlPath);
+                if (mtime == lastYamlMtime && !systemDirty) return; // 文件未变、系统未变 → 不重读
+                lastYamlMtime = mtime;
+                systemDirty = false;
+                var nowDark = ResolveDarkModeProvider?.Invoke() ?? false;
+                if (nowDark != lastDark)
+                {
+                    lastDark = nowDark;
+                    ApplyWindowThemeAction?.Invoke(form, nowDark);
+                    DshWeb.Program.Trace($"theme changed: {(nowDark ? "dark" : "light")}");
+                }
+            }
+            catch
+            {
+                // 轮询失败下次再试
+            }
+        }
+
+        try
+        {
+            UserPreferenceChangedEventHandler handler = (_, e) =>
+            {
+                if (e.Category is UserPreferenceCategory.General or UserPreferenceCategory.Color)
+                {
+                    systemDirty = true; // 系统主题变化：绕过 mtime 门立即重估
+                    ApplyIfThemeChanged();
+                }
+            };
+            _themeEventsHandler = handler;
+            SystemEvents.UserPreferenceChanged += handler;
+        }
+        catch
+        {
+            // 系统主题监听失败不影响启动
+        }
+
+        try
+        {
+            var dir = dshHome;
+            if (Directory.Exists(dir))
+            {
+                var watcher = new FileSystemWatcher(dir, "settings.yaml")
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                    EnableRaisingEvents = true,
+                };
+                watcher.Changed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
+                watcher.Renamed += (_, _) => { try { form.BeginInvoke(ApplyIfThemeChanged); } catch { } };
+                _themeWatcher = watcher;
+            }
+        }
+        catch
+        {
+            // 文件监听失败不影响启动（轮询兜底）
+        }
+
+        var timer = new System.Windows.Forms.Timer { Interval = 2000 }; // P1-2：500ms→2s（watcher 已是主通道）
+        timer.Tick += (_, _) => ApplyIfThemeChanged();
+        timer.Start();
+        _themeTimer = timer;
+    }
+
+    /// <summary>settings.yaml 的最后写入时间（不存在/读取失败 → MinValue，视为"未变"）。</summary>
+    private static DateTime SafeFileMtime(string path)
+    {
+        try { return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue; }
+        catch { return DateTime.MinValue; }
+    }
+
+    /// <summary>质量治理 P2-7：真实退出路径释放主题监听（SystemEvents/FSW/轮询 Timer），
+    /// 消除"关窗后、进程退出前"的毫秒级竞态窗口。托盘驻留隐藏路径不调用（隐藏不退出）。</summary>
+    public void ReleaseThemeWatcher()
+    {
+        try { if (_themeEventsHandler is not null) SystemEvents.UserPreferenceChanged -= _themeEventsHandler; } catch { }
+        _themeEventsHandler = null;
+        try { _themeWatcher?.Dispose(); } catch { }
+        _themeWatcher = null;
+        try { _themeTimer?.Stop(); _themeTimer?.Dispose(); } catch { }
+        _themeTimer = null;
     }
 }
