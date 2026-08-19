@@ -162,6 +162,9 @@ Assert-True ($logicSrc -match 'ResolveNpmCmdPath') "ShellLogic 提供 npm.cmd �
 # ---- 预热工作目录修复（用户 21:19/21:40 下载秒败 ENOENT 根因）静态断言 ----
 Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
 Assert-True ($shellSrc -match 'workingDirectory: prefetchDir') "预热传入 prefetch_temp 为工作目录（ENOENT 根因修复：此前默认 DshWeb.exe 目录）"
+# ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复静态断言 ----
+Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(prefetchDir\)') "pack 前先创建 prefetch_temp 目录（ERROR_INVALID_NAME 根因修复：pack 目标目录缺失）"
+Assert-True ($shellSrc -match 'StandardErrorEncoding = System\.Text\.Encoding\.UTF8') "RunNpmCommand 显式 UTF-8 解码 stderr（中文系统 GBK 输出防乱码，错误可读）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"

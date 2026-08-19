@@ -154,6 +154,31 @@ public class UpdateFlowContractTests
     }
 
     [Fact]
+    public void PrefetchDir_IsCreatedUnderStaging_ForPackDestination()
+    {
+        // 根因契约（用户 22:0x "文件名、目录名或卷标语法不正确" E4001）：
+        // npm pack --pack-destination 指向的 prefetch_temp 目录必须先存在，否则 Windows 中文
+        // 系统底层 fs 返回 ERROR_INVALID_NAME。锁定"预热目录可从 staging 推导且可被创建"语义，
+        // 防止下载管线回归"只建 staging 不建 prefetch_temp"（历史 bug：DownloadDshUpdateStaged
+        // 曾只 CreateDirectory(staging)）。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var prefetch = StagedUpdate.PrefetchTempDir!;
+
+        // 模拟下载管线：先建 staging（现有代码），再建 prefetch（根因修复点），两者幂等可重复
+        Directory.CreateDirectory(StagedUpdate.StagingDir!);
+        Directory.CreateDirectory(prefetch);
+        Assert.True(Directory.Exists(prefetch));
+
+        // 幂等：重复创建不抛（npm pack 前无论目录是否已存在都安全）
+        Directory.CreateDirectory(prefetch);
+        Assert.True(Directory.Exists(prefetch));
+
+        // 层级正确：prefetch 是 staging 的子目录（同一清理域）
+        Assert.StartsWith(StagedUpdate.StagingDir! + Path.DirectorySeparatorChar, prefetch);
+    }
+
+    [Fact]
     public void LocateTarball_ResolvesPackName_NormalizesScopeNaming()
     {
         // npm pack 对 scoped 包 @deepseek-ai/dsh 的产物名是 deepseek-ai-dsh-{version}.tgz

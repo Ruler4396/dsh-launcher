@@ -53,6 +53,7 @@
 - **更新文案诚实化**：`npm pack` 只下载主包 tarball（约 30KB，秒级正常），dsh 有 50+ 个 `@deepseek-ai/*` 依赖子包，重启安装时 npm 仍需在线解析——气泡/弹窗统一改为"主程序已下载，重启后自动安装（需联网解析依赖，预计 1-2 分钟）"，不再误导"已全部下载完、无需再次下载"。
 - **后台依赖预热（重启秒装）**：后台 `npm pack` 后，在 `staging\prefetch_temp` 中执行一次完整 `npm install --prefix deps --no-audit --no-fund`，把全部 `@deepseek-ai/*` 依赖子包拉入全局 npm cache——重启时 `npm install -g <tarball>` 完全命中本地缓存，从"分钟级"降到"秒级"；预热与安装共用同一 `DSH_NPM_MIRROR` registry（防 cache miss）；预热失败仅 Warn 降级（不中断，保留 tarball 回退在线安装）；预热超时 180s 强制 kill；应用成功后清理 prefetch_temp 释放磁盘。
 - **npm 执行机制加固（cmd shim + 路径解析 + 错误暴露）**：① `RunNpmCommand` 经 `cmd.exe /c` 执行（`CreateProcess` 不解析 `.cmd` shim 的基线，历史 E4001 根因）；② 新增 `ResolveNpmCmdPath`——优先从 `RuntimeResolver` 解析的 Node 根目录拼 `npm.cmd` 绝对路径（GUI 进程 PATH 缺 Node 目录时的隔离方案），失败回退 `where npm.cmd`，再失败回退 `cmd /c npm`；③ 下载失败弹窗暴露真实 `errorTail`（不再硬编码"下载失败"把原因藏进日志），并区分"未检测到 npm 环境（请安装 Node.js 18+）"与"网络/registry 问题（保留重试建议）"（`ShellLogic.IsNpmNotFoundError` 纯函数）；④ 预热/下载/安装三路径共享同一 `RunNpmCommand`，统一受益。
+- **修复更新下载 E4001"文件名、目录名或卷标语法不正确"**：`DownloadDshUpdateStaged` 此前只 `CreateDirectory(staging)` 从未创建 `prefetch_temp`，`npm pack --pack-destination` 指向不存在的目录 → Windows 中文系统底层 fs 返回 ERROR_INVALID_NAME。修复：pack 前创建 `prefetchDir`；`RunNpmCommand` 显式 `StandardOutputEncoding/StandardErrorEncoding = UTF-8`（中文系统 GBK 输出防乱码，错误可读）。
 
 ### 测试
 
@@ -64,7 +65,7 @@
 - **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
 - **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
-- 单测 **395 个全部通过**。
+- 单测 **396 个全部通过**。
 
 ## [Unreleased]
 
