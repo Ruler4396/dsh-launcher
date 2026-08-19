@@ -9,8 +9,11 @@
 在修改任何 `.cs` 代码、编写测试、调整构建脚本之前，**你必须先通读**：
 
 - **`docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md`** ← 架构与工程维护铁律 v1.0（强制约束，非建议）
+- **`docs/TESTING-GUARDRAILS.md`** ← 测试体系铁律（SDET 强制约束，Bug 驱动复现）
 
 这份文档是 **Hard Constraints（硬约束）**，不是可选项。违反其中任一条款都会被 Code Review 驳回或 CI 拦截。它规定了：组合根边界、Manager 依赖方向、状态机单一真相源、进程调用的"三必须"、异常透明性、Win32 NC 消息拦截、WebView2 崩溃隔离、契约测试先行等。
+
+**测试铁律（尤其重要）**：禁止"Mock 幻觉"——涉及进程/文件锁/编码的测试必须补 `Category=RealOS` 真实 OS 交互测试；修复 P0/P1 环境 Bug 后**必须**写 `Regression_<Bug>` 零 Mock 复现测试，否则不予合并（详见 `docs/TESTING-GUARDRAILS.md`）。
 
 ## 🔥 快速合规清单（动代码前自检）
 

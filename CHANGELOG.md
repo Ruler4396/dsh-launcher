@@ -57,6 +57,7 @@
 - **修复 E4001 真正根因（cmd /c 引号剥离）**：`ResolveNpmCmdPath` 曾返回带引号的 npm 路径，`cmd /c "D:\node\npm.cmd" pack ...` 时 cmd 剥离首尾引号后引号计数错乱 → ERROR_INVALID_NAME（"文件名、目录名或卷标语法不正确"）。实测锁定正确形式：整行双层引号包裹 `/c ""D:\node\npm.cmd" pack ..."`（含空格路径亦安全）。修复：`ResolveNpmCmdPath` 改返回裸路径，`RunNpmCommand` 按 cmd 标准形式包裹；同时移除 `StandardErrorEncoding=UTF8`（显式 UTF-8 解码中文系统 GBK 输出反致 U+FFFD 乱码，.NET 默认 ANSI 即可正确解码）。
 - **npm 执行引擎彻底重写（node.exe 直接执行 npm-cli.js）**：抛弃 `npm.cmd`/`cmd.exe /c`/`chcp 65001` 全部 Hack——`RuntimeResolver` 解析 node.exe 绝对路径 → `FindNpmCliJs` 两优先级探测 `npm-cli.js` → `node.exe "npm-cli.js" args`（UseShellExecute=false + 双编码 UTF-8）。实测验证：node 直接执行 `--version`/`pack` 均 EXIT=0，彻底根除 .cmd 编码冲突与 cmd /c 引号陷阱。保留 ct/progress/timeoutMs/workingDirectory 增强参数。
 - **真实环境冒烟测试（打破测试幻觉）**：新增 `RealWorldNpmExecutionTests`——**零 Mock** 直接调 `RunNpmCommand("--version")` 验证真实 Node/npm 链路；`test.ps1` 设 `DSH_FORCE_NPM_SMOKE=1` 本地强制运行（无 Node 即失败阻断），CI 无 Node 时自动跳过。
+- **SDET 测试体系重构（四大支柱 + Bug 驱动复现铁律）**：① 提取底层进程执行器 `RunProcessCaptured`（UTF-8 双编码捕获 + 超时 kill 僵尸树），`RunNpmCommand` 复用并供零 Mock 测试调用；② 新增 `RealOsProcessTests`（Category=RealOS）：`Regression_NpmCmd_Execution_And_Encoding` 真实 .cmd 输出中文断言无乱码不秒退、`RealOs_ZombieTree_Killed_On_Timeout` 真实进程树超时杀净、GBK 字节无乱码等；③ `LauncherAppScenarioTests` 补阶段 0 真实文件副作用断言（pending-update.json 真实落盘）；④ 新增 `realos-test.yml`（CI Stage 2：真实安装 Node.js 绝不 Skip，跑 Real-OS 测试）；⑤ 新增 `docs/TESTING-GUARDRAILS.md` 测试铁律 + AGENTS.md 强制引用（P0/P1 环境 Bug 必须写零 Mock 复现测试才合并）。
 
 ### 测试
 
@@ -68,7 +69,7 @@
 - **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
 - **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
-- 单测 **400 个全部通过**（含 3 个真实环境冒烟测试）。
+- 单测 **405 个全部通过**（含真实环境冒烟 + 真实 OS 交互测试）。
 
 ## [Unreleased]
 

@@ -1852,7 +1852,41 @@ internal static class Program
             }
             // 3) 降维打击：node.exe 直接执行 npm-cli.js，绕过 .cmd/.bat/cmd.exe 全部陷阱。
             //    node 输出统一 UTF-8（npm ≥7 内部即 UTF-8），双编码显式设置保证任何代码页可读。
-            var psi = new ProcessStartInfo(nodeEnv.NodeExe, $"\"{npmCliJs}\" {args}")
+            // 统一走底层执行器（RunProcessCaptured）：UTF-8 捕获 + 超时 kill 僵尸树 + 取消。
+            return RunProcessCaptured(nodeEnv.NodeExe, $"\"{npmCliJs}\" {args}",
+                out errorTail, ct, progress, timeoutMs, workingDirectory);
+        }
+        catch (Win32Exception ex)
+        {
+            // node.exe 启动失败（CreateProcess 异常）：转明确 Node 环境提示而非裸异常
+            errorTail = "无法启动 Node.js（" + ex.Message + "）。请确保已安装 Node.js 18+。";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorTail = "系统级执行异常: " + ex.Message;
+            Logger.Error("RunNpmCommand fatal: " + ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 底层进程执行器（真实 OS 交互测试的核心目标，SDET 支柱一）：启动任意可执行文件，
+    /// **UTF-8 双编码捕获** stdout/stderr + 逐行实时转发 progress + 超时/取消强杀进程树。
+    /// 从 RunNpmCommand 提取——使"真实 OS 交互"（乱码拦截、僵尸树清理）可被零 Mock 测试。
+    /// internal：供 RealOsProcessTests / Regression_NpmCmd_Execution_And_Encoding 直接调用。
+    /// <paramref name="fileName"/> = 可执行文件绝对路径（node.exe / cmd.exe / 任意 .exe）；
+    /// <paramref name="arguments"/> = 参数串（可含引号路径）；其余语义同 RunNpmCommand。
+    /// </summary>
+    internal static bool RunProcessCaptured(
+        string fileName, string arguments, out string outputTail,
+        CancellationToken ct = default, Action<string>? progress = null,
+        int timeoutMs = 120000, string? workingDirectory = null)
+    {
+        outputTail = "";
+        try
+        {
+            var psi = new ProcessStartInfo(fileName, arguments)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1860,8 +1894,6 @@ internal static class Program
                 RedirectStandardError = true,
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
                 StandardErrorEncoding = System.Text.Encoding.UTF8,
-                // 预热（prefetch）必须在该工作目录执行，否则 `./<tarball>`、`--prefix ./deps`
-                // 相对路径会指向 DshWeb.exe 目录（ENOENT 历史根因）。
                 WorkingDirectory = workingDirectory,
             };
             using var p = Process.Start(psi);
@@ -1893,11 +1925,11 @@ internal static class Program
             if (!p.WaitForExit(timeoutMs))
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
-                errorTail = "执行超时 (" + (timeoutMs / 1000) + "s)";
+                outputTail = "执行超时 (" + (timeoutMs / 1000) + "s)";
                 return false;
             }
             if (ct.IsCancellationRequested) return false;
-            // 事件回调可能落后于 WaitForExit 返回，短暂同步读一次剩余流（防 errorTail 缺行）
+            // 事件回调可能落后于 WaitForExit 返回，短暂同步读一次剩余流（防 outputTail 缺行）
             var combined = "";
             lock (outLock) combined += string.Join("\n", outLines);
             lock (errLock) { if (combined.Length > 0) combined += "\n"; combined += string.Join("\n", errLines); }
@@ -1905,26 +1937,18 @@ internal static class Program
                 .Where(l => !string.IsNullOrWhiteSpace(l))
                 .ToList();
             if (lines.Count > 0)
-                errorTail = string.Join("\n", lines.Skip(Math.Max(0, lines.Count - 6)));
-            // npm ≥7 的 stderr 大量 "npm notice" 噪音：失败时清理，保留真正的错误尾部
-            if (p.ExitCode != 0)
-            {
-                var meaningful = lines.Where(l => !l.StartsWith("npm notice", StringComparison.OrdinalIgnoreCase)).ToList();
-                if (meaningful.Count > 0)
-                    errorTail = string.Join("\n", meaningful.Skip(Math.Max(0, meaningful.Count - 6)));
-            }
+                outputTail = string.Join("\n", lines.Skip(Math.Max(0, lines.Count - 6)));
             return p.ExitCode == 0;
         }
         catch (Win32Exception ex)
         {
-            // node.exe 启动失败（CreateProcess 异常）：转明确 Node 环境提示而非裸异常
-            errorTail = "无法启动 Node.js（" + ex.Message + "）。请确保已安装 Node.js 18+。";
+            outputTail = "无法启动进程（" + ex.Message + "）。请确保目标可执行文件存在且可访问。";
             return false;
         }
         catch (Exception ex)
         {
-            errorTail = "系统级执行异常: " + ex.Message;
-            Logger.Error("RunNpmCommand fatal: " + ex);
+            outputTail = "系统级执行异常: " + ex.Message;
+            Logger.Error("RunProcessCaptured fatal: " + ex);
             return false;
         }
     }
