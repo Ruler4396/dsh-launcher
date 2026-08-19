@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Reflection;
@@ -1537,9 +1538,14 @@ internal static class Program
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
                 try
                 {
-                    // log:false —— 显式 Logger.Error 已写（窗体可能已关闭，日志不能丢），弹窗不再重复写（P1-7）
+                    // 任务二 UX：暴露真实 errorTail（不再硬编码"下载失败"把原因藏进日志）；
+                    // 区分错误类型——npm 环境缺失 vs 网络/registry 问题（不同建议文案）。
+                    var reason = string.IsNullOrWhiteSpace(errorTail) ? "未知原因" : errorTail;
+                    var hint = IsNpmNotFoundError(errorTail)
+                        ? "未检测到 npm 环境，请确保已安装 Node.js 18+ 并将其加入 PATH。"
+                        : "可稍后重试；如持续失败，请检查网络/代理后手动执行：npm install -g @deepseek-ai/dsh@";
                     form.BeginInvoke(() => ShowError(ErrorCodes.E4001,
-                        $"dsh {latest} 下载失败。\n\n可稍后重试，或在命令行手动执行：\nnpm install -g @deepseek-ai/dsh@{latest}",
+                        $"dsh {latest} 下载失败。\n\n原因：{reason}\n\n{hint}{latest}",
                         log: false));
                 }
                 catch { /* 窗体已关闭 */ }
@@ -1769,6 +1775,45 @@ internal static class Program
         return string.IsNullOrWhiteSpace(mirror) ? "" : " --registry=" + mirror;
     }
 
+    /// <summary>
+    /// 解析 npm.cmd 的绝对路径（任务一：环境隔离与回退——GUI 进程从桌面启动时 PATH 可能不含
+    /// Node 目录，`cmd /c npm` 会报"'npm' 不是内部或外部命令"）。解析顺序：
+    ///   ① RuntimeResolver.ResolveExisting().RootDir（PATH/注册表/便携三源解析出的 Node 根目录，
+    ///      Node 安装目录自带 npm.cmd）→ 拼接 npm.cmd；
+    ///   ② PATH 中 where npm.cmd（Fallback）；
+    ///   ③ 都失败返回 null（调用方回退 `cmd /c npm` 并靠 cmd PATHEXT 解析，errorTail 会给出
+    ///      "'npm' 不是内部或外部命令" 供错误报告区分"未检测到 npm 环境"）。
+    /// 带引号返回（含空格路径安全）。</summary>
+    private static string? ResolveNpmCmdPath()
+    {
+        string? fromPath = null;
+        try
+        {
+            // Fallback：PATH 中定位 npm.cmd（where 命令，与 ResolveLocalDshVersion 的 cmd shim 同款）
+            var psi = new ProcessStartInfo("where", "npm.cmd")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+            };
+            using var p = Process.Start(psi);
+            if (p is not null)
+            {
+                var first = p.StandardOutput.ReadLine();
+                p.WaitForExit(3000);
+                if (!string.IsNullOrWhiteSpace(first)) fromPath = first.Trim();
+            }
+        }
+        catch { /* 忽略：交给纯函数判定 */ }
+        // 纯函数（任务一/四）：优先 Node 根目录 → where 结果；均无效返回 null（回退 cmd /c npm）
+        try
+        {
+            var env = RuntimeResolver.ResolveExisting();
+            return ShellLogic.ResolveNpmCmdPath(env.RootDir, fromPath);
+        }
+        catch { return ShellLogic.ResolveNpmCmdPath(null, fromPath); }
+    }
+
     /// <summary>运行 npm 命令（v0.3.0 起唯一 npm 执行点）：输出重定向避免死锁。
     /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false——保证启动阶段应用更新
     /// （npm install -g 可达 30-60s）可被用户取消，Splash 取消按钮不失效（v0.4.0）。
@@ -1787,7 +1832,14 @@ internal static class Program
             // **不解析 batch shim**（抛 ERROR_BAD_EXE_FORMAT）→ 点击更新后 E4001 的根因
             //（与 ResolveLocalDshVersion 用 dsh 直接启动同一类 bug）。现改经 cmd.exe /c
             // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr。
-            var psi = new ProcessStartInfo("cmd.exe", "/c npm " + args)
+            // v0.4.0 任务一：GUI 进程 PATH 可能不含 Node 目录 → 优先用已解析的 Node 根目录
+            // 拼 npm.cmd 绝对路径（ResolveNpmCmdPath），避免 "'npm' 不是内部或外部命令"。
+            // 绝对路径含空格 → cmd /c "\"C:\path with space\npm.cmd\"" args 形式（外层引号包裹）。
+            var npmCmd = ResolveNpmCmdPath();
+            var cmdLine = npmCmd is not null
+                ? "/c " + npmCmd + " " + args
+                : "/c npm " + args; // Fallback：PATH + cmd PATHEXT 解析（errorTail 报"'npm' 不存在"）
+            var psi = new ProcessStartInfo("cmd.exe", cmdLine)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -1837,7 +1889,16 @@ internal static class Program
                 .ToList();
             if (lines.Count > 0)
                 errorTail = string.Join("\n", lines.Skip(Math.Max(0, lines.Count - 6)));
+            // 任务一/二：npm 未找到（GUI PATH 无 Node）→ errorTail 转明确提示（用户可诊断"请装 Node"）
+            if (p.ExitCode != 0 && IsNpmNotFoundError(errorTail))
+                errorTail = "未检测到 npm 环境（'npm' 不是内部或外部命令）。请确保已安装 Node.js 18+，并确认其 bin 目录在 PATH 中。";
             return p.ExitCode == 0;
+        }
+        catch (Win32Exception ex)
+        {
+            // CreateProcess 失败（cmd.exe 异常环境）：转明确 npm 环境提示而非裸异常
+            errorTail = "无法启动 npm（" + ex.Message + "）。请确保已安装 Node.js 18+。";
+            return false;
         }
         catch (Exception ex)
         {
@@ -1845,6 +1906,10 @@ internal static class Program
             return false;
         }
     }
+
+    /// <summary>判定 npm 输出是否为"找不到 npm/cmd"类错误（'不是内部或外部命令'/'not recognized'）。
+    /// 委托 ShellLogic 纯函数（任务四：契约测试锁定，NpmCmd_NotFound_FailsGracefully 语义）。</summary>
+    private static bool IsNpmNotFoundError(string tail) => ShellLogic.IsNpmNotFoundError(tail);
 
     /// <summary>
     /// 升级场景：检测已安装的其他版本 dsh-launcher（per-user 旧版 0.1.0-0.1.5 等），

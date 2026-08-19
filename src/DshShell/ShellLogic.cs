@@ -344,6 +344,38 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 判定 npm 输出是否为"找不到 npm/cmd"类错误（'不是内部或外部命令'/'not recognized'）：
+    /// GUI 进程从桌面启动时 PATH 可能不含 Node 目录，`cmd /c npm` 会报该错误——据此在失败
+    /// 弹窗中提示"请安装 Node.js 18+"而非笼统"下载失败"。纯函数可单测。</summary>
+    internal static bool IsNpmNotFoundError(string tail)
+    {
+        if (string.IsNullOrWhiteSpace(tail)) return false;
+        return tail.Contains("不是内部或外部命令", StringComparison.Ordinal)
+            || tail.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("找不到文件", StringComparison.Ordinal)
+            || tail.Contains("系统找不到指定的文件", StringComparison.Ordinal)
+            || tail.Contains("cannot find", StringComparison.OrdinalIgnoreCase)
+            || tail.Contains("Error: Cannot find module", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 构建 npm.cmd 的绝对命令行片段（任务一纯函数：环境隔离与回退）。
+    /// <paramref name="nodeRoot"/> = 已解析的 Node 根目录（RuntimeResolver.ResolveExisting().RootDir，
+    /// 可为 null）；<paramref name="fromPath"/> = `where npm.cmd` 定位到的路径（可为 null）。
+    /// 返回带引号的 npm.cmd 绝对路径；均不可用返回 null（调用方回退 `cmd /c npm` 并靠 PATH）。</summary>
+    internal static string? ResolveNpmCmdPath(string? nodeRoot, string? fromPath)
+    {
+        if (!string.IsNullOrWhiteSpace(nodeRoot))
+        {
+            var fromRoot = Path.Combine(nodeRoot, "npm.cmd");
+            if (File.Exists(fromRoot)) return "\"" + fromRoot + "\"";
+        }
+        if (!string.IsNullOrWhiteSpace(fromPath) && File.Exists(fromPath.Trim()))
+            return "\"" + fromPath.Trim() + "\"";
+        return null;
+    }
+
+    /// <summary>
     /// 服务就绪契约（C3，P1-6）：端口有 HTTP 应答即视为就绪。**任何** HTTP 响应（含 4xx/5xx）
     /// 都算"有服务在应答"——dsh 前端监听后可能还需数十秒才提供 HTTP，只探 TCP 会提前"成功"
     /// 导致主窗白屏（历史"要二次点击"根因）；网络异常/超时/拒绝连接 → 未就绪。
