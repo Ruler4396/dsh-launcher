@@ -12,12 +12,19 @@ public interface IRuntimeManager
     void PrependToPath(string nodeRoot);
 }
 
-/// <summary>RuntimeResult.Root 含便携目录时调用 PrependToPath。</summary>
-public sealed record RuntimeResult(bool Ok, bool Ready, string? NodeExe, bool IsPortable, string? RootDir)
+/// <summary>
+/// RuntimeResult.Root 含便携目录时调用 PrependToPath。
+/// ErrorCode/ErrorDetail 承载失败语义（E1002-E1005 等）：此前 Failed() 工厂丢弃 code/detail，
+/// 组合根只能记"运行时解析失败"而无法区分"校验和不匹配(E1004)/下载失败(E1003)"——修复见
+/// LauncherAppScenarioTests.RuntimeFailure_E1004_LogsErrorCode。
+/// </summary>
+public sealed record RuntimeResult(
+    bool Ok, bool Ready, string? NodeExe, bool IsPortable, string? RootDir,
+    string? ErrorCode = null, string? ErrorDetail = null)
 {
     public static RuntimeResult ReadyNow(string nodeExe) => new(true, true, nodeExe, false, null);
     public static RuntimeResult Portable(RuntimeResolver.NodeEnvironment env) => new(true, false, env.NodeExe, env.IsPortable, env.RootDir);
-    public static RuntimeResult Failed(string? code, string? detail) => new(false, false, null, false, null);
+    public static RuntimeResult Failed(string? code, string? detail) => new(false, false, null, false, null, code, detail);
 }
 
 /// <summary>dsh 服务管理：端口/HTTP 就绪探测与启动决策（进程/僵尸/HTTP 探测）。</summary>

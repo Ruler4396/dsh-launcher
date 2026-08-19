@@ -73,8 +73,9 @@ public sealed class SplashForm : Form
         Text = "dsh-launcher 启动中";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
-        // v0.4.1b：原 440x232 字号少、窗口大显空；缩至 380x196 紧凑布局，控件等比收紧。
-        ClientSize = new Size(380, 196);
+        // v0.4.2：紧凑布局 380x180——边距统一 16px，Label/进度条/按钮垂直收紧，
+        // 消除"字少窗空"视觉失衡；高度按内容收敛（较 0.4.1 的 196 再减 16）。
+        ClientSize = new Size(380, 180);
         MinimizeBox = false;
         MaximizeBox = false;
         // 加载窗必须 TopMost——否则用户前台有其他窗口时，加载窗藏在后面看不到（并行开窗 Step5）。
@@ -84,19 +85,19 @@ public sealed class SplashForm : Form
 
         // ---- 预渲染：构造时立即设置默认文本/颜色/布局，不依赖任何事件先触发再绘制 ----
         _statusLabel.Text = "正在准备启动…";
-        _statusLabel.Location = new Point(18, 14);
-        _statusLabel.Size = new Size(344, 38);
+        _statusLabel.Location = new Point(16, 12);
+        _statusLabel.Size = new Size(348, 32);
         _statusLabel.ForeColor = SystemColors.WindowText;
         _statusLabel.AutoEllipsis = true;
 
         _bar.Style = ProgressBarStyle.Marquee;
         _bar.MarqueeAnimationSpeed = 30; // 后台缓冲下的不确定进度条动画平滑无闪烁
-        _bar.Location = new Point(18, 58);
-        _bar.Size = new Size(344, 12);
+        _bar.Location = new Point(16, 50);
+        _bar.Size = new Size(348, 10);
 
         _cancelButton.Text = "取消";
-        _cancelButton.Location = new Point(306, 166);
-        _cancelButton.Size = new Size(60, 24);
+        _cancelButton.Location = new Point(302, 148);
+        _cancelButton.Size = new Size(60, 22);
         _cancelButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         _cancelButton.Click += (_, _) =>
         {
@@ -115,18 +116,18 @@ public sealed class SplashForm : Form
         // MessageBox.Show 会开启一个嵌套消息循环（模态），与本窗体消息泵叠加造成两层循环；
         // 内联面板与 Splash 共用同一消息泵，确认期间 Splash 照常刷新、取消照常可用。
         _confirmPanel.Visible = false;
-        _confirmPanel.Bounds = new Rectangle(18, 78, 344, 86);
+        _confirmPanel.Bounds = new Rectangle(16, 66, 348, 76);
         _confirmTitle.Location = new Point(0, 2);
-        _confirmTitle.Size = new Size(344, 16);
+        _confirmTitle.Size = new Size(348, 16);
         _confirmTitle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
         _confirmText.Location = new Point(0, 22);
-        _confirmText.Size = new Size(344, 38);
+        _confirmText.Size = new Size(348, 32);
         _confirmText.AutoEllipsis = true;
         _confirmYes.Text = "是";
-        _confirmYes.Location = new Point(212, 60);
+        _confirmYes.Location = new Point(220, 52);
         _confirmYes.Size = new Size(62, 22);
         _confirmNo.Text = "否";
-        _confirmNo.Location = new Point(278, 60);
+        _confirmNo.Location = new Point(284, 52);
         _confirmNo.Size = new Size(62, 22);
         _confirmYes.Click += (_, _) => FinishConfirm(true);
         _confirmNo.Click += (_, _) => FinishConfirm(false);

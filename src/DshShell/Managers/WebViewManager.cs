@@ -88,7 +88,8 @@ public sealed class WebViewManager : IWebViewManager
             if (uri.Scheme is not ("http" or "https")) return;   // about:/blob:/data: 等内部资源放行
             if (uri.Host is "127.0.0.1" or "localhost") return;  // 本地 dsh 服务
             e.Cancel = true;
-            try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
+            try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); }
+                        catch (Exception ex) { Logger.Warn("open external link in default browser failed: " + ex.Message); }
         };
 
         // 下载：固定保存到系统"下载"文件夹（自动避开同名文件），完成后用默认程序打开
@@ -117,19 +118,20 @@ public sealed class WebViewManager : IWebViewManager
                             // 可执行代码面）只落盘 + 气泡提示，不自动执行，防恶意下载自动运行（S2 修复）。
                             if (ShellLogic.IsSafeToOpen(e.DownloadOperation.ResultFilePath))
                             {
-                                Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true });
+                                try { Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true }); }
+                                catch (Exception ex) { Logger.Warn("open downloaded file failed: " + ex.Message); }
                             }
                             else
                             {
                                 try { DownloadNotifyAction?.Invoke(e.DownloadOperation.ResultFilePath); }
-                                catch { /* 托盘气泡失败忽略 */ }
+                                catch (Exception ex) { Logger.Warn("download notify balloon failed: " + ex.Message); }
                             }
                         }
-                        catch { /* 无默认程序打开时忽略 */ }
+                        catch (Exception ex) { Logger.Warn("download completion handling failed: " + ex.Message); }
                     }
                 };
             }
-            catch { /* 处理失败时回退 WebView2 默认下载行为 */ }
+            catch (Exception ex) { Logger.Warn("download handling failed; falling back to default behavior: " + ex.Message); }
         };
 
         // 弹窗策略（分类逻辑见 ShellLogic.ClassifyPopup）：
@@ -142,7 +144,8 @@ public sealed class WebViewManager : IWebViewManager
             {
                 case ShellLogic.PopupTarget.External:
                     e.Handled = true;
-                    try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
+                    try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); }
+                        catch (Exception ex) { Logger.Warn("open external link in default browser failed: " + ex.Message); }
                     return;
                 case ShellLogic.PopupTarget.Internal:
                 {
@@ -210,7 +213,8 @@ public sealed class WebViewManager : IWebViewManager
                     if (now - last > 10_000
                         && Interlocked.CompareExchange(ref _lastReloadTick, now, last) == last)
                     {
-                        try { web.CoreWebView2.Reload(); } catch { }
+                        try { web.CoreWebView2.Reload(); }
+                        catch (Exception ex) { Logger.Warn("webview reload after process failure failed: " + ex.Message); }
                     }
                 }
             }
@@ -230,7 +234,7 @@ public sealed class WebViewManager : IWebViewManager
                     var state = await web.CoreWebView2.ExecuteScriptAsync("document.readyState");
                     File.WriteAllText(readyStatePath, state);
                 }
-                catch { /* 测试钩子失败不影响功能 */ }
+                catch (Exception ex) { Logger.Warn("ready-state test hook failed: " + ex.Message); }
             };
         }
     }

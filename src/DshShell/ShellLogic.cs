@@ -359,6 +359,24 @@ public static class ShellLogic
         }
     }
 
+    /// <summary>异步端口探测（v0.4.2 卡顿修复）：ConnectAsync 不再阻塞调用线程；3s 超时兜底。
+    /// 与 <see cref="PortOpen"/> 语义一致（契约 C3），仅异步化——ServiceManager 轮询使用。</summary>
+    internal static async Task<bool> PortOpenAsync(string host, int port, CancellationToken ct = default)
+    {
+        try
+        {
+            using var c = new System.Net.Sockets.TcpClient();
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(3));
+            await c.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch
+        {
+            return false; // 探测失败 = 端口未开（预期操作失败，非异常）
+        }
+    }
+
     /// <summary>读取日志文件尾部若干行（用于失败弹窗里直接展示原因）；大文件不整读（流式 + 受限队列）。
     /// 读取失败返回空列表。P1-1（质量治理）：改用 FileShare.ReadWrite 共享读——运行中的 dsh 服务以
     /// cmd >> 重定向持有 dsh.log（独占写共享），默认 FileShare.Read 会被拒（--diagnose 曾因此失败）；
