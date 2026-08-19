@@ -359,19 +359,21 @@ public static class ShellLogic
     }
 
     /// <summary>
-    /// 构建 npm.cmd 的绝对命令行片段（任务一纯函数：环境隔离与回退）。
+    /// 构建 npm.cmd 的绝对路径（任务一纯函数：环境隔离与回退）。
     /// <paramref name="nodeRoot"/> = 已解析的 Node 根目录（RuntimeResolver.ResolveExisting().RootDir，
     /// 可为 null）；<paramref name="fromPath"/> = `where npm.cmd` 定位到的路径（可为 null）。
-    /// 返回带引号的 npm.cmd 绝对路径；均不可用返回 null（调用方回退 `cmd /c npm` 并靠 PATH）。</summary>
+    /// 返回**不带引号**的 npm.cmd 绝对路径（引号/转义由调用方 RunNpmCommand 按 cmd /c 规则统一处理，
+    /// 避免"带引号路径 + cmd /c 引号剥离"导致的 ERROR_INVALID_NAME——用户 22:2x 下载 E4001 根因）；
+    /// 均不可用返回 null（调用方回退 `cmd /c npm` 并靠 PATH）。</summary>
     internal static string? ResolveNpmCmdPath(string? nodeRoot, string? fromPath)
     {
         if (!string.IsNullOrWhiteSpace(nodeRoot))
         {
             var fromRoot = Path.Combine(nodeRoot, "npm.cmd");
-            if (File.Exists(fromRoot)) return "\"" + fromRoot + "\"";
+            if (File.Exists(fromRoot)) return fromRoot;
         }
         if (!string.IsNullOrWhiteSpace(fromPath) && File.Exists(fromPath.Trim()))
-            return "\"" + fromPath.Trim() + "\"";
+            return fromPath.Trim();
         return null;
     }
 

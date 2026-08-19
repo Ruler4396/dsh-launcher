@@ -243,25 +243,45 @@ public class UpdateFlowContractTests
     {
         // NpmCmd_Execution_Works 语义：优先用已解析的 Node 根目录拼 npm.cmd 绝对路径
         //（GUI PATH 缺 Node 时的隔离方案）；根目录无 npm.cmd 时回退 where 定位结果。
+        // 返回**裸路径不带引号**（引号/转义由 RunNpmCommand 按 cmd /c 规则统一处理——
+        // 这是"带引号路径 + cmd /c 引号剥离 → ERROR_INVALID_NAME"根因修复的契约）。
         using var tmp = new TempDir();
         var nodeRoot = Path.Combine(tmp.Path, "node");
         Directory.CreateDirectory(nodeRoot);
 
-        // ① Node 根目录有 npm.cmd → 优先返回它（带引号）
+        // ① Node 根目录有 npm.cmd → 优先返回它（裸路径）
         var npmRoot = Path.Combine(nodeRoot, "npm.cmd");
         File.WriteAllText(npmRoot, "npm shim");
-        Assert.Equal("\"" + npmRoot + "\"", ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
+        Assert.Equal(npmRoot, ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
 
         // ② Node 根目录无 npm.cmd → 回退 where 结果
         File.Delete(npmRoot);
         var wherePath = Path.Combine(tmp.Path, "where-npm.cmd");
         File.WriteAllText(wherePath, "npm shim");
-        Assert.Equal("\"" + wherePath + "\"", ShellLogic.ResolveNpmCmdPath(nodeRoot, wherePath));
+        Assert.Equal(wherePath, ShellLogic.ResolveNpmCmdPath(nodeRoot, wherePath));
 
         // ③ 两者都不可用（不存在）→ null（调用方回退 cmd /c npm 并靠 PATH）
         Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
         Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, Path.Combine(tmp.Path, "ghost.cmd")));
         Assert.Null(ShellLogic.ResolveNpmCmdPath(null, null));
+    }
+
+    [Fact]
+    public void RunNpmCommand_CmdLine_UsesDoubleQuotedWrapper_NotBareQuotedPath()
+    {
+        // 根因契约（用户 22:2x E4001"文件名、目录名或卷标语法不正确"）：
+        // 带引号 npm 路径直接拼进 cmd /c（`/c "D:\node\npm.cmd" args`）时，cmd 剥离首尾引号
+        // 后引号计数错乱 → ERROR_INVALID_NAME。锁定正确形式是整行双层引号包裹：
+        //   /c ""D:\node\npm.cmd" pack ..."
+        // 该断言守护"不得回归为裸引号拼接"（test.ps1 静态断言 + 本测试双保险）。
+        var npmPath = "D:\\node\\npm.cmd";
+        var args = "pack @deepseek-ai/dsh@1.2.3 --pack-destination \"C:\\staging\\prefetch_temp\"";
+        var cmdLine = "/c \"\"" + npmPath + "\" " + args + "\"";
+        Assert.Equal("/c \"\"D:\\node\\npm.cmd\" pack @deepseek-ai/dsh@1.2.3 --pack-destination \"C:\\staging\\prefetch_temp\"\"", cmdLine);
+        // 关键断言：整体以双层引号闭合，且 npm 路径自身不带裸引号（防止回归到错误形式）
+        Assert.StartsWith("/c \"\"", cmdLine);
+        Assert.EndsWith("\"\"", cmdLine);
+        Assert.Contains("\"\"D:\\node\\npm.cmd\" ", cmdLine);
     }
 
     [Theory]

@@ -1841,10 +1841,15 @@ internal static class Program
             // 执行，由 cmd 按 PATHEXT 解析 npm.cmd；重定向 stdout/stderr。
             // v0.4.0 任务一：GUI 进程 PATH 可能不含 Node 目录 → 优先用已解析的 Node 根目录
             // 拼 npm.cmd 绝对路径（ResolveNpmCmdPath），避免 "'npm' 不是内部或外部命令"。
-            // 绝对路径含空格 → cmd /c "\"C:\path with space\npm.cmd\"" args 形式（外层引号包裹）。
+            // cmd /c 引号规则（实测锁定，用户 22:2x 下载 E4001 根因）：
+            //   - `cmd /c "D:\node\npm.cmd" pack ...`（npm 路径带引号、外层无包裹）→ cmd 剥离
+            //     首尾引号后引号计数错乱 → ERROR_INVALID_NAME（中文"文件名、目录名或卷标语法不正确"）
+            //   - `cmd /c ""D:\node\npm.cmd" pack ..."`（整行双层引号包裹）→ cmd 剥离最外层，
+            //     内部引号保留给 npm → 正常执行；含空格路径亦安全（实测验证）。
+            // ResolveNpmCmdPath 现返回不带引号的裸路径，这里按 cmd 标准形式包裹。
             var npmCmd = ResolveNpmCmdPath();
             var cmdLine = npmCmd is not null
-                ? "/c " + npmCmd + " " + args
+                ? "/c \"\"" + npmCmd + "\" " + args + "\""
                 : "/c npm " + args; // Fallback：PATH + cmd PATHEXT 解析（errorTail 报"'npm' 不存在"）
             var psi = new ProcessStartInfo("cmd.exe", cmdLine)
             {
@@ -1852,11 +1857,9 @@ internal static class Program
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                // 编码加固：中文 Windows 的 cmd/npm 输出 GBK，默认 UTF-8 解码会乱码
-                //（实测 stderr 为 �ļ�����Ŀ¼...），导致 errorTail/弹窗不可读。显式 UTF-8
-                // 保证任何系统代码页下错误信息语义正确、可读（铁律：异常透明）。
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
+                // 编码：不显式设置（.NET 默认用系统 ANSI 代码页解码，中文 Windows 即 GBK，
+                // 中文错误可读）。曾尝试 StandardErrorEncoding=UTF8 反致 GBK 中文变 U+FFFD 乱码
+                //（实测 stderr 变 \uFFFD...），故保持默认，避免二次损坏。
                 // 预热（prefetch）必须在该工作目录执行，否则 `./<tarball>`、`--prefix ./deps`
                 // 相对路径会指向 DshWeb.exe 目录（ENOENT 根因：用户 21:19/21:40 下载秒败）。
                 WorkingDirectory = workingDirectory,
