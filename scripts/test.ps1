@@ -159,6 +159,9 @@ Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm
 $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
 Assert-True ($logicSrc -match 'ResolveNpmCmdPath') "ShellLogic 提供 npm.cmd 解析纯函数（Node 根→where 回退，可单测）"
+# ---- 预热工作目录修复（用户 21:19/21:40 下载秒败 ENOENT 根因）静态断言 ----
+Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
+Assert-True ($shellSrc -match 'workingDirectory: prefetchDir') "预热传入 prefetch_temp 为工作目录（ENOENT 根因修复：此前默认 DshWeb.exe 目录）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"

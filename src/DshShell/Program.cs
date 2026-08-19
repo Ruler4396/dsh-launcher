@@ -1566,10 +1566,13 @@ internal static class Program
                 try
                 {
                     Logger.Info($"dependency prefetch starting: {latest}"); // 后台静默预热，进度经日志留痕
+                    // 修复（用户 21:19/21:40 下载秒败 ENOENT）：预热必须在 prefetch_temp 工作目录
+                    // 执行——`./<tarball>`、`--prefix ./deps` 相对路径依赖该目录，默认 WorkingDirectory
+                    // 是 DshWeb.exe 目录，npm 找不到 tarball 直接 ENOENT。传入 prefetchDir 修正。
                     prefetched = RunNpmCommand(
                         $"install \"./{tarballName}\" --prefix \"./deps\" --no-audit --no-fund"
                             + GetNpmRegistryArgs(),
-                        out var prefetchTail, timeoutMs: 180000);
+                        out var prefetchTail, timeoutMs: 180000, workingDirectory: prefetchDir);
                     if (prefetched)
                     {
                         Logger.Info($"dependency prefetch complete: {latest}",
@@ -1822,7 +1825,7 @@ internal static class Program
     /// <paramref name="progress"/>（任务一进阶）：逐行转发 npm 实时安装日志（如 "added 50 packages"）
     /// 到 Splash，滚动显示消除"更新卡死"焦虑。收集的 stdout+stderr 仍用于 errorTail 诊断。</summary>
     private static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
-        Action<string>? progress = null, int timeoutMs = 120000)
+        Action<string>? progress = null, int timeoutMs = 120000, string? workingDirectory = null)
     {
         errorTail = "";
         try
@@ -1845,6 +1848,9 @@ internal static class Program
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                // 预热（prefetch）必须在该工作目录执行，否则 `./<tarball>`、`--prefix ./deps`
+                // 相对路径会指向 DshWeb.exe 目录（ENOENT 根因：用户 21:19/21:40 下载秒败）。
+                WorkingDirectory = workingDirectory,
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
