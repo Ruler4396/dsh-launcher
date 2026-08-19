@@ -1024,6 +1024,14 @@ internal static class Program
     /// </summary>
     private static void HandlePendingUpdateAtStartup(CancellationToken ct)
     {
+        // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 模拟"确认更新→重启→应用"全流程（DshUpdateFlowTests）。
+        // 直接走 ApplyPendingDshUpdate（其内部 fake 分支清 pending），**不依赖端口状态**——否则
+        // 本地残留服务（端口开）时决策走 PromptRestart，pending 保留，测试不稳定。
+        if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
+        {
+            ApplyPendingDshUpdate(ct);
+            return;
+        }
         var (pendingVersion, _) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(pendingVersion)) return;
         var action = ShellLogic.ResolvePendingUpdateAction(
@@ -1501,6 +1509,14 @@ internal static class Program
     {
         var version = StagedUpdate.ReadPendingVersion();
         if (string.IsNullOrWhiteSpace(version)) return;
+        // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 在无 node 环境模拟"应用成功"——直接清 pending，
+        // 验证"重启后 pending 清账 + 不再重复弹更新"链路（DshUpdateFlowTests）。生产不设置。
+        if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
+        {
+            StagedUpdate.ClearPending();
+            Logger.Info($"fake apply staged dsh update (test hook): {version}");
+            return;
+        }
         Logger.Info($"applying staged dsh update to {version}");
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
         if (RunNpmCommand($"install -g @deepseek-ai/dsh@{version}", out var errorTail, ct))
