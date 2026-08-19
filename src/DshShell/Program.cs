@@ -4,8 +4,9 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using DshWeb.Chrome; // CustomTitleBar（自绘标题栏已迁出至 Chrome 层）
+using DshWeb.Chrome; // CustomTitleBar / WindowChromeController（自绘标题栏已迁出至 Chrome 层）
 using DshWeb.Managers; // F11LowLevelHook（F11 钩子已迁出至 Managers 层）
+using DshWeb.Win32; // Win32Constants/NativeMethods（结构体与 P/Invoke 已迁出）
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
@@ -2928,91 +2929,22 @@ internal static class Program
         internal WebView2? MainWebView2;
         private FormWindowState _lastWindowState = FormWindowState.Normal;
 
-        private const int WM_GETMINMAXINFO = 0x0024;
-        private const int WM_NCHITTEST = 0x0084;
-        // Aero Snap（拖到屏幕边缘的半屏/最大化、Win+方向键）依赖 WS_CAPTION|WS_THICKFRAME
-        // 样式位；FormBorderStyle.None 会把它们剥掉（0.1.10 自绘标题栏后贴边失效的根因）。
-        // 方案：样式位加回来，再用 WM_NCCALCSIZE 吃掉原生框架预留区，观感仍是全自绘无边框
-        //（Chromium / Windows Terminal 同款做法）。
-        private const int WM_NCCALCSIZE = 0x0083;
-        // 不用 WS_CAPTION（含 WS_BORDER|WS_DLGFRAME）：去掉后 DWM 在最大化时不再为原生
-        // 标题栏/边框预留非客户区空间，配合 WM_NCCALCSIZE 返回 0，系统不会把窗口向外扩展，
-        // WM_GETMINMAXINFO 直接设工作区即精确铺满（消除 4px 内缩间隙）。
-        // 保留 WS_THICKFRAME（Aero Snap/Win+方向键/边缘缩放）、WS_MINIMIZEBOX/MAXIMIZEBOX
-        //（任务栏收起/Alt+Space 项）、WS_SYSMENU（Alt+Space 系统菜单）。
-        private const int WS_THICKFRAME = 0x00040000;
-        private const int WS_MINIMIZEBOX = 0x00020000;
-        private const int WS_MAXIMIZEBOX = 0x00010000;
-        private const int WS_SYSMENU = 0x00080000;
-        private const int HTCLIENT = 0x0001;
-        private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
-        private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
-        private const int ResizeEdge = 8;
-        private const uint SWP_NOSIZE = 0x0001;
-        private const uint SWP_NOMOVE = 0x0002;
-        private const uint SWP_NOZORDER = 0x0004;
-        private const uint SWP_NOACTIVATE = 0x0010;
-        private const uint SWP_FRAMECHANGED = 0x0020;
-
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
-            int X, int Y, int cx, int cy, uint uFlags);
-
-        // Step 1 多屏修复（G1/G10）P/Invoke：物理像素工作区来源。
-        // 为什么必须物理像素：PerMonitorV2 下 Screen.FromHandle.WorkingArea 是逻辑像素，
-        // 150% 缩放副屏会把工作区算小 → 最大化铺不满/丢窗。MonitorFromWindow+GetMonitorInfo
-        // 拿 rcWork（物理像素）喂 ComputeMaximizedMinMaxInfo 消除陷阱（矩阵 G1/G10）。
-        [DllImport("user32.dll")]
-        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
-
-        private const uint MONITOR_DEFAULTTONEAREST = 2; // 取最近监视器（副屏窗口归属判定）
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct POINT { public int X, Y; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct RECT { public int Left, Top, Right, Bottom; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MONITORINFO
-        {
-            public int cbSize;
-            public RECT rcMonitor;
-            public RECT rcWork;      // 物理像素工作区（最大化铺满目标）
-            public uint dwFlags;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NCCALCSIZE_PARAMS
-        {
-            public RECT rgrc0;
-            public RECT rgrc1;
-            public RECT rgrc2;
-            public IntPtr lppos;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MINMAXINFO
-        {
-            public POINT ptReserved;
-            public POINT ptMaxSize;
-            public POINT ptMaxPosition;
-            public POINT ptMinTrackSize;
-            public POINT ptMaxTrackSize;
-        }
+        // Step 3 薄壳化：结构体/常量/P- Invoke 已迁入 Win32/NativeMethods.cs；
+        // 决策逻辑下沉 WindowChromeController（Chrome/WindowChromeController.cs）。
+        // override 只做消息解码 + 转发（铁律 3）。常量引用 Win32Constants 逐位等价。
+        private readonly WindowChromeController _chrome = new();
 
         protected override CreateParams CreateParams
         {
             get
             {
+                // Step 3 薄壳：样式位决策转发到 controller（矩阵 G6）。
                 // 加回 WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU：恢复 Aero Snap
                 // /Win+方向键/任务栏收起/Alt+Space 系统菜单（FormBorderStyle.None 默认剥掉）。
                 // 不加 WS_CAPTION：避免 DWM 在最大化时预留原生标题栏空间导致窗口外扩。
                 // 原生边框观感由 WM_NCCALCSIZE 返回 0 去除，自绘标题栏 + 1px 边框不变。
                 var cp = base.CreateParams;
-                cp.Style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+                _chrome.ApplyWindowStyle(cp);
                 return cp;
             }
         }
@@ -3075,20 +3007,17 @@ internal static class Program
         /// </summary>
         internal void ForceNonClientRedraw()
         {
-            try
-            {
-                if (Handle == IntPtr.Zero) return;
-                SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0,
-                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-            catch { /* 重绘失败不影响功能 */ }
+            // Step 3 薄壳：决策/调用转发到 controller（矩阵 G3 闪影清除）
+            _chrome.ForceNonClientRedraw(Handle);
         }
 
         protected override void WndProc(ref Message m)
         {
+            // Step 3 薄壳：override 保留（WinForms 硬约束），只做消息解码 + 转发；
+            // 常量/结构体/P-Invoke 已迁入 Win32/NativeMethods.cs，行为逐位不变。
             switch (m.Msg)
             {
-                case WM_NCCALCSIZE:
+                case Win32Constants.WM_NCCALCSIZE:
                     // wParam=TRUE：返回 0 即声明"客户区 = 整个窗口矩形"（吃掉系统
                     // 标题栏/边框预留，自绘标题栏照常占据客户区顶部）。
                     // 注意：不能在此钳制 rgrc0（会让客户区比窗口小，DWM 在残留区画
@@ -3101,39 +3030,39 @@ internal static class Program
                     }
                     base.WndProc(ref m);
                     return;
-                case WM_NCACTIVATE:
+                case Win32Constants.WM_NCACTIVATE:
                     // 不吞掉则 DefWindowProc 用经典 NC 渲染器画 Win98 式标题栏（见 ADR-003）；
                     // 本窗口 NC 全自绘，吞掉并返回 1（声明已处理激活态重绘）。
                     ForceNonClientRedraw();
                     m.Result = (IntPtr)1; // 1：已处理激活态重绘
                     return;
-                case WM_NCPAINT:
+                case Win32Constants.WM_NCPAINT:
                     // 非客户区绘制：1px 边框由 Form.BackColor + 客户区内缩自绘，不画原生框架（ADR-003）。
                     m.Result = IntPtr.Zero;
                     return;
-                case WM_GETMINMAXINFO:
+                case Win32Constants.WM_GETMINMAXINFO:
                 {
-                    var mmi = Marshal.PtrToStructure<MINMAXINFO>(m.LParam);
+                    var mmi = Marshal.PtrToStructure<NativeMethods.MINMAXINFO>(m.LParam);
                     // Step 1 多屏修复（G1/G10）：物理像素工作区（MonitorFromWindow+GetMonitorInfo），
                     // 替代 Screen.FromHandle 的逻辑像素陷阱（150% 副屏把工作区算小 → 丢窗）。
                     // 决策全在纯函数 ComputeMaximizedMinMaxInfo，此处只做"取物理工作区 + 转发"。
-                    var hmon = MonitorFromWindow(Handle, MONITOR_DEFAULTTONEAREST);
-                    var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-                    GetMonitorInfo(hmon, ref mi);
+                    var hmon = NativeMethods.MonitorFromWindow(Handle, Win32Constants.MONITOR_DEFAULTTONEAREST);
+                    var mi = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+                    NativeMethods.GetMonitorInfo(hmon, ref mi);
                     var work = new Rectangle(mi.rcWork.Left, mi.rcWork.Top,
                         mi.rcWork.Right - mi.rcWork.Left, mi.rcWork.Bottom - mi.rcWork.Top);
                     var mm = DshWeb.Win32.WindowGeometry.ComputeMaximizedMinMaxInfo(work);
                     // 去 WS_CAPTION 后系统最大化不再外扩，直接给工作区即 0px 精确铺满、不越任务栏（ADR-001）。
-                    mmi.ptMaxSize = new POINT { X = mm.MaxSize.X, Y = mm.MaxSize.Y };
-                    mmi.ptMaxPosition = new POINT { X = mm.MaxPos.X, Y = mm.MaxPos.Y };
-                    mmi.ptMaxTrackSize = new POINT { X = mm.MaxTrack.X, Y = mm.MaxTrack.Y };
+                    mmi.ptMaxSize = new NativeMethods.POINT { X = mm.MaxSize.X, Y = mm.MaxSize.Y };
+                    mmi.ptMaxPosition = new NativeMethods.POINT { X = mm.MaxPos.X, Y = mm.MaxPos.Y };
+                    mmi.ptMaxTrackSize = new NativeMethods.POINT { X = mm.MaxTrack.X, Y = mm.MaxTrack.Y };
                     Marshal.StructureToPtr(mmi, m.LParam, false);
                     m.Result = IntPtr.Zero;
                     return;
                 }
-                case WM_NCHITTEST:
+                case Win32Constants.WM_NCHITTEST:
                     base.WndProc(ref m);
-                    if (m.Result == (IntPtr)HTCLIENT)
+                    if (m.Result == (IntPtr)Win32Constants.HTCLIENT)
                     {
                         // 64 位屏幕坐标：左侧/上方副屏为负坐标，LParam.ToInt32() 会抛 OverflowException
                         //（B1）。正确拆位：低 16 位有符号 = X，高 16 位有符号 = Y。
@@ -3143,7 +3072,7 @@ internal static class Program
                         // Step 1 纯函数下沉（G4/G5）：决策在 WindowGeometry.HitTestResizeEdge，
                         // 最大化返回 null（边缘不出现缩放指针）。行为与旧内联判定逐位一致。
                         var ht = DshWeb.Win32.WindowGeometry.HitTestResizeEdge(
-                            pt, r, ResizeEdge, maximized: WindowState == FormWindowState.Maximized);
+                            pt, r, Win32Constants.ResizeEdge, maximized: WindowState == FormWindowState.Maximized);
                         if (ht is not null) m.Result = (IntPtr)ht.Value;
                     }
                     return;
