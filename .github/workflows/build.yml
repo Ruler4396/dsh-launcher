@@ -3,7 +3,9 @@ name: build
 on:
   push:
     branches: [master]
-    tags: ["v*"]
+    # 仅正式语义版本 tag 触发发布打包（v0.4.0 等）；preview tag（如 v0.4.0-preview）不触发——
+    # 预览版由手动 gh release create 发布，且 build-release.ps1 仅接受 x.y.z 格式版本号。
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
 
 # 供应链卫生（S4）：顶层默认最小权限 contents: read；Release 发布在独立 job 中放开 write。

@@ -93,9 +93,12 @@ $work = Join-Path $env:TEMP ("vd-driver-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 $zip = $DriverZip
 if (-not $zip) {
-    # 默认从 Virtual-Display-Driver（rocketGod / jglrxavp 等镜像）拉取预编译 zip。
+    # 默认从 VirtualDrivers/Virtual-Display-Driver（原 rocketGod-git/jglrxavp 组织已迁移）拉取
+    # 预编译 zip。注意 jglrxavp/iddsample 的 releases/latest 已 404（上游删除了 assets），
+    # 2026-08 起改用 VirtualDrivers 组织的 Driver.Only 包（tag 25.7.23+）。
+    # 设备默认创建 1 块虚拟副屏（1600x900@100%）；-Count 2 需在 DSH_HOME 放 option.txt 配置。
     # CI 网络受限时用 -DriverZip 指到预置在 repo 缓存/自托管 Runner 的包。
-    $defaultUrl = "https://github.com/jglrxavp/iddsample/releases/latest/download/IddSampleDriver.zip"
+    $defaultUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/latest/download/VirtualDisplayDriver-x86.Driver.Only.zip"
     $zip = Join-Path $work "idd.zip"
     Write-Host "  下载虚拟显示驱动: $defaultUrl"
     Invoke-WebRequest -Uri $defaultUrl -OutFile $zip -UseBasicParsing

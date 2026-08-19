@@ -146,18 +146,23 @@ internal sealed class DshShellForm : Form
             case Win32Constants.WM_GETMINMAXINFO:
             {
                 var mmi = Marshal.PtrToStructure<NativeMethods.MINMAXINFO>(m.LParam);
-                // 多屏 DPI 修复（G1/G10）：物理像素工作区 + DPI 边框补偿。
+                // 多屏 DPI 修复（G1/G10）：物理像素工作区。
                 // 经 IDisplayMetricsProvider 拿"窗口所在监视器"的物理像素指标（MonitorFromWindow
                 // + GetMonitorInfo 取 rcWork，GetDpiForWindow 取该屏 DPI），替代 Screen.FromHandle
                 // 的逻辑像素陷阱（150% 副屏把工作区算小 → 丢窗）。
                 // 决策全在纯函数 ComputeMaximizedMinMaxInfo，此处只做"取指标 + 转发"（铁律 3）。
+                //
+                // v0.4.2 回归修复：**不再做 frame（DWM 外扩）补偿**。本窗口在 CreateParams 中
+                // 去掉了 WS_CAPTION——Windows 对去 WS_CAPTION 的窗口最大化时**不再向外扩 frame**
+                //（ADR-001 旧注释 + e2e-geo CI 实测：e3f2d8d 引入 GetWindowFrameSize 补偿后，
+                // 最大化矩形从 (0,0,work) 变成 (8,8,work-16)，四周留 8px 缝隙）。直接给物理
+                // 工作区即 0px 精确铺满；ptMaxTrackSize 同为物理工作区（Normal 贴边拖拽上限，
+                // 不扣 frame，业界 Windows Terminal / Chromium 同款）。
+                // 带 frame 的补偿重载仅适用于保留 WS_CAPTION 的窗口（那里系统最大化才外扩）。
                 try
                 {
                     var metrics = _display.GetMonitorMetrics(Handle);
-                    var frame = _display.GetWindowFrameSize(Handle, metrics.Dpi);
-                    // 若边框厚度为 0（如无 WS_THICKFRAME 的裸窗口），纯函数自动退化为"直接给
-                    // 工作区"的 0px 铺满语义；有边框时反向补偿 DWM 外扩，最终外矩形恰等于 rcWork。
-                    var mm = DshWeb.Win32.WindowGeometry.ComputeMaximizedMinMaxInfo(metrics.WorkArea, frame);
+                    var mm = DshWeb.Win32.WindowGeometry.ComputeMaximizedMinMaxInfo(metrics.WorkArea);
                     mmi.ptMaxSize = new NativeMethods.POINT { X = mm.MaxSize.X, Y = mm.MaxSize.Y };
                     mmi.ptMaxPosition = new NativeMethods.POINT { X = mm.MaxPos.X, Y = mm.MaxPos.Y };
                     mmi.ptMaxTrackSize = new NativeMethods.POINT { X = mm.MaxTrack.X, Y = mm.MaxTrack.Y };

@@ -50,8 +50,10 @@ public static class UiTestHook
                 await server.WaitForConnectionAsync(ct);
                 // leaveOpen: true —— StreamReader/Writer 默认持有并关闭底层流，逆序 Dispose 时会
                 // 先关管道再 flush，导致 "Cannot access a closed pipe"；统一由 server 关闭。
+                // AutoFlush: true —— 必须显式开启：回复 WriteLine 后立即落管道，否则客户端
+                // ReadLineAsync 永远读不到（v0.4.2 卡死根因：改 leaveOpen 时丢了 AutoFlush）。
                 using var reader = new StreamReader(server, Encoding.UTF8, true, 1024, leaveOpen: true);
-                using var writer = new StreamWriter(server, new UTF8Encoding(false), 1024, leaveOpen: true);
+                using var writer = new StreamWriter(server, new UTF8Encoding(false), 1024, leaveOpen: true) { AutoFlush = true };
                 // 一条连接可处理多条命令；保持连接直到客户端 EOF（ReadLineAsync 返回 null），
                 // 避免"服务端回复后立即关闭"导致客户端 StreamWriter.Dispose 时踩关闭的管道。
                 while (true)

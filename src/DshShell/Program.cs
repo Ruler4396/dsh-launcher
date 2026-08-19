@@ -718,6 +718,11 @@ internal static class Program
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             };
             form.Controls.Add(form.TitleBar);
+            // 与真实主窗对齐（见本文件建窗处的 HandleCreated 订阅）：启用 DWM NC 渲染后，
+            // 最大化窗口才会向四周外扩 frame——WM_GETMINMAXINFO 的 frame 补偿（pos=work+frame,
+            // size=work-2*frame）才成立。探针此前缺此行 → CI（Server runner）上 DWM 不外扩、
+            // 补偿落空 → 最大化后四周留 8px 缝隙（e2e-geo G1/G10 回归根因）。
+            form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
 
             var web = new WebView2
             {

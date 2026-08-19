@@ -23,35 +23,30 @@ public static class WindowGeometry
     /// 最大化铺满决策（矩阵 G1/G10）。
     /// 入参 <paramref name="physicalWork"/> 必须是**物理像素**工作区（由适配器用
     /// MonitorFromWindow + GetMonitorInfo(rcWork) 取得），<paramref name="frame"/>
-    /// 为窗口所在监视器 DPI 下的边框厚度（物理像素），用于补偿 WS_THICKFRAME 的 DWM 外扩。
+    /// 为窗口所在监视器 DPI 下的边框厚度（物理像素）。
     ///
     /// 为什么必须是物理像素：PerMonitorV2 下 <see cref="Screen.FromHandle"/>.WorkingArea 返回
     /// **逻辑像素**，在 150% 缩放副屏上会把工作区算小，导致最大化"铺不满"或"丢窗"（多屏
     /// 血泪：窗口最大化到错误监视器边界）。用 MonitorFromWindow 取最近监视器 + GetMonitorInfo
     /// 拿 rcWork（物理像素），再喂给本函数，消除该陷阱。
     ///
-    /// 为什么需要边框补偿（本修复的核心）：
-    /// 窗口保留 WS_THICKFRAME（Aero Snap/边缘缩放依赖，见 WindowChromeController.ApplyWindowStyle），
-    /// 去 WS_CAPTION 后系统不会为原生标题栏预留空间，但 **DWM 在最大化时仍会把窗口物理矩形
-    /// 向四周外扩 frame 像素**（左/上各 -frame，右/下各 +frame，即四边都外扩）。若 WM_GETMINMAXINFO
-    /// 直接把 rcWork 设为 ptMaxSize/ptMaxPosition，最终窗口矩形会比工作区大 frame 像素，
-    /// 落在任务栏上 / 伸出屏幕外——这正是多屏（尤其左侧负坐标副屏）下"窗口飞出屏幕"的残留根因。
+    /// frame 补偿语义（v0.4.2 修正）：
+    /// 本函数支持两种调用形态：
+    /// - **无 frame（<see cref="ComputeMaximizedMinMaxInfo(Rectangle)"/>，本应用采用）**：
+    ///   直接给 rcWork，0px 精确铺满。适用于**去掉了 WS_CAPTION** 的窗口——Windows 对这类
+    ///   窗口最大化时**不再向外扩 frame**（ADR-001 已注释并获 CI 实测：e2e-geo 在 e3f2d8d
+    ///   引入带 frame 补偿后，最大化矩形从 (0,0,work) 变成 (8,8,work-16) 留 8px 缝隙）。
+    /// - **带 frame（本重载）**：补偿"DWM 外扩"——假定最大化时窗口物理矩形向四边各外扩
+    ///   frame（ptMaxPos - frame 至 ptMaxPos + ptMaxSize + 2*frame），令其恰等于 rcWork →
+    ///   ptMaxPosition = rcWork 左上角 + frame，ptMaxSize = rcWork - 2*frame。仅适用于
+    ///   **保留 WS_CAPTION** 的窗口（Windows Terminal / Chromium 自绘标题栏类）。
     ///
-    /// 补偿做法（与 Windows Terminal / Chromium 自绘标题栏同款）：
-    ///   最终外矩形 = [ptMaxPos - frame, ptMaxPos + ptMaxSize + 2*frame]
-    /// 令其恰等于工作区 → ptMaxPosition = rcWork 左上角 + frame，
-    ///                      ptMaxSize     = rcWork 尺寸 - 2*frame（每边各收一个 frame）。
-    /// frame 用 GetSystemMetricsForDpi(SM_CXSIZEFRAME/CYSIZEFRAME/CXPADDEDBORDER) 按
-    /// "窗口所在监视器 DPI" 取，异构缩放副屏才不会算错（取全局 DPI 会偏大/偏小）。
+    /// ptMaxTrackSize 恒为未补偿物理工作区尺寸：它决定 Normal 状态下用户拖拽窗口边缘
+    /// （含 Aero Snap 贴边吸附）能到达的最大尺寸，而 DWM 对 Normal 拖拽/吸附不产生
+    /// Maximized 式外扩。若 maxTrack 扣 frame，用户拖到贴边时窗口会比工作区小一圈——
+    /// 业界惯例（Windows Terminal /Chromium）是 maxTrack 直接用未补偿的物理工作区尺寸。
     ///
-    /// ptMaxTrackSize 是唯一**不扣 frame** 的字段：它决定 Normal 状态下用户拖拽窗口边缘
-    /// （含 Aero Snap 贴边吸附）能到达的最大尺寸，而 DWM 对 Normal 拖拽/吸附**不会**像
-    /// Maximized 那样额外向四周外扩 frame。若 maxTrack 也按 maxSize 扣 2*frame，用户手动
-    /// 拖到贴边时窗口会比工作区小一圈（四周留 frame 缝隙）——业界惯例（Windows Terminal
-    /// /Chromium）是 maxTrack 直接用未补偿的物理工作区尺寸。
-    ///
-    /// <paramref name="frame"/> 为 0 时退化为旧语义（直接给 rcWork，0px 铺满、不遮任务栏），
-    /// 供无需外扩补偿的调用方/旧单测保持兼容。
+    /// <paramref name="frame"/> 为 0 时本重载退化为无 frame 语义（直接给 rcWork）。
     /// </summary>
     public static MaxMinInfo ComputeMaximizedMinMaxInfo(Rectangle physicalWork, Size frame)
     {
