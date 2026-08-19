@@ -34,8 +34,8 @@ public class UiResponsivenessTests
         using var automation = new UIA3Automation();
         try
         {
-            // 1. 捕获 Splash 窗口（最多 10s）
-            var splash = await WaitForWindowAsync(automation, SplashTitle, TimeSpan.FromSeconds(10));
+            // 1. 捕获 Splash 窗口（最多 20s；CI runner 冷启动 .NET+WinForms 可达 10s+）
+            var splash = await WaitForWindowAsync(automation, SplashTitle, TimeSpan.FromSeconds(20));
             Assert.NotNull(splash);
 
             // 2. 渲染完整性：取消按钮与状态文本完全可见、尺寸正常。
