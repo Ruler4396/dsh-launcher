@@ -206,13 +206,44 @@ public class UpdateFlowContractTests
         Directory.CreateDirectory(prefetch);
         File.WriteAllText(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"), "pack");
 
-        // Staging 流程：预热失败 → 仍 MarkPending（tarball 已就位）
+        // Staging 流程：预热失败 → 仍 MarkPending（tarball 已就位），但 prefetched 必须为 false
+        //（Bug 修复契约：预热未完成不得谎报"已预热"——应用时据此诚实显示"可能需要几分钟"）
         StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
-        var (version, _, tarball) = StagedUpdate.ReadPending();
+        var (version, _, tarball, prefetched) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
+        Assert.False(prefetched, "预热失败/未完成时 prefetched 必须为 false（诚实：不承诺秒装）");
         // 重启时 LocateTarball 仍能找到 tarball（回退在线安装的本地主包入口）
         Assert.NotNull(StagedUpdate.LocateTarball(version, tarball));
+    }
+
+    [Fact]
+    public void MarkPending_Prefetched_True_IsPersisted()
+    {
+        // 诚实承诺契约：预热真实成功后 prefetched=true 必须持久化（应用时可显示"依赖已就绪"）
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz", prefetched: true);
+        var (_, _, _, prefetched) = StagedUpdate.ReadPending();
+        Assert.True(prefetched);
+    }
+
+    [Fact]
+    public void MarkPending_Prefetched_False_Default_NotLying()
+    {
+        // 诚实承诺契约（用户反馈 Bug：cache 未预热时文案却写"预计 5-10 秒"）：
+        // 未显式传 prefetched（预热失败/未完成/旧记录）→ 默认 false，绝不得谎报"已预热"。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz"); // 不传 prefetched
+        var (_, _, _, prefetched) = StagedUpdate.ReadPending();
+        Assert.False(prefetched);
+        // 旧格式（无 prefetched 字段）也视为 false（诚实：不承诺秒装）
+        File.Delete(Path.Combine(tmp.Path, "pending-update.json"));
+        File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
+            "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
+        var (_, _, _, oldPrefetched) = StagedUpdate.ReadPending();
+        Assert.False(oldPrefetched);
     }
 
     [Fact]
@@ -232,7 +263,7 @@ public class UpdateFlowContractTests
         Directory.Delete(prefetch, recursive: true);
 
         Assert.False(Directory.Exists(prefetch)); // 临时安装目录已释放
-        var (v, _, _) = StagedUpdate.ReadPending();
+        var (v, _, _, _) = StagedUpdate.ReadPending();
         Assert.Null(v); // pending 清账
     }
 

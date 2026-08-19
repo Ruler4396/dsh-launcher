@@ -341,10 +341,11 @@ public class V030FeaturesTests
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3");
-        var (version, failCount, tarball) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount);
         Assert.Null(tarball); // 未传 tarball → 旧兼容（回退线上）
+        Assert.False(prefetched); // 未传 prefetched → 默认 false（诚实：不承诺秒装）
     }
 
     [Fact]
@@ -355,7 +356,7 @@ public class V030FeaturesTests
         StagedUpdate.MarkPending("1.2.3");
         StagedUpdate.MarkApplyFailed();
         StagedUpdate.MarkApplyFailed();
-        var (version, failCount, _) = StagedUpdate.ReadPending();
+        var (version, failCount, _, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(2, failCount);
     }
@@ -366,10 +367,11 @@ public class V030FeaturesTests
         // 任务：下载阶段记录本地 tarball，MarkApplyFailed 不得丢弃它（应用失败重试仍需本地安装）
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
-        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz", prefetched: true);
         StagedUpdate.MarkApplyFailed();
-        var (_, _, tarball) = StagedUpdate.ReadPending();
+        var (_, _, tarball, prefetched) = StagedUpdate.ReadPending();
         Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
+        Assert.True(prefetched, "MarkApplyFailed 必须保留 prefetched 标志（应用失败重试仍需诚实文案）");
     }
 
     [Fact]
@@ -427,10 +429,11 @@ public class V030FeaturesTests
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
             "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
-        var (version, failCount, tarball) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount); // 旧格式兼容：无 failCount → 0
         Assert.Null(tarball);       // 旧格式兼容：无 tarball → null（回退线上）
+        Assert.False(prefetched);   // 旧格式兼容：无 prefetched → false（诚实：不承诺秒装）
     }
 
     [Fact]
@@ -466,10 +469,11 @@ public class V030FeaturesTests
         Logger.Init(log);
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"), "{broken");
-        var (version, failCount, tarball) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
         Assert.Null(version);          // 容错按无记录处理
         Assert.Equal(0, failCount);
         Assert.Null(tarball);
+        Assert.False(prefetched);
         Assert.Contains("pending-update.json is corrupt", File.ReadAllText(log)); // 但必须留痕
     }
 

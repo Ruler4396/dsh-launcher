@@ -1066,7 +1066,7 @@ internal static class Program
             ApplyPendingDshUpdate(ct, progress);
             return;
         }
-        var (pendingVersion, _, _) = StagedUpdate.ReadPending();
+        var (pendingVersion, _, _, _) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(pendingVersion)) return;
         var action = ShellLogic.ResolvePendingUpdateAction(
             pendingExists: true,
@@ -1395,7 +1395,7 @@ internal static class Program
     {
         try
         {
-            var (_, failCount, _) = StagedUpdate.ReadPending();
+            var (_, failCount, _, _) = StagedUpdate.ReadPending();
             if (failCount >= StagedUpdate.MaxNotifyFailures)
             {
                 Logger.Warn($"staged dsh update {version} kept failing to apply ({failCount} tries); " +
@@ -1617,7 +1617,9 @@ internal static class Program
             }
             catch { /* 移动失败：保留在 prefetch_temp 也可用，LocateTarball 兜底 staging */ }
 
-            StagedUpdate.MarkPending(latest, tarballName);
+            // 预热状态如实写入 pending（Bug 修复：prefetched 只在预热真实成功时为 true，
+            // 应用时据此诚实显示——不承诺"5-10 秒"这类做不到的事）
+            StagedUpdate.MarkPending(latest, tarballName, prefetched);
             _sessionStagedVersions.Add(latest); // v0.4.0 T3：会话级去重，下载成功不再重复提示
 
             // 清理 prefetch_temp 中的临时安装目录（deps/node_modules），仅保留 staging 根下的 tarball。
@@ -1626,10 +1628,11 @@ internal static class Program
             TryDeleteDir(Path.Combine(prefetchDir, "node_modules"));
 
             // 后台静默下载：仅托盘气泡轻提示（不打断当前 harness 使用），不弹 Modal。
-            // 文案（任务一 UX）：如实区分"预热成功/失败"——预热成功 → 重启秒装；失败 → 重启需联网。
+            // 文案（Bug 修复：诚实承诺）——如实区分"预热成功/失败"，不写死"秒级/1-2 分钟"
+            // 这类做不到的保证（用户实测：预热失败时 npm 现场下载 530 包需 450s+）。
             var balloon = prefetched
-                ? $"dsh {latest} 主程序与依赖包已就绪。下次重启启动器时秒级安装（无需等待下载）。"
-                : $"dsh {latest} 主程序已下载（依赖未完全预热）。重启后安装需联网解析依赖，预计 1-2 分钟。";
+                ? $"dsh {latest} 主程序与依赖包已就绪。下次重启启动器时将自动安装。"
+                : $"dsh {latest} 主程序已下载（依赖未完全预热）。重启后安装时仍需联网解析依赖，可能耗时较长。";
             try
             {
                 form.BeginInvoke(() =>
@@ -1678,14 +1681,28 @@ internal static class Program
         // 此时文案如实"将现场下载"（用户：下载≠npx 现场拉，必须诚实）。
         var pending = StagedUpdate.ReadPending();
         var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
-        // 任务四：Splash 实时文案（本地安装中）。后台已预热依赖 → npm install -g 命中本地 cache，
-        // 秒级完成；tarball 缺失（旧记录/缓存被清）→ 如实"在线下载 dsh 组件"。
+        // 任务（v0.4.0 Bug 修复：诚实承诺——不承诺做不到的事）：
+        // 文案必须基于**真实状态**，禁止硬编码"预计 5-10 秒"。
+        //   - localTarball 存在 + prefetched=true（预热真实成功）→ 命中 cache，秒装（承诺合理）
+        //   - localTarball 存在 + prefetched=false（预热失败/未完成/旧记录）→ 仍需现场下载依赖，
+        //     如实告知"可能需要较长时间"，绝不写"5-10 秒"（用户实测：cache 未预热时 npm install
+        //     现场下载 530 包需 450s → 120s 超时 E4002，虚假承诺直接误导）。
+        //   - tarball 缺失 → 线上拉取，如实"需在线下载"。
         // 任务二：--no-audit --no-fund --registry=镜像 与预热一致（防 cache miss）。
-        progress?.Invoke(localTarball is not null
-            ? $"正在应用更新 (v{version})…（本地安装中，依赖已预热，预计 5-10 秒）"
-            : $"正在应用更新 (v{version})…（需要在线下载 dsh 组件，预计 1-2 分钟）");
+        var useLocal = localTarball is not null;
+        var text = useLocal && pending.Prefetched
+            ? $"正在应用更新 (v{version})…（本地安装中，依赖已就绪）"
+            : useLocal
+                ? $"正在应用更新 (v{version})…（本地安装，正在解析依赖，可能需要几分钟）"
+                : $"正在应用更新 (v{version})…（需要在线下载 dsh 组件，可能需要几分钟）";
+        progress?.Invoke(text);
         Logger.Info($"applying staged dsh update to {version}",
-            ctx: new { version, source = localTarball is not null ? "local-tarball" : "registry" });
+            ctx: new
+            {
+                version,
+                source = useLocal ? "local-tarball" : "registry",
+                prefetched = pending.Prefetched,
+            });
         if (ct.IsCancellationRequested) return; // 用户取消：保留 pending，下次启动再应用
         var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
         // 任务二：安装参数与预热完全一致（--no-audit --no-fund + registry）——若预热已把依赖
