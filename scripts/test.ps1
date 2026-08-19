@@ -137,15 +137,23 @@ Assert-True ($splashSrc -match 'IsApplyingUpdate') "Splash 支持更新安装阶
 # v0.4.0 更新文案预期管理：tarball 缺失回退现场下载时，Splash 如实显示"预计 1-2 分钟"耗时
 Assert-True ($shellSrc -match '预计 1-2 分钟') "更新应用 Splash 文案明示现场下载耗时（预计 1-2 分钟），诚实管理预期"
 
-# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装，不 npx 现场拉）静态断言 ----
+# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装 + 依赖预热）静态断言 ----
 Assert-True ($shellSrc -match 'LocateTarball') "壳含本地 tarball 定位（应用优先本地安装包，不现场拉取）"
 Assert-True ($shellSrc -match 'local-tarball') "壳含安装来源标记（local-tarball vs registry，日志可诊断）"
 Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载'（不打断当前使用）"
 Assert-True ($shellSrc -match '需联网解析依赖') "更新气泡/弹窗文案如实'需联网解析依赖，预计 1-2 分钟'（不误导'已全部下载完'）"
 Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程序已下载'与'依赖在线解析'（诚实管理预期）"
+# ---- 任务一/二：后台依赖预热（Cache Prefetch）静态断言 ----
+Assert-True ($shellSrc -match 'prefetch_temp') "下载管线使用 prefetch_temp 临时目录（预热工作域）"
+Assert-True ($shellSrc -match '--prefix') "预热执行 npm install --prefix 到临时 deps（借安装解析依赖拉入 npm cache）"
+Assert-True ($shellSrc -match '--no-audit --no-fund') "安装/预热统一 --no-audit --no-fund（跳过审计/fund，加速秒级安装）"
+Assert-True ($shellSrc -match 'GetNpmRegistryArgs') "预热与安装共用镜像 registry（防不同 registry 导致 cache miss）"
+Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn 降级（不中断更新流程，重启回退在线安装）"
+Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
+Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 暴露 prefetch_temp 目录（应用成功后整体清理释放磁盘）"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))

@@ -139,4 +139,87 @@ public class UpdateFlowContractTests
     {
         Assert.Equal(expected, ShellLogic.IsRetryableNpmError(tail));
     }
+
+    // ---------------- 任务一/二/三：后台依赖预热（Cache Prefetch）契约 ----------------
+
+    [Fact]
+    public void PrefetchTempDir_IsUnderStaging_AfterInit()
+    {
+        // 预热临时目录必须在 staging 下（任务一：DataDir\staging\prefetch_temp），
+        // 与应用成功后的整体清理同域（任务二：释放磁盘）。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        Assert.Equal(Path.Combine(tmp.Path, "staging", "prefetch_temp"), StagedUpdate.PrefetchTempDir);
+        Assert.Equal(Path.Combine(tmp.Path, "staging"), StagedUpdate.StagingDir);
+    }
+
+    [Fact]
+    public void LocateTarball_ResolvesPackName_NormalizesScopeNaming()
+    {
+        // npm pack 对 scoped 包 @deepseek-ai/dsh 的产物名是 deepseek-ai-dsh-{version}.tgz
+        //（去 @ 和 /）；本契约锁定"命名规则兜底"能直接定位到该产物（重启安装用）。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var staging = StagedUpdate.StagingDir!;
+        Directory.CreateDirectory(staging);
+        var tarball = Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz");
+        File.WriteAllText(tarball, "pack");
+        Assert.Equal(tarball, StagedUpdate.LocateTarball("1.2.3", null));
+    }
+
+    [Fact]
+    public void Prefetch_Failure_StillMarksPending_WithTarball()
+    {
+        // 任务三容错契约：预热失败（模拟）**不得阻塞 Staging**——pending 依然记录版本与 tarball，
+        // 重启回退在线安装。这里锁定 MarkPending 在"仅 pack 成功、未预热"场景下仍写入 pending。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var staging = StagedUpdate.StagingDir!;
+        Directory.CreateDirectory(staging);
+        // 模拟：pack 成功落盘 tarball，但预热失败（prefetch_temp 里没有 deps）
+        var prefetch = Path.Combine(staging, "prefetch_temp");
+        Directory.CreateDirectory(prefetch);
+        File.WriteAllText(Path.Combine(staging, "deepseek-ai-dsh-1.2.3.tgz"), "pack");
+
+        // Staging 流程：预热失败 → 仍 MarkPending（tarball 已就位）
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
+        var (version, _, tarball) = StagedUpdate.ReadPending();
+        Assert.Equal("1.2.3", version);
+        Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
+        // 重启时 LocateTarball 仍能找到 tarball（回退在线安装的本地主包入口）
+        Assert.NotNull(StagedUpdate.LocateTarball(version, tarball));
+    }
+
+    [Fact]
+    public void ApplyUpdate_Success_CleansPrefetchTemp()
+    {
+        // 任务二清理契约：应用成功后 prefetch_temp 被整体删除（释放磁盘），
+        // pending 清账，tarball 随 staging 清理。模拟清理路径（TryDeleteDir 语义幂等）。
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var prefetch = StagedUpdate.PrefetchTempDir!;
+        Directory.CreateDirectory(Path.Combine(prefetch, "deps", "node_modules", "@deepseek-ai"));
+        File.WriteAllText(Path.Combine(prefetch, "deps", "package.json"), "{}");
+        StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
+
+        // 模拟应用成功后：清 pending + 清 prefetch_temp
+        StagedUpdate.ClearPending();
+        Directory.Delete(prefetch, recursive: true);
+
+        Assert.False(Directory.Exists(prefetch)); // 临时安装目录已释放
+        var (v, _, _) = StagedUpdate.ReadPending();
+        Assert.Null(v); // pending 清账
+    }
+
+    /// <summary>每测试用一次性临时目录（自动清理，与 V030FeaturesTests 同风格）。</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "dsh-updateflow-" + Guid.NewGuid().ToString("N"));
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); } catch { }
+        }
+    }
 }

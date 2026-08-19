@@ -51,6 +51,7 @@
 - **更新链路改进（后台静默下载 + 本地直装）**：① 下载成功**不再弹 Modal**（不打断用户当前使用 harness），仅托盘气泡轻提示；② 应用更新**优先用下载时落地的本地 tarball**（`npm install -g <tarball>`，不 npx 现场拉主包），`pending-update.json` 记录 tarball 文件名（`StagedUpdate.LocateTarball` 三级定位：pending 名→命名规则→staging 模糊匹配）；③ tarball 缺失（缓存被清/旧记录）才回退线上拉取，Splash 如实显示"需要在线下载 dsh 组件，预计 1-2 分钟"。
 - **修复主窗崩溃（0xc0000005，ImmSetOpenStatus）**：更新应用完成、主窗初始化 WebView2 时，WinForms 对宿主控件的 IME 状态管理在输入法活跃时偶发无效 HIMC 句柄 → 访问违规崩溃、窗口消失（用户反馈"重启后窗口消失"真凶）。修复：Form 与 WebView2 控件均置 `ImeMode.Disable`（页面输入法由 WebView2/Chromium 内部处理，WinForms 无需介入）。
 - **更新文案诚实化**：`npm pack` 只下载主包 tarball（约 30KB，秒级正常），dsh 有 50+ 个 `@deepseek-ai/*` 依赖子包，重启安装时 npm 仍需在线解析——气泡/弹窗统一改为"主程序已下载，重启后自动安装（需联网解析依赖，预计 1-2 分钟）"，不再误导"已全部下载完、无需再次下载"。
+- **后台依赖预热（重启秒装）**：后台 `npm pack` 后，在 `staging\prefetch_temp` 中执行一次完整 `npm install --prefix deps --no-audit --no-fund`，把全部 `@deepseek-ai/*` 依赖子包拉入全局 npm cache——重启时 `npm install -g <tarball>` 完全命中本地缓存，从"分钟级"降到"秒级"；预热与安装共用同一 `DSH_NPM_MIRROR` registry（防 cache miss）；预热失败仅 Warn 降级（不中断，保留 tarball 回退在线安装）；预热超时 180s 强制 kill；应用成功后清理 prefetch_temp 释放磁盘。
 
 ### 测试
 
@@ -62,7 +63,7 @@
 - **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
 - **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
-- 单测 **381 个全部通过**。
+- 单测 **385 个全部通过**。
 
 ## [Unreleased]
 
