@@ -33,30 +33,14 @@ internal static class Program
     private static readonly bool ServerManagedExternally =
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"));
 
-    /// 渲染进程崩溃自动重载的节流时间戳（避免崩溃死循环）。
-    /// 崩溃事件可能在浏览器进程线程上触发，跨线程读写一律经 Interlocked（v0.3.0）。
-    private static long _lastReloadTick;
-
-    /// 连续崩溃计数与窗口起始（质量治理 P1-3）：10s 窗口内 ≥3 次 → 停止自动重载循环，
-    /// 仅保留手动恢复入口（托盘唤窗/重开）；NavigationCompleted 成功时复位。
-    private static int _crashCount;
-    private static long _lastCrashTick;
+    // Step 4：WebView2 崩溃节流（进程级）/主窗引用/恢复标志/共享环境已迁入 WebViewManager
+    //（static 字段语义映射见 docs/refactor-static-mapping.md A/B/F 组）。此处不再持有，
+    // 统一经 WebViewManager.XXX 访问，避免双份状态漂移。
 
     /// 主题监听句柄（质量治理 P2-7）：真实退出时由 ReleaseThemeWatcher 统一释放。
     private static System.Windows.Forms.Timer? _themeTimer;
     private static FileSystemWatcher? _themeWatcher;
     private static UserPreferenceChangedEventHandler? _themeEventsHandler;
-
-    /// 主窗口的 WebView2 控件（托盘恢复窗口时需要检查/恢复渲染）。
-    private static WebView2? _mainWeb;
-
-    /// WebView2 渲染/GPU 进程崩溃标志：窗口隐藏期间进程崩溃后，恢复窗口时必须重载页面
-    /// 兜底，否则显示出来是白屏（隐藏状态下 Reload 无效，只能在窗口可见后执行）。
-    private static bool _webviewRecoveryNeeded;
-
-    /// 上次隐藏窗口的时间戳：长隐藏（>5 分钟）期间渲染进程可能被系统回收（无崩溃事件），
-    /// 恢复窗口时强制重载页面兜底，避免白屏。
-    private static DateTime _hiddenSince = DateTime.MinValue;
 
     /// 本次会话是否由壳拉起了 dsh 服务（决定"跟随窗口/托盘退出"时是否停它；外部托管/用户手动起的服务不动）。
     private static bool _serviceStartedByShell;
@@ -217,43 +201,6 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             Logger.Error("unhandled exception: " + e.ExceptionObject, ErrorCodes.E9001,
                 new { ex = e.ExceptionObject?.ToString() });
-    }
-
-    /// 共享 WebView2 环境：主窗口与插件弹窗共用同一用户数据目录与浏览器参数。
-    private static CoreWebView2Environment? _sharedEnvironment;
-
-    /// 质量治理 P2-3：环境创建互斥（无锁懒初始化在并发弹窗下会重复创建环境对象）。
-    private static readonly SemaphoreSlim SharedEnvLock = new(1, 1);
-
-    /// <summary>
-    /// 创建（或复用）共享 WebView2 环境。
-    /// AdditionalBrowserArguments 放行无手势自动播放：WebView2 在当前 SDK 中不会为
-    /// Autoplay 触发 PermissionRequested 事件（直接静默拒绝），
-    /// --autoplay-policy=no-user-gesture-required 是唯一可用的开关（声音类插件依赖）。
-    /// </summary>
-    private static async Task<CoreWebView2Environment> GetSharedEnvironmentAsync(string userDataFolder)
-    {
-        if (_sharedEnvironment is not null) return _sharedEnvironment;
-        await SharedEnvLock.WaitAsync();
-        try
-        {
-            if (_sharedEnvironment is null)
-            {
-                var options = new CoreWebView2EnvironmentOptions
-                {
-                    AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required",
-                };
-                // 内部续延只做字段赋值/返回，无 UI 依赖：ConfigureAwait(false) 避免无谓的
-                // UI 线程回跳（v0.3.0 后台代码纪律）；调用方 InitWebViewAsync 仍保留 UI 续延。
-                _sharedEnvironment = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options)
-                    .ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            SharedEnvLock.Release();
-        }
-        return _sharedEnvironment;
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
@@ -645,7 +592,7 @@ internal static class Program
         };
         form.Controls.Add(web);
         form.MainWebView2 = web;
-        _mainWeb = web;
+        WebViewManager.MainWeb = web;
 
         // 无边框窗口阴影（DWM NCRENDERING_POLICY；带 WebView2 时系统阴影实际不呈现，边框替代质感）
         form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
@@ -661,6 +608,8 @@ internal static class Program
         // 托盘图标始终显示（任何服务模式）：提供"服务模式"切换与退出的常驻入口。
         // 之前只在"托盘驻留"模式创建，导致默认"常驻"模式下用户找不到切换入口。
         EnsureTrayIcon(form);
+        // Step 4：WebViewManager 下载完成提示回调注入（解耦 Program 托盘实现）
+        WebViewManager.DownloadNotifyAction = NotifyDownloadComplete;
         // 窗口图标跟随主题（深色 → 白色鲸鱼 + 深色标题栏），主题切换时实时更新。
         ApplyThemeIcon(form);
         form.HandleCreated += (_, _) => ApplyThemeIcon(form); // 句柄创建后应用标题栏配色
@@ -673,14 +622,15 @@ internal static class Program
             // 常驻(0) / 托盘驻留(1) / 跟随窗口(2)。
             var mode = ReadLifetimeMode();
 
-            // 托盘驻留：拦截关闭，隐藏到托盘（服务继续）。
-            // 必须先于 WebView2 销毁判断：WebView2 一旦 Dispose，从托盘唤起时
-            // 控件已销毁，窗口只剩空白（历史上 WebView2 销毁在拦截之前 → 必然白屏）。
-            if (!_trayExitRequested && mode == ShellLogic.ServiceLifetime.Tray)
+            // ORDER-INVARIANT（矩阵 L1，0.1.10 血泪）：托盘拦截判定必须先于 WebView2 销毁——
+            // WebView2 一旦 Dispose，从托盘唤起时控件已销毁，窗口只剩空白。
+            // 决策下沉纯函数 ShouldInterceptCloseToTray；下方所有"销毁/退出"路径
+            // 都必须在 return 之后才执行（顺序即语义，禁止重排）。
+            if (ShellLogic.ShouldInterceptCloseToTray(mode, _trayExitRequested))
             {
                 e.Cancel = true;
                 form.Hide();
-                _hiddenSince = DateTime.Now;
+                WebViewManager.HiddenSince = DateTime.Now;
                 return;
             }
 
@@ -763,7 +713,7 @@ internal static class Program
                 var navWarned = false;
                 web.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
-                    if (e.IsSuccess) Interlocked.Exchange(ref _crashCount, 0); // P1-3：页面恢复后复位崩溃计数
+                    if (e.IsSuccess) WebViewManager.ResetCrashCount(); // P1-3：页面恢复后复位崩溃计数
                     if (!e.IsSuccess && !navWarned)
                     {
                         navWarned = true;
@@ -800,7 +750,7 @@ internal static class Program
                         var navWarned = false;
                         web.CoreWebView2.NavigationCompleted += (_, e) =>
                         {
-                            if (e.IsSuccess) Interlocked.Exchange(ref _crashCount, 0); // P1-3：页面恢复后复位崩溃计数
+                            if (e.IsSuccess) WebViewManager.ResetCrashCount(); // P1-3：页面恢复后复位崩溃计数
                             if (!e.IsSuccess && !navWarned)
                             {
                                 navWarned = true;
@@ -916,7 +866,7 @@ internal static class Program
             };
             form.Controls.Add(web);
             form.MainWebView2 = web;
-            _mainWeb = web; // readyState 测试钩子按 ReferenceEquals(web, _mainWeb) 门控，必须先设
+            WebViewManager.MainWeb = web; // readyState 测试钩子按 ReferenceEquals(web, MainWeb) 门控，必须先设
 
             // F11 钩子（与真实路径一致）：仅主窗前台时切换并吞键。
             // 跨线程修复（Step2b）：缓存 hwnd 再进 lambda，避免销毁期 ObjectDisposedException。
@@ -2398,12 +2348,12 @@ internal static class Program
         // - 隐藏超过 5 分钟，渲染进程可能被系统回收（无崩溃事件）→ 强制重载兜底
         // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
         // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
-        var longHidden = _hiddenSince != DateTime.MinValue
-            && DateTime.Now - _hiddenSince >= TimeSpan.FromMinutes(5);
-        if (_webviewRecoveryNeeded || longHidden)
+        var longHidden = WebViewManager.HiddenSince != DateTime.MinValue
+            && DateTime.Now - WebViewManager.HiddenSince >= TimeSpan.FromMinutes(5);
+        if (WebViewManager.RecoveryNeeded || longHidden)
         {
-            _webviewRecoveryNeeded = false;
-            _hiddenSince = DateTime.MinValue;
+            WebViewManager.RecoveryNeeded = false;
+            WebViewManager.HiddenSince = DateTime.MinValue;
             _ = TryReloadWebViewDeferred(form); // fire-and-forget：不等待结果
         }
     }
@@ -2417,16 +2367,16 @@ internal static class Program
         try
         {
             await Task.Delay(500);
-            if (form.IsDisposed || !form.Visible || _mainWeb is { IsDisposed: true })
+            if (form.IsDisposed || !form.Visible || WebViewManager.MainWeb is { IsDisposed: true })
             {
                 // 窗口又隐藏/关闭了：下次恢复窗口时再处理
-                _webviewRecoveryNeeded = true;
+                WebViewManager.RecoveryNeeded = true;
                 return;
             }
-            if (_mainWeb?.CoreWebView2 is not null)
+            if (WebViewManager.MainWeb?.CoreWebView2 is not null)
             {
                 Trace("tray restore: reloading webview after process failure (deferred)");
-                _mainWeb.CoreWebView2.Reload();
+                WebViewManager.MainWeb.CoreWebView2.Reload();
             }
         }
         catch
@@ -2489,182 +2439,12 @@ internal static class Program
     }
 
     /// <summary>
-    /// 统一的 WebView2 初始化：设置 + 权限 + 下载 + 弹窗 + 崩溃自愈。
-    /// 主窗口与插件弹出的内部窗口共用，保证行为一致。
+    /// WebView2 初始化已迁入 <see cref="DshWeb.Managers.WebViewManager.InitializeAsync"/>
+    ///（Step 4，static 字段语义映射见 docs/refactor-static-mapping.md）。
+    /// 此方法保留为调用点兼容转发（Program.Main 编排最终形态前的过渡壳）。
     /// </summary>
-    internal static async Task InitWebViewAsync(WebView2 web, string userDataFolder)
-    {
-        var env = await GetSharedEnvironmentAsync(userDataFolder);
-        await web.EnsureCoreWebView2Async(env);
-
-        var settings = web.CoreWebView2.Settings;
-        settings.AreDefaultContextMenusEnabled = true;   // 保留右键菜单（复制/粘贴等）
-        settings.AreDevToolsEnabled = true;              // 保留 F12（仅实际打开时才占用内存）
-        settings.IsGeneralAutofillEnabled = false;       // 关闭表单自动填充，减少后台开销
-        settings.IsPasswordAutosaveEnabled = false;      // 不保存密码
-
-        // 权限：自动放行插件/DSH 依赖的能力（见 ShellLogic.IsAutoGrantedPermission），
-        // 其余保持默认拒绝。麦克风/摄像头默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
-        web.CoreWebView2.PermissionRequested += (_, e) =>
-        {
-            if (ShellLogic.IsAutoGrantedPermission(e.PermissionKind))
-                e.State = CoreWebView2PermissionState.Allow;
-        };
-
-        // 导航白名单（S3）：主窗口/内部弹窗只允许本地（127.0.0.1/localhost）导航；
-        // 外部 http(s) 导航一律取消并转系统默认浏览器——壳无地址栏，防止被重定向到
-        // 伪站点，且外部页会拿到已自动放行的剪贴板/存储等权限（白名单之外不生效）。
-        web.CoreWebView2.NavigationStarting += (_, e) =>
-        {
-            if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri)) return;
-            if (uri.Scheme is not ("http" or "https")) return;   // about:/blob:/data: 等内部资源放行
-            if (uri.Host is "127.0.0.1" or "localhost") return;  // 本地 dsh 服务
-            e.Cancel = true;
-            try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
-        };
-
-        // 下载：固定保存到系统“下载”文件夹（自动避开同名文件），完成后用默认程序打开
-        web.CoreWebView2.DownloadStarting += (_, e) =>
-        {
-            try
-            {
-                var downloads = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-                Directory.CreateDirectory(downloads);
-                var name = ShellLogic.SanitizeFileName(ShellLogic.SuggestDownloadName(
-                    e.DownloadOperation.ContentDisposition, e.DownloadOperation.Uri, e.DownloadOperation.MimeType));
-                var path = Path.Combine(downloads, name);
-                for (var i = 1; File.Exists(path); i++)
-                    path = Path.Combine(downloads,
-                        $"{Path.GetFileNameWithoutExtension(name)} ({i}){Path.GetExtension(name)}");
-                e.Handled = true;   // 禁用 WebView2 默认下载对话框
-                e.ResultFilePath = path;
-                e.DownloadOperation.StateChanged += (_, _) =>
-                {
-                    if (e.DownloadOperation.State == CoreWebView2DownloadState.Completed)
-                    {
-                        try
-                        {
-                            // 仅无害扩展名（图片/文本/pdf 等）自动打开；其余（.html/.svg/.hta/.exe 等
-                            // 可执行代码面）只落盘 + 气泡提示，不自动执行，防恶意下载自动运行（S2 修复）。
-                            if (ShellLogic.IsSafeToOpen(e.DownloadOperation.ResultFilePath))
-                            {
-                                Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true });
-                            }
-                            else
-                            {
-                                NotifyDownloadComplete(e.DownloadOperation.ResultFilePath);
-                            }
-                        }
-                        catch { /* 无默认程序打开时忽略 */ }
-                    }
-                };
-            }
-            catch { /* 处理失败时回退 WebView2 默认下载行为 */ }
-        };
-
-        // 弹窗策略（分类逻辑见 ShellLogic.ClassifyPopup）：
-        // - 外部 http(s) 链接 → 系统默认浏览器
-        // - 同源 http(s) 弹窗 → 新建轻量壳窗口（保留会话，避免主窗口被导航走）
-        // - blob: / data: / about: 等 → WebView2 默认行为（插件生成的预览等）
-        web.CoreWebView2.NewWindowRequested += async (_, e) =>
-        {
-            switch (ShellLogic.ClassifyPopup(e.Uri))
-            {
-                case ShellLogic.PopupTarget.External:
-                    e.Handled = true;
-                    try { Process.Start(new ProcessStartInfo(e.Uri) { UseShellExecute = true }); } catch { }
-                    return;
-                case ShellLogic.PopupTarget.Internal:
-                {
-                    var deferral = e.GetDeferral();
-                    try
-                    {
-                        var popup = CreatePopupForm();
-                        await InitWebViewAsync(popup.Web, userDataFolder);
-                        popup.Web.CoreWebView2.DocumentTitleChanged += (_, _) =>
-                        {
-                            var title = popup.Web.CoreWebView2.DocumentTitle;
-                            if (!string.IsNullOrWhiteSpace(title)) popup.Form.Text = title;
-                        };
-                        e.NewWindow = popup.Web.CoreWebView2;
-                        popup.Form.Show();
-                    }
-                    finally { deferral.Complete(); }
-                    return;
-                }
-                default:
-                    return;
-            }
-        };
-
-        // 渲染进程/GPU 进程崩溃或无响应：记下崩溃痕迹，窗口可见时自动重载避免白屏
-        //（每 10 秒最多一次，防止崩溃死循环）。窗口隐藏期间的崩溃不立即 Reload——
-        // 隐藏状态下 Reload 无效，等托盘恢复窗口时由 ShowMainWindow 兜底重载。
-        web.CoreWebView2.ProcessFailed += (_, e) =>
-        {
-            Trace($"webview process failed: {e.ProcessFailedKind}");
-            if (e.ProcessFailedKind is CoreWebView2ProcessFailedKind.RenderProcessExited
-                or CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
-                or CoreWebView2ProcessFailedKind.GpuProcessExited)
-            {
-                // 质量治理 P1-4：非主窗实例（插件弹窗）崩溃只记录，不污染主窗恢复标志、
-                // 不参与主窗 reload 节流。
-                if (!ReferenceEquals(web, _mainWeb))
-                {
-                    Trace("webview process failed on a non-main instance; main recovery state untouched");
-                    return;
-                }
-
-                // 质量治理 P1-3：连续崩溃计数（10s 窗口）——确定性崩溃页面不再无限崩→重载
-                // 循环；达到上限停止自动重载（仍置 recovery 标志，保留托盘唤窗/重开的手动恢复入口）。
-                var now = Environment.TickCount64;
-                var lastCrash = Interlocked.Read(ref _lastCrashTick);
-                if (now - lastCrash > 10_000)
-                    Interlocked.Exchange(ref _crashCount, 1);
-                else
-                    Interlocked.Increment(ref _crashCount);
-                Interlocked.Exchange(ref _lastCrashTick, now);
-
-                if (Volatile.Read(ref _crashCount) >= 3)
-                {
-                    Logger.Error($"renderer keeps crashing ({Volatile.Read(ref _crashCount)} crashes in window); auto-reload stopped, manual recovery via tray/show remains",
-                        ErrorCodes.E1007, new { kind = e.ProcessFailedKind.ToString() });
-                    _webviewRecoveryNeeded = true;
-                    return;
-                }
-
-                _webviewRecoveryNeeded = true;
-                if (_mainWeb is { Visible: true, IsDisposed: false })
-                {
-                    var last = Interlocked.Read(ref _lastReloadTick);
-                    if (now - last > 10_000
-                        && Interlocked.CompareExchange(ref _lastReloadTick, now, last) == last)
-                    {
-                        try { web.CoreWebView2.Reload(); } catch { }
-                    }
-                }
-            }
-        };
-
-        // Task 0.2 e2e 白屏断言钩子（纯诊断，不改行为）：DSH_WEBVIEW2_READYSTATE=路径 时，
-        // 仅对主窗 WebView2，每次导航成功后把 document.readyState 写入该文件。供 e2e 探针
-        // 验证"主窗非白屏"（托盘恢复用例复用此钩子）。弹窗不触发（ReferenceEquals 门控）。
-        var readyStatePath = Environment.GetEnvironmentVariable("DSH_WEBVIEW2_READYSTATE");
-        if (!string.IsNullOrEmpty(readyStatePath) && ReferenceEquals(web, _mainWeb))
-        {
-            web.CoreWebView2.NavigationCompleted += async (_, e) =>
-            {
-                if (!e.IsSuccess) return;
-                try
-                {
-                    var state = await web.CoreWebView2.ExecuteScriptAsync("document.readyState");
-                    File.WriteAllText(readyStatePath, state);
-                }
-                catch { /* 测试钩子失败不影响功能 */ }
-            };
-        }
-    }
+    internal static Task InitWebViewAsync(WebView2 web, string userDataFolder)
+        => DshWeb.Managers.WebViewManager.InitializeAsync(web, userDataFolder);
 
     /// 插件内部弹窗用的轻量窗口（与主窗口共享 WebView2 用户数据，保持登录态/会话）。
     internal static (Form Form, WebView2 Web) CreatePopupForm()
