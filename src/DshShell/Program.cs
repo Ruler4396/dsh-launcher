@@ -1561,12 +1561,8 @@ internal static class Program
             Directory.CreateDirectory(staging);
             Directory.CreateDirectory(buildDir);
 
-            // 进度文案统一格式："已构建更新 x%（版本号）"
-            void UpdateProgress(float percent)
-                => UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
-                    $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
-
-            UpdateProgress(0.05f);
+            // 进度由 pnpm ndjson 回调或 npm 脉冲线程驱动
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 5%（v{latest}）", 0.05f);
 
             // ---- 步骤 1：npm pack 下载 tarball（约 3 秒，5%→10%） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
@@ -1574,7 +1570,7 @@ internal static class Program
             var ok = RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\"",
                 out var errorTail);
-            UpdateProgress(0.10f);
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 10%（v{latest}）", 0.10f);
             if (!ok || !File.Exists(tarballPath))
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
@@ -1600,33 +1596,47 @@ internal static class Program
             var buildTool = "npm";
 
             // 检测 pnpm 可用性（绝不安装）
-            // [ADR-021] 使用 JsEntryResolver 直接定位 pnpm.cjs，不依赖 .cmd shim
             var nodeEnv = RuntimeResolver.ResolveExisting();
             var nodeExe = nodeEnv?.NodeExe;
             var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
             Logger.Info($"pnpm detection: nodeExe={nodeExe ?? "null"}, pnpmEntry={pnpmEntryJs ?? "not found"}");
 
-            // 启动进度追踪线程：pnpm ~10s → 10%→90% 每秒涨 8%，npm ~60s → 每秒涨 1.3%
-            var buildStartTime = DateTime.UtcNow;
-            var estimatedDuration = pnpmEntryJs is not null ? 15.0 : 90.0; // 估计秒数
-            using var progressCts = new CancellationTokenSource();
-            var progressTask = Task.Run(async () =>
+            // 进度回调：pnpm 用真实百分比，npm 用脉冲模式（-1）
+            var isPnpm = pnpmEntryJs is not null && nodeExe is not null;
+            Action<int, string>? progressCallback = (percent, phase) =>
             {
-                while (!progressCts.Token.IsCancellationRequested)
-                {
-                    await Task.Delay(500, progressCts.Token).ConfigureAwait(false);
-                    var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
-                    var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / estimatedDuration) * 0.80f);
-                    UpdateProgress(percent);
-                }
-            }, progressCts.Token);
+                var text = percent >= 0
+                    ? $"已构建更新 {percent}%（v{latest}）— {phase}"
+                    : $"正在构建更新（v{latest}）— {phase}";
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, text, percent >= 0 ? percent / 100f : 0f);
+            };
 
-            if (pnpmEntryJs is not null && nodeExe is not null)
+            // 启动进度追踪线程（仅 npm 模式需要，pnpm 用真实进度回调）
+            var buildStartTime = DateTime.UtcNow;
+            using var progressCts = new CancellationTokenSource();
+            System.Threading.Tasks.Task? progressTask = null;
+            if (!isPnpm)
+            {
+                // npm 脉冲模式：每 500ms 递增进度，显示日志行
+                progressTask = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    while (!progressCts.Token.IsCancellationRequested)
+                    {
+                        await System.Threading.Tasks.Task.Delay(500, progressCts.Token).ConfigureAwait(false);
+                        var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
+                        var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / 90.0) * 0.80f);
+                        UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
+                            $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
+                    }
+                }, progressCts.Token);
+            }
+
+            if (isPnpm)
             {
                 try
                 {
-                    Logger.Info($"building dsh runtime with pnpm: {latest}");
-                    buildOk = RunPnpmInstall(nodeExe!, pnpmEntryJs!, tarballPath, buildDir);
+                    Logger.Info($"building dsh runtime with pnpm (ndjson progress): {latest}");
+                    buildOk = RunPnpmInstall(nodeExe!, pnpmEntryJs!, tarballPath, buildDir, progressCallback);
                     buildTool = "pnpm";
                     Logger.Info($"pnpm build result: {buildOk}");
                 }
@@ -1652,7 +1662,8 @@ internal static class Program
 
             // 停止进度追踪线程
             progressCts.Cancel();
-            try { progressTask.Wait(1000); } catch { }
+            if (progressTask is not null)
+                try { progressTask.Wait(1000); } catch { }
 
             if (!buildOk)
             {
@@ -1667,7 +1678,7 @@ internal static class Program
             }
 
             // ---- 步骤 3：解析 bin 入口，校验构建完整性（90%→100%） ----
-            UpdateProgress(0.95f);
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 95%（v{latest}）", 0.95f);
             var dshPkg = Path.Combine(buildDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
             if (!File.Exists(dshPkg))
             {
@@ -1753,16 +1764,16 @@ internal static class Program
 
     /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟。
     /// 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim 和 cmd.exe。
+    /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（逐包 resolved/downloaded/linked）。
     /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
-    /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止，
-    /// 这不是真正的失败——pnpm store 已缓存所有包，dsh 仍可运行。
-    /// 使用 pnpm install 而非 pnpm add：pnpm add 有 lockfile 路径 bug（会引用旧路径）。</summary>
-    private static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir)
+    /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。</summary>
+    private static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
+        Action<int, string>? progressCallback = null)
     {
         try
         {
-            // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim
-            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\"" + GetNpmRegistryArgs();
+            // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs + --reporter=ndjson 获取精确进度
+            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --reporter=ndjson" + GetNpmRegistryArgs();
 
             var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
             {
@@ -1778,13 +1789,70 @@ internal static class Program
             psi.EnvironmentVariables["PATH"] = GetMergedPath();
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return false;
-            var output = p.StandardOutput.ReadToEnd();
-            var errorOutput = p.StandardError.ReadToEnd();
-            p.WaitForExit(600000); // 10 分钟超时（pnpm 通常 5-25 秒，留足余量）
+
+            // 流式解析 ndjson 进度（不阻塞到进程结束）
+            var totalPackages = 0;
+            var resolvedCount = 0;
+            var linkedCount = 0;
+            var errorOutput = "";
+
+            // 后台读取 stderr
+            var stderrTask = System.Threading.Tasks.Task.Run(() =>
+            {
+                try { errorOutput = p.StandardError.ReadToEnd(); } catch { }
+            });
+
+            // 主线程逐行解析 stdout ndjson
+            try
+            {
+                while (!p.StandardOutput.EndOfStream)
+                {
+                    var line = p.StandardOutput.ReadLine();
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        var name = root.TryGetProperty("name", out var n) ? n.GetString() : null;
+
+                        // 提取总包数
+                        if (name == "pnpm:scope" && root.TryGetProperty("selected", out var sel))
+                            totalPackages = sel.GetInt32();
+
+                        // 跟踪 resolved 阶段
+                        if (name == "pnpm:progress" && root.TryGetProperty("status", out var status))
+                        {
+                            var statusStr = status.GetString();
+                            if (statusStr == "resolved" || statusStr == "found_in_store")
+                                resolvedCount++;
+                        }
+
+                        // 跟踪 linked 阶段
+                        if (name == "pnpm:link")
+                            linkedCount++;
+
+                        // 计算进度百分比（10%-90%）
+                        if (totalPackages > 0 && progressCallback is not null)
+                        {
+                            // resolved 阶段占 10%-50%，link 阶段占 50%-90%
+                            var resolvedPercent = Math.Min(1.0, (double)resolvedCount / totalPackages);
+                            var linkPercent = Math.Min(1.0, (double)linkedCount / totalPackages);
+                            var percent = 0.10 + resolvedPercent * 0.40 + linkPercent * 0.40;
+                            var phase = linkedCount > 0 ? "linking" : "resolving";
+                            progressCallback((int)(percent * 100), phase);
+                        }
+                    }
+                    catch { /* 非 JSON 行忽略 */ }
+                }
+            }
+            catch { /* 流读取中断 */ }
+
+            stderrTask.Wait(1000);
+            p.WaitForExit(600000); // 10 分钟超时兜底
 
             // ERR_PNPM_IGNORED_BUILDS（exit=1）：包已安装，只是 build scripts 被安全策略阻止
-            // 这不是真正的失败——pnpm store 已缓存所有包，dsh 仍可运行
-            var combinedOutput = output + errorOutput;
+            var combinedOutput = errorOutput;
             if (p.ExitCode != 0 && combinedOutput.Contains("ERR_PNPM_IGNORED_BUILDS"))
             {
                 Logger.Info($"pnpm install: packages installed but build scripts ignored (exit=1)");
@@ -1793,7 +1861,7 @@ internal static class Program
 
             if (p.ExitCode != 0)
             {
-                Logger.Warn($"pnpm install failed: exit={p.ExitCode}, output={output}, error={errorOutput}");
+                Logger.Warn($"pnpm install failed: exit={p.ExitCode}, stderr={errorOutput}");
                 return false;
             }
             return true;
