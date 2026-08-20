@@ -1771,6 +1771,12 @@ internal static class Program
     {
         try
         {
+            // [Fix] 在 buildDir 创建干净的 package.json，防止 pnpm 向上查找父目录的
+            // stale package.json（测试遗留的 file: 引用会导致 ENOENT）
+            var buildPkgJson = Path.Combine(buildDir, "package.json");
+            if (!File.Exists(buildPkgJson))
+                File.WriteAllText(buildPkgJson, """{"name":"dsh-runtime-build","version":"1.0.0","private":true}""");
+
             // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs + --reporter=ndjson 获取精确进度
             var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --reporter=ndjson" + GetNpmRegistryArgs();
 
