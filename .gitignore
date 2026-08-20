@@ -32,3 +32,7 @@ archive/
 Thumbs.db
 .DS_Store
 installer/*/out/
+
+# pnpm artifacts (test-generated, must not be committed)
+pnpm-lock.yaml
+package.json
