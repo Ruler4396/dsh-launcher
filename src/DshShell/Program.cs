@@ -1560,10 +1560,7 @@ internal static class Program
             Directory.CreateDirectory(staging);
             Directory.CreateDirectory(buildDir);
 
-            // 进度由 pnpm ndjson 回调或 npm 脉冲线程驱动
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 5%（v{latest}）", 0.05f);
-
-            // ---- 步骤 1：npm pack 下载 tarball（约 3 秒，5%→10%） ----
+            // ---- 步骤 1：npm pack 下载 tarball（约 3 秒） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
             var tarballPath = Path.Combine(buildDir, tarballName);
             var ok = RunNpmCommand(
@@ -1600,14 +1597,19 @@ internal static class Program
             var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
             Logger.Info($"pnpm detection: nodeExe={nodeExe ?? "null"}, pnpmEntry={pnpmEntryJs ?? "not found"}");
 
-            // 进度回调：pnpm 用真实百分比，npm 用脉冲模式（-1）
+            // 进度回调：pnpm 用真实百分比，npm 用脉冲模式（0）
             var isPnpm = pnpmEntryJs is not null && nodeExe is not null;
+
+            // 初始进度显示
+            if (isPnpm)
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 5%（v{latest}）", 0.05f);
+            else
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
+
             Action<int, string>? progressCallback = (percent, phase) =>
             {
-                var text = percent >= 0
-                    ? $"已构建更新 {percent}%（v{latest}）— {phase}"
-                    : $"正在构建更新（v{latest}）— {phase}";
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, text, percent >= 0 ? percent / 100f : 0f);
+                var text = $"已构建更新 {percent}%（v{latest}）— {phase}";
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, text, percent / 100f);
             };
 
             // 启动进度追踪线程（仅 npm 模式需要，pnpm 用真实进度回调）
@@ -1645,19 +1647,17 @@ internal static class Program
                 }
             }
 
-            // pnpm 失败回退到 npm 时，启动 npm 时间估算进度线程
+            // pnpm 失败回退到 npm 时，启动 npm 脉冲进度线程（无百分比，只显示动画）
             if (!buildOk && progressTask is null)
             {
-                buildStartTime = DateTime.UtcNow; // 重置计时起点
                 progressTask = System.Threading.Tasks.Task.Run(async () =>
                 {
                     while (!progressCts.Token.IsCancellationRequested)
                     {
-                        await System.Threading.Tasks.Task.Delay(500, progressCts.Token).ConfigureAwait(false);
-                        var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
-                        var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / 90.0) * 0.80f);
+                        await System.Threading.Tasks.Task.Delay(100, progressCts.Token).ConfigureAwait(false);
+                        // percent=0 触发脉冲模式，文本不含百分比
                         UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
-                            $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
+                            $"正在构建更新（v{latest}）...", 0f);
                     }
                 }, progressCts.Token);
             }
