@@ -163,7 +163,7 @@ public sealed class WindowManager : IWindowManager
         // 隐藏状态下 Reload 无效；且刚显示时立即 Reload 与 WebView2 的可见性处理
         // 存在竞态（实测隐藏→恢复→立即 Reload 后进程崩溃），必须延迟执行。
         var longHidden = WebViewManager.HiddenSince != DateTime.MinValue
-            && DateTime.Now - WebViewManager.HiddenSince >= TimeSpan.FromMinutes(5);
+            && DateTime.UtcNow - WebViewManager.HiddenSince >= TimeSpan.FromMinutes(5);
         if (WebViewManager.RecoveryNeeded || longHidden)
         {
             WebViewManager.RecoveryNeeded = false;

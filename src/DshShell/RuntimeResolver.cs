@@ -150,8 +150,8 @@ public static class RuntimeResolver
             var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止子进程挂死时阻塞
             if (!p.WaitForExit(3000))
             {
-                // 超时：杀进程防泄漏（损坏的安装包弹窗/卡 IO 会让 node --version 挂死）
-                try { p.Kill(); p.WaitForExit(); } catch { }
+                // 超时：杀进程树防泄漏（Kill(true) 杀子进程，避免 node worker 成孤儿）
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(); } catch { }
                 return false;
             }
             return IsUsableNodeVersion(readTask.Result.Trim());

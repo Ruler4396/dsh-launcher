@@ -397,7 +397,7 @@ public static class ShellLogic
                     name = segment;
             }
             name = string.IsNullOrWhiteSpace(name)
-                ? $"dsh-{DateTime.Now:yyyyMMddHHmmss}"
+                ? $"dsh-{DateTime.UtcNow:yyyyMMddHHmmss}"
                 : Uri.UnescapeDataString(name);
 
             // blob: 等无扩展名下载：按 MIME 类型补一个扩展名，便于识别
