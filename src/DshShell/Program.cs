@@ -425,20 +425,26 @@ internal static class Program
             form.LayoutChrome();
         };
 
-        // Tray icon wiring: WindowManager.Instance delegates
-        WindowManager.Instance.IsTrayWantedProvider = () => IsTrayWanted();
-        WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
-        WindowManager.Instance.TrayExitAction = () =>
+        // 托盘图标：由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
+        // 壳只读取配置，不硬编码托盘逻辑
+        var lifetimeMode = ReadLifetimeMode();
+        if (lifetimeMode == ShellLogic.ServiceLifetime.Tray)
         {
-            WindowManager.Instance.MarkTrayExitRequested();
-            if (ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
-                    ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell))
-                StopShellService();
-            Application.Exit();
-        };
-        WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
-        WindowManager.Instance.VerifyDependencies();
-        WindowManager.Instance.EnsureTrayIcon(form);
+            WindowManager.Instance.IsTrayWantedProvider = () => true;
+            WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
+            WindowManager.Instance.TrayExitAction = () =>
+            {
+                WindowManager.Instance.MarkTrayExitRequested();
+                if (ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
+                        ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell))
+                    StopShellService();
+                Application.Exit();
+            };
+            WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
+            WindowManager.Instance.VerifyDependencies();
+            WindowManager.Instance.EnsureTrayIcon(form);
+        }
+
         WindowManager.Instance.ResolveDarkModeProvider = () => ResolveDarkMode();
         WindowManager.Instance.ApplyWindowThemeAction = (f, dark) => ApplyThemeIcon(f);
         WindowManager.Instance.DshHomeDirProvider = () => DshHomeDir;
@@ -455,8 +461,12 @@ internal static class Program
         form.FormClosing += (_, e) =>
         {
             var mode = ReadLifetimeMode();
-            // [INVARIANT] Tray intercept decision MUST precede WebView2 disposal. See ADR-002.
-            if (ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(mode, WindowManager.Instance.TrayExitRequested))
+            // Tray 模式：关闭窗口隐藏到托盘（插件控制，壳读取配置）
+            // 仅在托盘图标存在时拦截（避免插件未启用时误拦截）
+            if (mode == ShellLogic.ServiceLifetime.Tray
+                && WindowManager.Instance.TrayIcon is not null
+                && !WindowManager.Instance.TrayExitRequested
+                && !_isBuildInProgress)
             {
                 e.Cancel = true;
                 form.Hide();
@@ -499,7 +509,7 @@ internal static class Program
             {
                 StopShellService();
             }
-            WindowManager.Instance.DisposeTray();
+            // 托盘清理已迁移到 dsh-launcher-lifetime 插件
         };
 
         form.Load += async (_, _) =>
@@ -2971,24 +2981,8 @@ internal static class Program
         return 0;
     }
 
-    /// <summary>v0.3.0 托盘按需策略：默认隐藏；仅当需要时创建。
-    /// v0.3.1 修复：托盘只在**托盘驻留**模式下常驻显示（关窗藏到托盘，必须靠托盘唤窗）；
-    /// "常驻"模式关窗即退出壳（服务保留，下次启动自动开窗），"跟随窗口"关窗全退，
-    /// 两者都不需要托盘。另有待通知的更新时临时创建（更新气泡依赖托盘）。
-    /// 未装插件时默认"跟随窗口"，托盘无存在意义。</summary>
-    private static bool IsTrayWanted()
-    {
-        if (_pendingUpdate != PendingUpdate.None) return true;
-        return ShellLogic.PluginConfig.IsLifetimePluginInstalled(DshHomeDir)
-            && ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray;
-    }
-
-    // Step 5：EnsureTrayIcon/ShowTrayMenu 已迁入 WindowManager.Instance（委托注入 IsTrayWanted
-    // /TrayWhaleIcon/TrayExitAction/TrayMenuFactory）。此处仅保留 IsTrayWanted 供委托引用。
-
-    // Step 6：TrayMenuForm 已迁出至 Windows/TrayMenuForm.cs（纯搬迁，行为逐位不变）。
-    // Step 5：ShowMainWindow/TryReloadWebViewDeferred 已迁入 WindowManager.Instance
-    //（托盘唤起：先 SW_RESTORE 再 Activate；崩溃/长隐藏延迟重载）。
+    // 托盘图标已由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
+    // 壳只读取配置，不硬编码托盘逻辑。
 
     /// <summary>
     /// 服务就绪轮询（并行开窗 Step5 抽取）：后台线程等待 dsh 服务 TCP+HTTP 就绪。
