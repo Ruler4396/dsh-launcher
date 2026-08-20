@@ -1600,16 +1600,15 @@ internal static class Program
             var buildTool = "npm";
 
             // 检测 pnpm 可用性（绝不安装）
-            // [Fix] GUI 进程的 PATH 可能不包含 pnpm 路径（如 %APPDATA%\npm）
-            // 合并注册表中的系统 PATH + 用户 PATH，确保 pnpm 检测不漏
-            var mergedPath = GetMergedPath();
-            Logger.Info($"pnpm detection: PATH length={mergedPath?.Length ?? 0}");
-            var pnpmExe = FindOnPath("pnpm.cmd", mergedPath) ?? FindOnPath("pnpm", mergedPath);
-            Logger.Info($"pnpm detection: {(pnpmExe is not null ? "found at " + pnpmExe : "not found")}");
+            // [ADR-021] 使用 JsEntryResolver 直接定位 pnpm.cjs，不依赖 .cmd shim
+            var nodeEnv = RuntimeResolver.ResolveExisting();
+            var nodeExe = nodeEnv?.NodeExe;
+            var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
+            Logger.Info($"pnpm detection: nodeExe={nodeExe ?? "null"}, pnpmEntry={pnpmEntryJs ?? "not found"}");
 
             // 启动进度追踪线程：pnpm ~10s → 10%→90% 每秒涨 8%，npm ~60s → 每秒涨 1.3%
             var buildStartTime = DateTime.UtcNow;
-            var estimatedDuration = pnpmExe is not null ? 15.0 : 90.0; // 估计秒数
+            var estimatedDuration = pnpmEntryJs is not null ? 15.0 : 90.0; // 估计秒数
             using var progressCts = new CancellationTokenSource();
             var progressTask = Task.Run(async () =>
             {
@@ -1622,12 +1621,12 @@ internal static class Program
                 }
             }, progressCts.Token);
 
-            if (pnpmExe is not null)
+            if (pnpmEntryJs is not null && nodeExe is not null)
             {
                 try
                 {
                     Logger.Info($"building dsh runtime with pnpm: {latest}");
-                    buildOk = RunPnpmInstall(pnpmExe, tarballPath, buildDir);
+                    buildOk = RunPnpmInstall(nodeExe!, pnpmEntryJs!, tarballPath, buildDir);
                     buildTool = "pnpm";
                     Logger.Info($"pnpm build result: {buildOk}");
                 }
@@ -1753,35 +1752,29 @@ internal static class Program
     }
 
     /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟。
-    /// pnpm.cmd 是批处理文件，必须经 cmd.exe 执行（与 RunNpmCommand 同理）。
+    /// 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim 和 cmd.exe。
     /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
     /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止，
     /// 这不是真正的失败——pnpm store 已缓存所有包，dsh 仍可运行。
     /// 使用 pnpm install 而非 pnpm add：pnpm add 有 lockfile 路径 bug（会引用旧路径）。</summary>
-    private static bool RunPnpmInstall(string pnpmExe, string tarballPath, string buildDir)
+    private static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir)
     {
         try
         {
-            // pnpm.cmd 是批处理文件，必须经 cmd.exe /c 执行
-            // 使用 pnpm install（非 pnpm add）：pnpm add 有 lockfile 路径 bug
-            var isCmd = pnpmExe.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                || pnpmExe.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
-            var (fileName, arguments) = isCmd
-                ? ("cmd.exe", $"/c \"{pnpmExe}\" install \"{tarballPath}\"" + GetNpmRegistryArgs())
-                : (pnpmExe, $"install \"{tarballPath}\"" + GetNpmRegistryArgs());
+            // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim
+            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\"" + GetNpmRegistryArgs();
 
-            var psi = new System.Diagnostics.ProcessStartInfo(fileName, arguments)
+            var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
                 WorkingDirectory = buildDir,
             };
-            // [Fix] 防止 corepack 挂起：设置 COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-            // 否则 corepack 会在后台等待用户输入 'y/n' 导致永久挂起超时
             psi.EnvironmentVariables["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0";
-            // [Fix] 注入合并后的 PATH，确保 GUI 进程能找到 pnpm
             psi.EnvironmentVariables["PATH"] = GetMergedPath();
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return false;

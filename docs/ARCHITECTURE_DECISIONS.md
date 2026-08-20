@@ -565,4 +565,40 @@ Every cross-module bug must have a corresponding Outcome Contract.
 
 ---
 
+## ADR-021: 严禁使用 cmd.exe 包装 Node.js 脚本
+
+**状态**: 已生效  
+**日期**: 2024-Q4  
+**影响**: `Program.cs`, `DshDiscovery.cs`, `JsEntryResolver.cs`
+
+### 背景
+
+项目长期依赖 `cmd.exe /c` 包装 `.cmd`/`.bat` shim 来执行 npm/pnpm/dsh，导致：
+- 中文乱码（cmd.exe 默认 GBK 编码）
+- 路径空格转义失败（`ERROR_INVALID_NAME`）
+- 进程 Kill 不干净（cmd.exe 中间层）
+- GUI 进程 PATH 继承失效
+
+### 根因
+
+`npm`, `pnpm`, `dsh` 本质上都是 JavaScript 文件。Windows 生成的 `.cmd` shim 只是 `node.exe <entry.js>` 的薄包装。直接使用 `node.exe` 执行 `.js` 入口可以彻底绕过所有 `.cmd` 相关陷阱。
+
+### 决策
+
+建立 `JsEntryResolver` 静态类，统一解析 npm/pnpm/dsh 的 JS 入口路径：
+- `ResolveNpmCliJs(nodeExePath)` → `npm-cli.js`
+- `ResolvePnpmEntry()` → `pnpm.cjs`
+- `ResolvePackageEntry(packageName)` → 读取 package.json 的 bin 字段
+
+所有外部命令调用统一使用 `node.exe "<entry.js>" args` 格式，**严禁**出现 `cmd.exe /c`。
+
+### 不变式
+
+```
+All Node.js script execution MUST use node.exe + .js entry directly.
+cmd.exe /c is PROHIBITED in src/ .cs files (enforced by CI static assertion).
+```
+
+---
+
 *本文档随架构决策变更持续更新。每条 ADR 的源码位置以 `[INVARIANT]` 注释标注。*
