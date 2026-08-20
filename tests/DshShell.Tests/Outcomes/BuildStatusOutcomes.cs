@@ -24,15 +24,15 @@ public class BuildStatusOutcomes
     /// <summary>
     /// 【L3 Outcome — BuildStatus 枚举契约】
     /// 验证 BuildStatus 枚举包含所有必要的状态。
+    /// 统一状态：Idle → Building → Ready（不再区分 Downloading/Building）。
     /// </summary>
     [Fact]
     public void Outcome_BuildStatus_EnumContainsAllStates()
     {
         // 验证枚举值存在
         Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 0)); // Idle
-        Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 1)); // Downloading
-        Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 2)); // Building
-        Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 3)); // Ready
+        Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 1)); // Building
+        Assert.True(Enum.IsDefined(typeof(CustomTitleBar.BuildStatus), 2)); // Ready
     }
 
     /// <summary>
@@ -63,13 +63,13 @@ public class BuildStatusOutcomes
 
     /// <summary>
     /// 【L3 Outcome — 状态流转契约】
-    /// 验证构建状态的合法流转：Idle → Downloading → Building → Ready/Idle。
+    /// 验证构建状态的合法流转：Idle → Building → Ready → Idle。
+    /// 统一状态：不再区分 Downloading/Building，直接 Idle → Building → Ready。
     /// </summary>
     [Theory]
-    [InlineData(0, 1, true)]  // Idle → Downloading
-    [InlineData(1, 2, true)]  // Downloading → Building
-    [InlineData(2, 3, true)]  // Building → Ready
-    [InlineData(3, 0, true)]  // Ready → Idle
+    [InlineData(0, 1, true)]  // Idle → Building
+    [InlineData(1, 2, true)]  // Building → Ready
+    [InlineData(2, 0, true)]  // Ready → Idle
     public void Outcome_BuildStatus_ValidTransitions(int from, int to, bool expected)
     {
         // 验证状态流转是合法的（设计意图）

@@ -1062,34 +1062,76 @@ internal static class Program
     /// </summary>
     private static void HandlePendingUpdateAtStartup(CancellationToken ct, Action<string>? progress = null)
     {
-        // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 模拟"确认更新→重启→应用"全流程（DshUpdateFlowTests）。
-        // 直接走 ApplyPendingDshUpdate（其内部 fake 分支清 pending），**不依赖端口状态**——否则
-        // 本地残留服务（端口开）时决策走 PromptRestart，pending 保留，测试不稳定。
+        // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 模拟"确认更新→重启→应用"全流程。
         if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
         {
             ApplyPendingDshUpdate(ct, progress);
             return;
         }
-        var (pendingVersion, _, _, _, _) = StagedUpdate.ReadPending();
+        var (pendingVersion, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(pendingVersion)) return;
+
+        // [INVARIANT] SelfContained 构建完成后，必须无条件执行 Apply，无论端口是否被占用。
+        // 旧服务仍在运行（端口开）时，强杀后执行原子切换。
+        if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
+        {
+            Logger.Info($"[Apply] SelfContained runtime ready: {runtimeDir}, forcing apply");
+            if (PortOpen(Target.Port))
+            {
+                Logger.Info($"[Apply] Port {Target.Port} occupied, killing old service before apply");
+                KillServiceOnPort(Target.Port);
+            }
+            ApplyPendingDshUpdate(ct, progress);
+            return;
+        }
+
+        // 旧版 pending（无 runtimeDir）：按原决策矩阵处理
         var action = ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(
             pendingExists: true,
             portOpen: PortOpen(Target.Port),
             runningVersion: ReadGlobalDshVersion(),
             pendingVersion: pendingVersion);
+        Logger.Info($"[Apply] Decision: {action}, portOpen={PortOpen(Target.Port)}, running={ReadGlobalDshVersion()}, pending={pendingVersion}");
         switch (action)
         {
             case ShellLogic.PendingUpdateAction.ApplyNow:
-                ApplyPendingDshUpdate(ct, progress); // 可取消；失败按策略保留/清理 pending
+                ApplyPendingDshUpdate(ct, progress);
                 break;
             case ShellLogic.PendingUpdateAction.ClearPending:
                 StagedUpdate.ClearPending();
-                Logger.Info($"pending dsh update {pendingVersion} already running; cleared stale pending");
+                Logger.Info($"[Apply] Cleared stale pending: {pendingVersion} already running");
                 break;
             case ShellLogic.PendingUpdateAction.PromptRestart:
                 _applyRestartPendingVersion = pendingVersion;
-                Logger.Info($"dsh update {pendingVersion} pending while service running; will prompt once on main window");
+                Logger.Info($"[Apply] Deferred: {pendingVersion} pending while service running; will prompt on main window");
                 break;
+        }
+    }
+
+    /// <summary>强杀占用指定端口的 dsh 服务进程（Apply 前清理旧服务）。</summary>
+    private static void KillServiceOnPort(int port)
+    {
+        try
+        {
+            var pid = FindPidListeningOn(port);
+            if (pid <= 0) return;
+            Logger.Info($"[Apply] Killing old service PID={pid} on port {port}");
+            if (KillProcess(pid))
+            {
+                // 等待端口释放（最长 2 秒）
+                var deadline = DateTime.UtcNow.AddSeconds(2);
+                while (DateTime.UtcNow < deadline && PortOpen(port))
+                    Thread.Sleep(100);
+                Logger.Info($"[Apply] Port {port} released: {!PortOpen(port)}");
+            }
+            else
+            {
+                Logger.Warn($"[Apply] Failed to kill PID={pid}, proceeding with apply anyway");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"[Apply] KillServiceOnPort error: {ex.Message}");
         }
     }
 
@@ -1521,7 +1563,7 @@ internal static class Program
 
             // 任务五：更新标题栏构建状态（UI 反馈）
             // 下载阶段：0-30%
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Downloading, $"正在下载 dsh {latest}...", 0.1f);
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新 (v{latest})...", 0.1f);
 
             // ---- 步骤 1：npm pack 下载 tarball ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
@@ -1557,7 +1599,11 @@ internal static class Program
             var buildTool = "npm";
 
             // 检测 pnpm 可用性（绝不安装）
-            var pnpmExe = FindOnPath("pnpm.cmd") ?? FindOnPath("pnpm");
+            // [Fix] GUI 进程的 PATH 可能不包含 pnpm 路径（如 %APPDATA%\npm）
+            // 合并注册表中的系统 PATH + 用户 PATH，确保 pnpm 检测不漏
+            var mergedPath = GetMergedPath();
+            Logger.Info($"pnpm detection: PATH length={mergedPath?.Length ?? 0}");
+            var pnpmExe = FindOnPath("pnpm.cmd", mergedPath) ?? FindOnPath("pnpm", mergedPath);
             Logger.Info($"pnpm detection: {(pnpmExe is not null ? "found at " + pnpmExe : "not found")}");
             if (pnpmExe is not null)
             {
@@ -1720,6 +1766,11 @@ internal static class Program
                 RedirectStandardError = true,
                 WorkingDirectory = buildDir,
             };
+            // [Fix] 防止 corepack 挂起：设置 COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+            // 否则 corepack 会在后台等待用户输入 'y/n' 导致永久挂起超时
+            psi.EnvironmentVariables["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0";
+            // [Fix] 注入合并后的 PATH，确保 GUI 进程能找到 pnpm
+            psi.EnvironmentVariables["PATH"] = GetMergedPath();
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return false;
             var output = p.StandardOutput.ReadToEnd();
@@ -1764,9 +1815,9 @@ internal static class Program
         catch { }
     }
 
-    private static string? FindOnPath(string fileName)
+    private static string? FindOnPath(string fileName, string? customPath = null)
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        var pathEnv = customPath ?? Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrWhiteSpace(pathEnv)) return null;
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
@@ -1778,6 +1829,42 @@ internal static class Program
             catch { }
         }
         return null;
+    }
+
+    /// <summary>
+    /// 合并注册表中的系统 PATH + 用户 PATH + 当前进程 PATH。
+    /// GUI 进程（如 Explorer 启动的 DshWeb.exe）的 PATH 可能不包含
+    /// %APPDATA%\npm 等用户级路径，导致 where pnpm 失败。
+    /// </summary>
+    private static string GetMergedPath()
+    {
+        var current = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var systemPath = "";
+        var userPath = "";
+        try
+        {
+            using var sysKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment");
+            systemPath = sysKey?.GetValue("PATH", "") as string ?? "";
+        }
+        catch { }
+        try
+        {
+            using var userKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Environment");
+            userPath = userKey?.GetValue("PATH", "") as string ?? "";
+        }
+        catch { }
+
+        // 合并去重：系统 → 用户 → 当前进程
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<string>();
+        foreach (var part in (systemPath + ";" + userPath + ";" + current).Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0 && seen.Add(trimmed))
+                merged.Add(trimmed);
+        }
+        return string.Join(Path.PathSeparator, merged);
     }
 
     /// <summary>递归删除目录（幂等）；失败静默（清理临时目录不阻塞主流程）。</summary>
@@ -1801,11 +1888,14 @@ internal static class Program
         var (version, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(version)) return;
 
+        // [Evidence-1] Apply 开始
+        Logger.Info($"[Apply] Start: pending exists, target version={version}, runtimeDir={runtimeDir ?? "null"}, port={Target.Port}");
+
         // 测试钩子
         if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
         {
             StagedUpdate.ClearPending();
-            Logger.Info($"fake apply staged dsh update (test hook): {version}");
+            Logger.Info($"[Apply] Result: fake apply (test hook), pending cleared");
             return;
         }
 
@@ -1814,37 +1904,46 @@ internal static class Program
         // ---- 路径 A：SelfContained 原子切换（零 npm，秒级） ----
         if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
         {
-            // 校验构建完整性：dsh package.json 必须存在
             var dshPkg = Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
             if (!File.Exists(dshPkg))
             {
-                // 构建不完整（用户中断/超时）→ 清理不完整目录，降级到 npm 路径
-                Logger.Warn($"staged runtime build incomplete: {runtimeDir}; falling back to npm install",
-                    ErrorCodes.E4002);
+                Logger.Warn($"[Apply] SelfContained build incomplete (missing {dshPkg}), falling back to npm");
                 TryDeleteDir(runtimeDir);
-                // 不 return，继续走下方的 npm 路径
+                // 不 return，走 npm 路径
             }
             else
             {
-                // 原子移动：staging/runtime-build-{ver} → runtimes/{ver}
                 var runtimesDir = Path.Combine(DataDir, "runtimes");
                 Directory.CreateDirectory(runtimesDir);
                 var targetDir = Path.Combine(runtimesDir, version);
 
+                // [Evidence-2] 执行原子切换
+                Logger.Info($"[Apply] Executing: Directory.Move({runtimeDir}, {targetDir})");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     if (Directory.Exists(targetDir))
                         TryDeleteDir(targetDir);
 
                     Directory.Move(runtimeDir, targetDir);
+                    sw.Stop();
+
+                    // [Evidence-3] 切换成功
+                    Logger.Info($"[Apply] Result: atomic swap success, Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
+
                     StagedUpdate.ClearPending();
                     CleanupStagingCache();
-                    Logger.Info($"staged dsh update applied via atomic swap: {version} → {targetDir}");
+
+                    // [Evidence-4] 清理确认
+                    var pendingAfter = StagedUpdate.ReadPending().Version;
+                    Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
+
                     progress?.Invoke($"更新 v{version} 已应用完成（原子切换，零 npm）。");
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"atomic swap failed for dsh update {version}: {ex.Message}", ErrorCodes.E4002);
+                    sw.Stop();
+                    Logger.Error($"[Apply] Result: atomic swap FAILED, Duration={sw.ElapsedMilliseconds}ms, Error={ex.Message}", ErrorCodes.E4002);
                     StagedUpdate.MarkApplyFailed();
                     NotifyUpdateApplyFailed(version, $"原子切换失败: {ex.Message}");
                 }
@@ -1853,8 +1952,7 @@ internal static class Program
         }
 
         // ---- 路径 B：npm install 路径（兼容旧版 pending / 构建失败降级） ----
-        // 兼容升级路径：旧版 launcher 写的 pending 没有 runtimeDir 字段
-        Logger.Info($"falling back to npm install path: {version}");
+        Logger.Info($"[Apply] Falling back to npm install path (no SelfContained runtime)");
         var localTarball = StagedUpdate.LocateTarball(version, null);
         var useLocal = localTarball is not null;
         var text = useLocal
@@ -1862,22 +1960,48 @@ internal static class Program
             : $"正在应用更新 (v{version})…（需要在线下载，可能需要几分钟）";
         progress?.Invoke(text);
 
-        if (ct.IsCancellationRequested) return;
-        var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
-        if (RunNpmCommand($"install -g \"{installSpec}\" --prefer-offline --no-audit --no-fund" + GetNpmRegistryArgs(),
-            out var errorTail, ct, progress))
+        if (ct.IsCancellationRequested)
         {
+            Logger.Info("[Apply] Canceled before npm install");
+            return;
+        }
+
+        var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
+        var npmArgs = $"install -g \"{installSpec}\" --prefer-offline --no-audit --no-fund" + GetNpmRegistryArgs();
+
+        // [Evidence-2] 执行 npm install
+        Logger.Info($"[Apply] Executing: npm {npmArgs}");
+        var npmSw = System.Diagnostics.Stopwatch.StartNew();
+        if (RunNpmCommand(npmArgs, out var errorTail, ct, progress))
+        {
+            npmSw.Stop();
+            // [Evidence-3] npm 成功
+            Logger.Info($"[Apply] Result: npm success, Duration={npmSw.ElapsedMilliseconds}ms");
+
             progress?.Invoke($"更新 v{version} 已应用完成。");
             StagedUpdate.ClearPending();
             CleanupStagingCache();
-            Logger.Info($"staged dsh update applied (npm path): {version}");
+
+            // [Evidence-4] 清理确认
+            var pendingAfter = StagedUpdate.ReadPending().Version;
+            Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
+
+            Logger.Info($"[Apply] Done: dsh update {version} applied successfully");
         }
         else
         {
-            if (ct.IsCancellationRequested) { Logger.Info("staged dsh update apply canceled; will retry next launch"); return; }
+            npmSw.Stop();
+            // [Evidence-3] npm 失败
+            Logger.Warn($"[Apply] Result: npm FAILED, Duration={npmSw.ElapsedMilliseconds}ms, ExitCode={errorTail}");
+
+            if (ct.IsCancellationRequested)
+            {
+                Logger.Info("[Apply] Canceled by user; will retry next launch");
+                return;
+            }
             StagedUpdate.MarkApplyFailed();
-            Logger.Warn("staged dsh update apply failed; continuing with current version", ErrorCodes.E4002,
-                new { version, tail = errorTail });
+            Logger.Warn($"[Apply] Failed: dsh update {version} apply failed; continuing with current version",
+                ErrorCodes.E4002, new { version, tail = errorTail });
             NotifyUpdateApplyFailed(version, errorTail);
         }
     }
