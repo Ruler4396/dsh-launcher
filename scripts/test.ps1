@@ -106,6 +106,24 @@ Assert-True ($shellSrc -notmatch 'WndProc') "【Step6完成】Program.cs 不含 
 Assert-True ($shellSrc -notmatch 'CreateParams') "【Step6完成】Program.cs 不含 CreateParams（已迁出 Windows/）"
 # Step 4 完成：WebView2 事件接线已迁入 WebViewManager → 此断言提前反转（完成态）。
 Assert-True ($shellSrc -notmatch 'web\.CoreWebView2\.(PermissionRequested|NewWindowRequested|DownloadStarting|NavigationStarting|ProcessFailed)') "【Step4完成】Program.cs 不含 WebView2 事件接线（已迁入 WebViewManager）"
+# ADR-021：严禁使用 cmd.exe 包装 Node.js 脚本，必须使用 node.exe 直接执行 .js 入口
+# 扫描 src/ 下所有 .cs 文件，排除注释行（以 // 开头），检查实际代码中是否出现 cmd.exe 调用
+$srcCsFiles = Get-ChildItem (Join-Path $root "src") -Recurse -Filter "*.cs"
+$cmdExeViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        # 跳过注释行
+        if ($line -startswith '//') { continue }
+        if ($line -startswith '///') { continue }
+        # 检查实际代码中的 cmd.exe 调用（排除字符串字面量中的描述性文本）
+        if ($line -match 'ProcessStartInfo.*cmd\.exe|"cmd\.exe"|cmd\.exe.*/c') {
+            $cmdExeViolations += "$($f.Name):$($i+1): $line"
+        }
+    }
+}
+Assert-True ($cmdExeViolations.Count -eq 0) "【ADR-021】src/ 中严禁出现 cmd.exe 调用（$(if($cmdExeViolations.Count -gt 0){$cmdExeViolations[0]}else{'clean'})"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
 $caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
 Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"

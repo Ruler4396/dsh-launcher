@@ -216,15 +216,33 @@ public static class DshDiscovery
         return null;
     }
 
+    /// <summary>
+    /// 读取 dsh 版本号。[ADR-021] 使用 node.exe 直接执行 dsh 的 JS 入口，彻底绕过 cmd.exe。
+    /// 失败返回 null（不抛异常）。
+    /// </summary>
     private static string? ReadVersionFromExecutable(string exePath)
     {
         try
         {
-            var isCmd = exePath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                || exePath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
-            var (fileName, arguments) = isCmd
-                ? ("cmd.exe", $"/c \"{exePath}\" --version")
-                : (exePath, "--version");
+            // 尝试找到 node.exe 和 dsh 的 JS 入口
+            var nodeExe = FindNodeExe();
+            var dshEntryJs = ResolvePackageEntry("@deepseek-ai/dsh");
+
+            string fileName;
+            string arguments;
+
+            if (nodeExe is not null && dshEntryJs is not null)
+            {
+                // [ADR-021] 优先使用 node.exe 直接执行 dsh 的 JS 入口
+                fileName = nodeExe;
+                arguments = $"\"{dshEntryJs}\" --version";
+            }
+            else
+            {
+                // Fallback：直接执行可执行文件（非 .cmd 情况）
+                fileName = exePath;
+                arguments = "--version";
+            }
 
             var psi = new ProcessStartInfo(fileName, arguments)
             {
@@ -232,6 +250,8 @@ public static class DshDiscovery
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
             };
             using var p = Process.Start(psi);
             if (p is null) return null;
@@ -243,5 +263,80 @@ public static class DshDiscovery
             return null;
         }
         catch { return null; }
+    }
+
+    /// <summary>查找 node.exe 绝对路径。</summary>
+    private static string? FindNodeExe()
+    {
+        // 优先从 PATH 查找
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(pathEnv))
+        {
+            foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                try
+                {
+                    var exe = Path.Combine(dir.Trim(), "node.exe");
+                    if (File.Exists(exe)) return exe;
+                }
+                catch { }
+            }
+        }
+        // 注册表
+        try
+        {
+            foreach (var hive in new[] { @"HKLM\SOFTWARE\Node.js", @"HKLM\SOFTWARE\WOW6432Node\Node.js" })
+            {
+                var ip = Microsoft.Win32.Registry.GetValue(hive, "InstallPath", null) as string;
+                if (!string.IsNullOrWhiteSpace(ip))
+                {
+                    var exe = Path.Combine(ip, "node.exe");
+                    if (File.Exists(exe)) return exe;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>解析全局 npm 包的 JS 入口绝对路径（复用 JsEntryResolver 逻辑）。</summary>
+    private static string? ResolvePackageEntry(string packageName)
+    {
+        try
+        {
+            var appDataNpm = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
+            var pkgDir = Path.Combine(appDataNpm, "node_modules", packageName);
+            var pkgJson = Path.Combine(pkgDir, "package.json");
+            if (!File.Exists(pkgJson)) return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(pkgJson));
+            if (!doc.RootElement.TryGetProperty("bin", out var bin)) return null;
+
+            string? binPath = null;
+            if (bin.ValueKind == JsonValueKind.String)
+                binPath = bin.GetString();
+            else if (bin.ValueKind == JsonValueKind.Object)
+            {
+                var shortName = packageName.Contains('/') ? packageName.Split('/')[^1] : packageName;
+                if (bin.TryGetProperty(shortName, out var named) && named.ValueKind == JsonValueKind.String)
+                    binPath = named.GetString();
+                else
+                {
+                    foreach (var prop in bin.EnumerateObject())
+                        if (prop.Value.ValueKind == JsonValueKind.String)
+                        { binPath = prop.Value.GetString(); break; }
+                }
+            }
+
+            if (binPath is null) return null;
+            var normalized = binPath.Replace('/', Path.DirectorySeparatorChar);
+            var fullPath = Path.Combine(pkgDir, normalized);
+            if (File.Exists(fullPath)) return fullPath;
+            if (!Path.HasExtension(normalized) && File.Exists(fullPath + ".js"))
+                return fullPath + ".js";
+        }
+        catch { }
+        return null;
     }
 }
