@@ -1173,7 +1173,8 @@ internal static class Program
                         var psi = new ProcessStartInfo(nodeExe,
                             $"\"{binJs}\" web --host 127.0.0.1 --port {Target.Port}")
                         {
-                            UseShellExecute = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
                             WorkingDirectory = identity.ExecutablePath,
                         };
                         Process.Start(psi);
