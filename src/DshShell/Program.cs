@@ -1645,6 +1645,23 @@ internal static class Program
                 }
             }
 
+            // pnpm 失败回退到 npm 时，启动 npm 时间估算进度线程
+            if (!buildOk && progressTask is null)
+            {
+                buildStartTime = DateTime.UtcNow; // 重置计时起点
+                progressTask = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    while (!progressCts.Token.IsCancellationRequested)
+                    {
+                        await System.Threading.Tasks.Task.Delay(500, progressCts.Token).ConfigureAwait(false);
+                        var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
+                        var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / 90.0) * 0.80f);
+                        UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
+                            $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
+                    }
+                }, progressCts.Token);
+            }
+
             if (!buildOk)
             {
                 Logger.Info($"building dsh runtime with npm: {latest}");
