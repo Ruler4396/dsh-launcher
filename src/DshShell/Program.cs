@@ -111,11 +111,16 @@ internal static class Program
         }
     }
 
+    /// <summary>沙盒模式标志：DSH_SANDBOX=1 时禁用所有机器级副作用（自启/ProgramData 清理/孤儿快捷方式/旧版本清理）。</summary>
+    internal static bool IsSandboxMode =>
+        string.Equals(Environment.GetEnvironmentVariable("DSH_SANDBOX"), "1", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>清理卸载后 ProgramData 范围外的空目录残留（清理项 1）：安装用 FolderPicker
     /// 会在 C:\ProgramData\dsh-launcher 创建中转文件（picked.txt），卸载不删该目录；目录为空
     /// （无其他用户残留文件）时顺手清掉。非空（如被其他软件占用）则不动。</summary>
     private static void CleanupProgramDataResidue()
     {
+        if (IsSandboxMode) return; // [SANDBOX] 禁用机器级副作用
         try
         {
             var dir = Path.Combine(
@@ -149,6 +154,7 @@ internal static class Program
     /// （会同时清 HKLM 标志）则不再自愈。</summary>
     private static void EnsureAutoStartRequested()
     {
+        if (IsSandboxMode) return; // [SANDBOX] 禁用机器级副作用
         try
         {
             var wanted = false;
@@ -335,8 +341,11 @@ internal static class Program
             return false;
         }
         Trace("first instance");
-        TryPromptOldVersionCleanup();
-        CleanupOrphanShortcuts();
+        if (!IsSandboxMode) // [SANDBOX] 禁用机器级副作用
+        {
+            TryPromptOldVersionCleanup();
+            CleanupOrphanShortcuts();
+        }
         return true;
     }
 

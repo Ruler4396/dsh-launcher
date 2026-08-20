@@ -115,8 +115,8 @@ foreach ($f in $srcCsFiles) {
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i].Trim()
         # 跳过注释行
-        if ($line -startswith '//') { continue }
-        if ($line -startswith '///') { continue }
+        if ($line.StartsWith('//')) { continue }
+        if ($line.StartsWith('///')) { continue }
         # 检查实际代码中的 cmd.exe 调用（排除字符串字面量中的描述性文本）
         if ($line -match 'ProcessStartInfo.*cmd\.exe|"cmd\.exe"|cmd\.exe.*/c') {
             $cmdExeViolations += "$($f.Name):$($i+1): $line"
@@ -140,7 +140,7 @@ foreach ($f in $srcCsFiles) {
     $lines = Get-Content $f.FullName
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i].Trim()
-        if ($line -startswith '//' -or $line -startswith '///') { continue }
+        if ($line.StartsWith('//') -or $line.StartsWith('///')) { continue }
         if ($line -match '\.Kill\(\)' -and $line -notmatch 'entireProcessTree|Kill\(true\)') {
             $killViolations += "$($f.Name):$($i+1): $line"
         }
@@ -222,6 +222,59 @@ Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 记录 prefetc
 Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于 prefetched 真实状态，不得写死秒数）"
 Assert-True ($shellSrc -match '依赖已就绪') "prefetched=true 时文案如实'依赖已就绪'（不承诺具体秒数）"
 Assert-True ($shellSrc -match '可能需要几分钟') "prefetched=false/线上时如实'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
+
+# ---- Sandbox (DSH_SANDBOX) 静态断言：门控 + 环境覆盖 ----
+Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan
+# DSH_SANDBOX 门控：四个机器级副作用调用点必须被 DSH_SANDBOX 门控
+Assert-True ($shellSrc -match 'IsSandboxMode') "Program.cs 暴露 IsSandboxMode 属性（DSH_SANDBOX=1 判定）"
+# 门控检查：IsSandboxMode 必须出现在每个副作用方法的调用路径中
+Assert-True ($shellSrc -match 'CleanupProgramDataResidue' -and $shellSrc -match 'IsSandboxMode') "CleanupProgramDataResidue 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'EnsureAutoStartRequested' -and $shellSrc -match 'IsSandboxMode') "EnsureAutoStartRequested 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'TryPromptOldVersionCleanup' -and $shellSrc -match 'IsSandboxMode') "TryPromptOldVersionCleanup 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'CleanupOrphanShortcuts' -and $shellSrc -match 'IsSandboxMode') "CleanupOrphanShortcuts 存在且 IsSandboxMode 存在（门控）"
+# 验证门控在正确位置：EnsureSingleInstanceAndAutostart 中有 !IsSandboxMode 保护
+Assert-True ($shellSrc -match '!IsSandboxMode') "EnsureSingleInstanceAndAutostart 用 !IsSandboxMode 门控副作用"
+# 验证 CleanupProgramDataResidue 方法体内有 early return
+$lines = $shellSrc -split "`n"
+$inCleanup = $false; $foundGate = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match 'private static void CleanupProgramDataResidue') { $inCleanup = $true }
+    if ($inCleanup -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate = $true; break }
+    if ($inCleanup -and $lines[$i] -match '^\s*\}') { break }
+}
+Assert-True $foundGate "CleanupProgramDataResidue 方法体内有 IsSandboxMode 早期返回"
+$inEnsure = $false; $foundGate2 = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match 'private static void EnsureAutoStartRequested') { $inEnsure = $true }
+    if ($inEnsure -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate2 = $true; break }
+    if ($inEnsure -and $lines[$i] -match '^\s*try\s*\{') { break }
+}
+Assert-True $foundGate2 "EnsureAutoStartRequested 方法体内有 IsSandboxMode 早期返回"
+
+# DSH_PORTABLE_NODE_DIR 环境覆盖
+$runtimeSrc = Get-Content (Join-Path $root "src\DshShell\RuntimeResolver.cs") -Raw
+Assert-True ($runtimeSrc -match 'DSH_PORTABLE_NODE_DIR') "RuntimeResolver 支持 DSH_PORTABLE_NODE_DIR 环境覆盖"
+Assert-True ($runtimeSrc -match 'DSH_HOME') "RuntimeResolver.RuntimeStatePath 尊重 DSH_HOME 环境变量"
+
+# DSH_NPM_REGISTRY 环境覆盖
+$updateSrc = Get-Content (Join-Path $root "src\DshShell\UpdateChecker.cs") -Raw
+Assert-True ($updateSrc -match 'DSH_NPM_REGISTRY') "UpdateChecker 支持 DSH_NPM_REGISTRY 环境覆盖"
+Assert-True ($updateSrc -match 'NpmRegistryBase') "UpdateChecker 通过 NpmRegistryBase 属性统一 registry 基址"
+
+# 硬编码绝对路径/URL 扫描（新增断言：直接 CI 标红）
+$hardcodedViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        if ($line.StartsWith('//') -or $line.StartsWith('///')) { continue }
+        # 检查 registry.npmjs.org 硬编码（排除注释和字符串描述）
+        if ($line -match 'registry\.npmjs\.org' -and $f.Name -ne "UpdateChecker.cs") {
+            $hardcodedViolations += "$($f.Name):$($i+1): hardcoded registry.npmjs.org: $line"
+        }
+    }
+}
+Assert-True ($hardcodedViolations.Count -eq 0) "无 registry.npmjs.org 硬编码（$(if($hardcodedViolations.Count -gt 0){$hardcodedViolations[0]}else{'clean'})"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))
