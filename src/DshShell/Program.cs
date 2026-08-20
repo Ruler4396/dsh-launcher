@@ -1147,19 +1147,54 @@ internal static class Program
         return _cachedGlobalDshVersion;
     }
 
-    /// <summary>拉起 dsh 服务（wscript start-dsh.vbs）。返回 false = 拉起失败（E2001）。</summary>
+    /// <summary>
+    /// 拉起 dsh 服务。优先使用 SelfContained 运行时（node.exe 直接执行），
+    /// 回退到 start-dsh.vbs（全局安装 / npm shim / npx 三级回退）。
+    /// 返回 false = 拉起失败（E2001）。
+    /// </summary>
     private static bool StartDshServiceViaVbs()
     {
+        // 端口与统一日志路径透传给子进程
+        Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
+        Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
+
+        // [Fix] 优先使用 SelfContained 运行时（node.exe 直接执行，秒级启动）
+        var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
+        if (identity.Source == DshWeb.Domain.DshSource.SelfContained && identity.ExecutablePath is not null)
+        {
+            var binJs = FindDshBinJs(identity.ExecutablePath);
+            if (binJs is not null)
+            {
+                var nodeExe = FindNodeExe();
+                if (nodeExe is not null)
+                {
+                    try
+                    {
+                        var psi = new ProcessStartInfo(nodeExe,
+                            $"\"{binJs}\" web --host 127.0.0.1 --port {Target.Port}")
+                        {
+                            UseShellExecute = true,
+                            WorkingDirectory = identity.ExecutablePath,
+                        };
+                        Process.Start(psi);
+                        Trace($"service start via SelfContained: node.exe {binJs}");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"SelfContained start failed, falling back to vbs: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        // 回退：start-dsh.vbs（全局安装 / npm shim / npx 三级回退）
         var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
         if (!File.Exists(vbs))
         {
             Logger.Error($"missing {vbs}, cannot start dsh service", ErrorCodes.E2001);
             return false;
         }
-        // 端口与统一日志路径透传给 start-dsh.vbs（进程级环境变量，wscript → cmd → dsh 依次继承）；
-        // DSH_PORT 不设时 vbs 默认 3080。DSH_HOME 等环境变量同理自动继承。
-        Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
-        Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
         try
         {
             Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
@@ -1171,6 +1206,28 @@ internal static class Program
             Logger.Error("failed to start dsh service: " + ex.Message, ErrorCodes.E2001);
             return false;
         }
+    }
+
+    /// <summary>在 SelfContained 运行时目录中查找 dsh 的 bin.js 入口。</summary>
+    private static string? FindDshBinJs(string runtimeDir)
+    {
+        try
+        {
+            var pkgJson = Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+            if (!File.Exists(pkgJson)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkgJson));
+            var binEntry = DshWeb.Domain.DshDiscovery.ResolveBinEntry(runtimeDir, doc.RootElement);
+            if (binEntry is null) return null;
+            return Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", binEntry);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>查找 node.exe 绝对路径。</summary>
+    private static string? FindNodeExe()
+    {
+        var env = RuntimeResolver.ResolveExisting();
+        return env?.NodeExe;
     }
 
     /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。</summary>
@@ -1299,10 +1356,11 @@ internal static class Program
                 var local = UpdateChecker.ResolveLocalDshVersion();
                 // 诊断留痕（v0.4.0）：检测未命中时记录原因，用户可查 dsh.log 判断是"无更新"还是
                 // "取不到本地版本/远端版本"（此前完全静默，难排查）。
-                if (string.IsNullOrWhiteSpace(latest) || string.IsNullOrWhiteSpace(local))
+                if (string.IsNullOrWhiteSpace(latest))
                     Trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"} (skip)");
-                if (!string.IsNullOrWhiteSpace(latest) && !string.IsNullOrWhiteSpace(local)
-                    && UpdateChecker.CompareVersions(latest, local) > 0)
+                // [Fix] local 为 null 时仍然提示更新（用户卸载了全局 dsh 或首次安装）
+                if (!string.IsNullOrWhiteSpace(latest)
+                    && (string.IsNullOrWhiteSpace(local) || UpdateChecker.CompareVersions(latest, local) > 0))
                 {
                     // v0.4.0 T3 去重：已下载待应用（pending）且 pending.Version >= 检测版本 → 不弹
                     // "有更新"（更新死循环根因 C：下载成功 → pending → 重开又弹）。气泡已由上方
@@ -1560,13 +1618,16 @@ internal static class Program
             Directory.CreateDirectory(staging);
             Directory.CreateDirectory(buildDir);
 
+            // 立即显示初始进度（用户点击更新后第一时间看到反馈）
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
+
             // ---- 步骤 1：npm pack 下载 tarball（约 3 秒） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
             var tarballPath = Path.Combine(buildDir, tarballName);
             var ok = RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\"",
                 out var errorTail);
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 10%（v{latest}）", 0.10f);
+            // tarball 下载完成，进度更新由 pnpm 检测后统一处理
             if (!ok || !File.Exists(tarballPath))
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });

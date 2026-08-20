@@ -27,6 +27,8 @@ internal sealed class CustomTitleBar : Panel
     internal volatile string _buildProgressText = "";
     /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
     internal volatile float _buildProgressPercent = 0f;
+    /// <summary>脉冲动画上次绘制时间戳（限速 30fps）。</summary>
+    private long _lastMarqueeTick;
 
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
     private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
@@ -213,16 +215,18 @@ internal sealed class CustomTitleBar : Panel
             }
             else
             {
-                // npm 脉冲模式：循环滚动的 15% 宽度光条
-                var pulseOffset = (int)((Environment.TickCount64 / 20) % Width);
+                // npm 脉冲模式：循环滚动的 15% 宽度光条，限速 30fps
+                var tick = Environment.TickCount64;
+                var pulseOffset = (int)((tick / 33) % Width); // 33ms per frame ≈ 30fps
                 var pulseWidth = (int)(Width * 0.15f);
                 var x = pulseOffset - pulseWidth;
                 g.FillRectangle(progressBrush, Math.Max(0, x), Height - 2, pulseWidth, 2);
-                // 如果光条滚到右边界外，从左边再画一段
                 if (x + pulseWidth > Width)
                     g.FillRectangle(progressBrush, 0, Height - 2, (x + pulseWidth) - Width, 2);
-                // 触发重绘以驱动动画
-                BeginInvoke(Invalidate);
+                // 节流重绘：延迟 33ms 后触发下一次绘制（避免无限闪烁）
+                var delay = Math.Max(1, 33 - (int)(tick - _lastMarqueeTick));
+                _lastMarqueeTick = tick;
+                BeginInvoke(() => { if (_buildStatus == BuildStatus.Building) Invalidate(); });
             }
 
             // 文本显示
