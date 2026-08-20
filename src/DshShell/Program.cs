@@ -427,6 +427,7 @@ internal static class Program
 
         // 托盘图标：由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
         // 壳只读取配置，不硬编码托盘逻辑
+        // 仅在 Tray 模式下创建托盘（更新通知通过其他机制实现，不依赖托盘）
         var lifetimeMode = ReadLifetimeMode();
         if (lifetimeMode == ShellLogic.ServiceLifetime.Tray)
         {
