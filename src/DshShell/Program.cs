@@ -1561,16 +1561,20 @@ internal static class Program
             Directory.CreateDirectory(staging);
             Directory.CreateDirectory(buildDir);
 
-            // 任务五：更新标题栏构建状态（UI 反馈）
-            // 下载阶段：0-30%
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新 (v{latest})...", 0.1f);
+            // 进度文案统一格式："已构建更新 x%（版本号）"
+            void UpdateProgress(float percent)
+                => UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
+                    $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
 
-            // ---- 步骤 1：npm pack 下载 tarball ----
+            UpdateProgress(0.05f);
+
+            // ---- 步骤 1：npm pack 下载 tarball（约 3 秒，5%→10%） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
             var tarballPath = Path.Combine(buildDir, tarballName);
             var ok = RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\"",
                 out var errorTail);
+            UpdateProgress(0.10f);
             if (!ok || !File.Exists(tarballPath))
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
@@ -1591,10 +1595,7 @@ internal static class Program
             }
             Logger.Info($"dsh tarball downloaded: {tarballName}");
 
-            // 任务五：构建阶段 UI 反馈（30-100%）
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新 (v{latest})...", 0.3f);
-
-            // ---- 步骤 2：完整构建（pnpm 机会主义加速） ----
+            // ---- 步骤 2：完整构建（pnpm ~10s / npm ~60s，10%→90%） ----
             var buildOk = false;
             var buildTool = "npm";
 
@@ -1605,12 +1606,27 @@ internal static class Program
             Logger.Info($"pnpm detection: PATH length={mergedPath?.Length ?? 0}");
             var pnpmExe = FindOnPath("pnpm.cmd", mergedPath) ?? FindOnPath("pnpm", mergedPath);
             Logger.Info($"pnpm detection: {(pnpmExe is not null ? "found at " + pnpmExe : "not found")}");
+
+            // 启动进度追踪线程：pnpm ~10s → 10%→90% 每秒涨 8%，npm ~60s → 每秒涨 1.3%
+            var buildStartTime = DateTime.UtcNow;
+            var estimatedDuration = pnpmExe is not null ? 15.0 : 90.0; // 估计秒数
+            using var progressCts = new CancellationTokenSource();
+            var progressTask = Task.Run(async () =>
+            {
+                while (!progressCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(500, progressCts.Token).ConfigureAwait(false);
+                    var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
+                    var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / estimatedDuration) * 0.80f);
+                    UpdateProgress(percent);
+                }
+            }, progressCts.Token);
+
             if (pnpmExe is not null)
             {
                 try
                 {
                     Logger.Info($"building dsh runtime with pnpm: {latest}");
-                    UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新 (v{latest})...", 0.5f);
                     buildOk = RunPnpmInstall(pnpmExe, tarballPath, buildDir);
                     buildTool = "pnpm";
                     Logger.Info($"pnpm build result: {buildOk}");
@@ -1624,10 +1640,6 @@ internal static class Program
             if (!buildOk)
             {
                 Logger.Info($"building dsh runtime with npm: {latest}");
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新 (v{latest})...", 0.5f);
-                // 超时 20 分钟：300+ 依赖的解析+下载+链接需要足够时间
-                // --prefer-offline: 优先用 cache 中的 metadata，减少 registry 请求
-                // 用户中断后重试时，已下载的包在 cache 中，解析速度会快很多
                 buildOk = RunNpmCommand(
                     $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
                         + GetNpmRegistryArgs(),
@@ -1635,28 +1647,28 @@ internal static class Program
                 if (!buildOk)
                 {
                     Logger.Warn($"npm build failed: {buildTail}");
-                    // 清理不完整构建目录，下次重新开始（npm cache 保留已下载的包）
                     TryDeleteDir(buildDir);
                 }
             }
+
+            // 停止进度追踪线程
+            progressCts.Cancel();
+            try { progressTask.Wait(1000); } catch { }
 
             if (!buildOk)
             {
                 Logger.Warn($"dsh runtime build failed; keeping pending for next launch retry",
                     ErrorCodes.E4001, new { version = latest });
-                // 保留 tarball + pending（不清理 buildDir），下次启动重试
-                // npm cache 保留了已下载的包，重试时解析速度会快很多
                 var fallbackTarball = Path.Combine(staging, tarballName);
                 try { if (File.Exists(fallbackTarball)) File.Delete(fallbackTarball); File.Move(tarballPath, fallbackTarball); } catch { }
-                // 不传 runtimeDir → 下次启动走 npm install -g 路径（兼容）
                 StagedUpdate.MarkPending(latest, tarballName, prefetched: false);
                 TryDeleteDir(buildDir);
                 NotifyBuildFallback(form, latest);
                 return;
             }
 
-            // ---- 步骤 3：解析 bin 入口，校验构建完整性 ----
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在验证构建 (v{latest})...", 0.9f);
+            // ---- 步骤 3：解析 bin 入口，校验构建完整性（90%→100%） ----
+            UpdateProgress(0.95f);
             var dshPkg = Path.Combine(buildDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
             if (!File.Exists(dshPkg))
             {
@@ -1698,7 +1710,7 @@ internal static class Program
                 ctx: new { tool = buildTool, bin = binEntry, buildDir });
 
             // 任务五：构建完成 UI 反馈（100%）
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Ready, $"更新 v{latest} 已就绪", 1.0f);
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Ready, $"已构建更新 100%（v{latest}）", 1.0f);
         }
         catch (Exception ex)
         {
