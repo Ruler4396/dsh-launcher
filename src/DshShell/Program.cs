@@ -460,7 +460,7 @@ internal static class Program
             {
                 e.Cancel = true;
                 form.Hide();
-                WebViewManager.HiddenSince = DateTime.Now;
+                WebViewManager.HiddenSince = DateTime.UtcNow;
                 return;
             }
 
@@ -686,9 +686,8 @@ internal static class Program
             };
             form.Controls.Add(form.TitleBar);
             form.Show();
-            Application.DoEvents();
+            form.Refresh(); // 强制重绘（替代 DoEvents，避免重入风险）
             form.WindowState = FormWindowState.Maximized;
-            Application.DoEvents();
             form.Refresh();
 
             var wa = Screen.FromHandle(form.Handle).WorkingArea;
@@ -2929,9 +2928,9 @@ internal static class Program
         for (var i = 0; i < (e2eMode ? 20 : 180); i++)
         {
             if (token.IsCancellationRequested) return "canceled";
-            if ((DateTime.Now - lastLogCheck).TotalSeconds >= 5)
+            if ((DateTime.UtcNow - lastLogCheck).TotalSeconds >= 5)
             {
-                lastLogCheck = DateTime.Now;
+                lastLogCheck = DateTime.UtcNow;
                 // 任务三：主日志被锁时（cmd >> 独占）读取 fallback 日志，错误标志检查不失效——
                 // 两者任一出现启动错误标志都会触发 15s 宽限期提前退出（诊断盲区消除）。
                 var content = SafeReadText(logPath);
@@ -2946,7 +2945,7 @@ internal static class Program
                     if (!logErrorSeen)
                     {
                         logErrorSeen = true;
-                        logErrorSince = DateTime.Now;
+                        logErrorSince = DateTime.UtcNow;
                         // 日志出现错误标志：不立即判死——启动过程中的良性告警（如网络探测）
                         // 也会命中，误判会导致用户"要多点一次"。给 15 秒宽限期，期间
                         // HTTP 就绪仍算成功；只有持续失败才判定启动出错。
@@ -2967,7 +2966,7 @@ internal static class Program
                 }
                 // HTTP 尚未就绪（前端还在启动），继续等
             }
-            if (logErrorSeen && DateTime.Now - logErrorSince >= TimeSpan.FromSeconds(15))
+            if (logErrorSeen && DateTime.UtcNow - logErrorSince >= TimeSpan.FromSeconds(15))
             {
                 Trace("poll: log error markers persisted 15s, giving up");
                 return "logerror";

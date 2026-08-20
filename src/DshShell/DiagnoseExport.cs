@@ -22,7 +22,7 @@ public static class DiagnoseExport
             if (!Directory.Exists(downloads)) downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
             var minLevel = ParseMinLevel(args); // null = 全量
-            var zipPath = Path.Combine(downloads, $"dsh-launcher-diagnose-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            var zipPath = Path.Combine(downloads, $"dsh-launcher-diagnose-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip");
 
             using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
             {
@@ -254,7 +254,7 @@ public static class DiagnoseExport
             var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止挂死阻塞
             if (!p.WaitForExit(4000))
             {
-                try { p.Kill(); p.WaitForExit(); } catch { } // 超时杀进程防泄漏
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(); } catch { } // 超时杀进程树防泄漏
                 return "（执行超时）";
             }
             var outText = readTask.Result.Trim();

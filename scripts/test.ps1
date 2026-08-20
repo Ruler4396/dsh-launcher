@@ -124,6 +124,29 @@ foreach ($f in $srcCsFiles) {
     }
 }
 Assert-True ($cmdExeViolations.Count -eq 0) "【ADR-021】src/ 中严禁出现 cmd.exe 调用（$(if($cmdExeViolations.Count -gt 0){$cmdExeViolations[0]}else{'clean'})"
+# 技术债门禁：扫描常见反模式
+foreach ($f in $srcCsFiles) {
+    $content = Get-Content $f.FullName -Raw
+    # DoEvents 重入风险（CI 自测路径除外）
+    if ($f.Name -ne "Program.cs") {
+        Assert-True ($content -notmatch 'DoEvents\(\)') "【技术债】$($f.Name) 不含 DoEvents"
+    }
+    # Assembly.Location 在 SingleFile 下返回空字符串
+    Assert-True ($content -notmatch 'Assembly\.Location') "【技术债】$($f.Name) 不含 Assembly.Location（SingleFile 不兼容）"
+}
+# Kill() 必须带 entireProcessTree（扫描所有 .cs 文件）
+$killViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        if ($line -startswith '//' -or $line -startswith '///') { continue }
+        if ($line -match '\.Kill\(\)' -and $line -notmatch 'entireProcessTree|Kill\(true\)') {
+            $killViolations += "$($f.Name):$($i+1): $line"
+        }
+    }
+}
+Assert-True ($killViolations.Count -eq 0) "【技术债】Kill() 必须带 entireProcessTree（$(if($killViolations.Count -gt 0){$killViolations[0]}else{'clean'})"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
 $caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
 Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"
