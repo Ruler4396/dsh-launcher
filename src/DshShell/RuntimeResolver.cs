@@ -13,10 +13,19 @@ namespace DshWeb;
 /// </summary>
 public static class RuntimeResolver
 {
-    /// <summary>便携 Node 目录（用户指定 %LOCALAPPDATA%，不随 MSI 卸载误删）。</summary>
-    public static string PortableNodeDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "dsh-launcher", "env", "node");
+    /// <summary>便携 Node 目录：优先 DSH_PORTABLE_NODE_DIR 环境变量（沙盒/测试覆盖），
+    /// 未设置时回退 %LOCALAPPDATA%\dsh-launcher\env\node（生产路径，不随 MSI 卸载误删）。</summary>
+    public static string PortableNodeDir
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("DSH_PORTABLE_NODE_DIR");
+            if (!string.IsNullOrWhiteSpace(env)) return env;
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "dsh-launcher", "env", "node");
+        }
+    }
 
     /// <summary>Node LTS 固定版本表（实现时按当时 LTS 核对；可用 DSH_NODE_VERSION 覆盖）。
     /// 克制：不做启发式选版，只维护一个已知可用版本，随发版手动更新。
@@ -314,8 +323,18 @@ public static class RuntimeResolver
         }
     }
 
-    private static string RuntimeStatePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh", "dsh-launcher", "runtime-state.json");
+    /// <summary>运行时状态文件路径：优先 DSH_HOME 环境变量（沙盒隔离），
+    /// 未设置时回退 ~/.dsh/dsh-launcher/runtime-state.json。</summary>
+    private static string RuntimeStatePath
+    {
+        get
+        {
+            var dshHome = Environment.GetEnvironmentVariable("DSH_HOME");
+            if (string.IsNullOrWhiteSpace(dshHome))
+                dshHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
+            return Path.Combine(dshHome, "dsh-launcher", "runtime-state.json");
+        }
+    }
 
     private static string? ReadLastMirror()
     {

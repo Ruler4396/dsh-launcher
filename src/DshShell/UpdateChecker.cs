@@ -71,13 +71,24 @@ public static class UpdateChecker
         }
     }
 
+    /// <summary>npm registry 基址：优先 DSH_NPM_REGISTRY 环境变量（沙盒/测试覆盖），
+    /// 未设置时回退 https://registry.npmjs.org（生产路径）。</summary>
+    internal static string NpmRegistryBase
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("DSH_NPM_REGISTRY");
+            return !string.IsNullOrWhiteSpace(env) ? env.TrimEnd('/') : "https://registry.npmjs.org";
+        }
+    }
+
     /// <summary>拉取 dsh（@deepseek-ai/dsh）npm 最新版本；失败返回 null。</summary>
     public static async Task<string?> FetchLatestDshVersionAsync(HttpClient http)
     {
         try
         {
             using var resp = await http.GetAsync(
-                $"https://registry.npmjs.org/{Uri.EscapeDataString(DshNpmPackage)}/latest");
+                $"{NpmRegistryBase}/{Uri.EscapeDataString(DshNpmPackage)}/latest");
             if (!resp.IsSuccessStatusCode) return null;
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
