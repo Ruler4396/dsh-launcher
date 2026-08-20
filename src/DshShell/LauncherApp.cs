@@ -85,7 +85,7 @@ public sealed class LauncherApp
         _staleCleanup = staleCleanup;
         // 契约与 Program.Target 同源（ShellLogic.ResolveTarget）：DSH_WEB_URL → 外部托管；
         // DSH_WEB_PORT → 端口覆盖；缺省 http://127.0.0.1:3080。
-        var (url, port) = ShellLogic.ResolveTarget(
+        var (url, port) = ShellLogic.RuntimeConfig.ResolveTarget(
             Environment.GetEnvironmentVariable("DSH_WEB_URL"),
             Environment.GetEnvironmentVariable("DSH_WEB_PORT"));
         Url = url;
@@ -202,7 +202,7 @@ public sealed class LauncherApp
         if (portState == ShellLogic.ServicePortState.Foreign)
         {
             // 端口被其他程序占用：快速失败提示冲突（不傻等、不误杀无关进程）
-            var foreignPid = await Task.Run(() => ShellLogic.GetProcessIdByPort(Port), ct);
+            var foreignPid = await Task.Run(() => ShellLogic.ProcessManagement.GetProcessIdByPort(Port), ct);
             Logger.Error($"port {Port} is occupied by a non-dsh process; aborting startup",
                 ErrorCodes.E2004, new { port = Port, pid = foreignPid, url = Url });
             LastErrorCode = ErrorCodes.E2004;

@@ -137,7 +137,7 @@ public class UpdateFlowContractTests
     [InlineData(null!, false)]
     public void IsRetryableNpmError_Classifies_RetryableVsFatal(string tail, bool expected)
     {
-        Assert.Equal(expected, ShellLogic.IsRetryableNpmError(tail));
+        Assert.Equal(expected, ShellLogic.NpmHelpers.IsRetryableNpmError(tail));
     }
 
     // ---------------- 任务一/二/三：后台依赖预热（Cache Prefetch）契约 ----------------
@@ -209,7 +209,7 @@ public class UpdateFlowContractTests
         // Staging 流程：预热失败 → 仍 MarkPending（tarball 已就位），但 prefetched 必须为 false
         //（Bug 修复契约：预热未完成不得谎报"已预热"——应用时据此诚实显示"可能需要几分钟"）
         StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz");
-        var (version, _, tarball, prefetched) = StagedUpdate.ReadPending();
+        var (version, _, tarball, prefetched, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
         Assert.False(prefetched, "预热失败/未完成时 prefetched 必须为 false（诚实：不承诺秒装）");
@@ -224,7 +224,7 @@ public class UpdateFlowContractTests
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz", prefetched: true);
-        var (_, _, _, prefetched) = StagedUpdate.ReadPending();
+        var (_, _, _, prefetched, _) = StagedUpdate.ReadPending();
         Assert.True(prefetched);
     }
 
@@ -236,13 +236,13 @@ public class UpdateFlowContractTests
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz"); // 不传 prefetched
-        var (_, _, _, prefetched) = StagedUpdate.ReadPending();
+        var (_, _, _, prefetched, _) = StagedUpdate.ReadPending();
         Assert.False(prefetched);
         // 旧格式（无 prefetched 字段）也视为 false（诚实：不承诺秒装）
         File.Delete(Path.Combine(tmp.Path, "pending-update.json"));
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
             "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
-        var (_, _, _, oldPrefetched) = StagedUpdate.ReadPending();
+        var (_, _, _, oldPrefetched, _) = StagedUpdate.ReadPending();
         Assert.False(oldPrefetched);
     }
 
@@ -263,7 +263,7 @@ public class UpdateFlowContractTests
         Directory.Delete(prefetch, recursive: true);
 
         Assert.False(Directory.Exists(prefetch)); // 临时安装目录已释放
-        var (v, _, _, _) = StagedUpdate.ReadPending();
+        var (v, _, _, _, _) = StagedUpdate.ReadPending();
         Assert.Null(v); // pending 清账
     }
 
@@ -283,18 +283,18 @@ public class UpdateFlowContractTests
         // ① Node 根目录有 npm.cmd → 优先返回它（裸路径）
         var npmRoot = Path.Combine(nodeRoot, "npm.cmd");
         File.WriteAllText(npmRoot, "npm shim");
-        Assert.Equal(npmRoot, ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
+        Assert.Equal(npmRoot, ShellLogic.NpmHelpers.ResolveNpmCmdPath(nodeRoot, null));
 
         // ② Node 根目录无 npm.cmd → 回退 where 结果
         File.Delete(npmRoot);
         var wherePath = Path.Combine(tmp.Path, "where-npm.cmd");
         File.WriteAllText(wherePath, "npm shim");
-        Assert.Equal(wherePath, ShellLogic.ResolveNpmCmdPath(nodeRoot, wherePath));
+        Assert.Equal(wherePath, ShellLogic.NpmHelpers.ResolveNpmCmdPath(nodeRoot, wherePath));
 
         // ③ 两者都不可用（不存在）→ null（调用方回退 cmd /c npm 并靠 PATH）
-        Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, null));
-        Assert.Null(ShellLogic.ResolveNpmCmdPath(nodeRoot, Path.Combine(tmp.Path, "ghost.cmd")));
-        Assert.Null(ShellLogic.ResolveNpmCmdPath(null, null));
+        Assert.Null(ShellLogic.NpmHelpers.ResolveNpmCmdPath(nodeRoot, null));
+        Assert.Null(ShellLogic.NpmHelpers.ResolveNpmCmdPath(nodeRoot, Path.Combine(tmp.Path, "ghost.cmd")));
+        Assert.Null(ShellLogic.NpmHelpers.ResolveNpmCmdPath(null, null));
     }
 
     [Fact]
@@ -330,7 +330,7 @@ public class UpdateFlowContractTests
     [InlineData(null!, false)]
     public void IsNpmNotFoundError_Classifies_EnvironmentMissing(string tail, bool expected)
     {
-        Assert.Equal(expected, ShellLogic.IsNpmNotFoundError(tail));
+        Assert.Equal(expected, ShellLogic.NpmHelpers.IsNpmNotFoundError(tail));
     }
 
     /// <summary>每测试用一次性临时目录（自动清理，与 V030FeaturesTests 同风格）。</summary>

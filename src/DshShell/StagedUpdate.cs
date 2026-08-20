@@ -21,22 +21,19 @@ public static class StagedUpdate
 
     public static void Init(string dataDir) => _pendingPath = Path.Combine(dataDir, "pending-update.json");
 
-    /// <summary>记录待应用版本（下载阶段成功后调用）。tarball=本地安装包文件名（scoped 包
-    /// npm pack 去 @ 和 /，形如 deepseek-ai-dsh-0.1.0-rc.7.tgz）；下次启动优先本地安装、
-    /// 不现场拉取（"已下载完成"名副其实），tarball 缺失才回退线上。null 兼容旧记录。
-    /// <paramref name="prefetched"/>：后台依赖预热**真实成功**（依赖已全部拉进 npm cache）才为 true。
-    /// 应用时据此诚实显示"秒装"或"需现场下载"——禁止对未完成的预热承诺"预计 5-10 秒"（用户反馈
-    /// 虚假承诺：cache 未预热时 npm install 现场下载 530 包需 450s，文案却写"5-10 秒"→ 120s 超时）。</summary>
-    public static void MarkPending(string version, string? tarball = null, bool prefetched = false)
+    /// <summary>记录待应用版本（下载阶段成功后调用）。
+    /// <paramref name="runtimeDir"/>：后台完整构建的自包含运行时目录（原子切换用，重启零 npm）。</summary>
+    public static void MarkPending(string version, string? tarball = null, bool prefetched = false, string? runtimeDir = null)
     {
         if (_pendingPath.Length == 0 || string.IsNullOrWhiteSpace(version)) return;
         try
         {
-            ShellLogic.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
+            ShellLogic.FileSystemPolicy.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
             {
                 version,
                 tarball = string.IsNullOrWhiteSpace(tarball) ? null : tarball,
                 prefetched,
+                runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? null : runtimeDir,
                 at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 failCount = 0,
             }));
@@ -44,19 +41,20 @@ public static class StagedUpdate
         catch { /* 记录失败：下次启动转 latest 也可接受 */ }
     }
 
-    /// <summary>应用失败时递增 failCount（用于气泡降级）。保留 prefetched 标志（应用失败重试仍需诚实文案）。</summary>
+    /// <summary>应用失败时递增 failCount（用于气泡降级）。保留 prefetched 和 runtimeDir。</summary>
     public static void MarkApplyFailed()
     {
         if (_pendingPath.Length == 0) return;
         try
         {
-            var (version, failCount, tarball, prefetched) = ReadPending();
+            var (version, failCount, tarball, prefetched, runtimeDir) = ReadPending();
             if (string.IsNullOrWhiteSpace(version)) return;
-            ShellLogic.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
+            ShellLogic.FileSystemPolicy.AtomicWrite(_pendingPath, JsonSerializer.Serialize(new
             {
                 version,
                 tarball = string.IsNullOrWhiteSpace(tarball) ? null : tarball,
                 prefetched,
+                runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? null : runtimeDir,
                 at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 failCount = failCount + 1,
             }));
@@ -64,12 +62,11 @@ public static class StagedUpdate
         catch { /* 计数失败忽略（下次仍按旧值提示） */ }
     }
 
-    /// <summary>读取待应用记录（版本/失败次数/本地 tarball 名/预热完成标志）；
-    /// 无记录/损坏返回 (null, 0, null, false)。prefetched=false 兼容旧记录（无该字段）。
-    /// 注意：旧记录（v0.4.0 前）无 prefetched 字段 → 视为 false（诚实：不承诺秒装）。</summary>
-    public static (string? Version, int FailCount, string? Tarball, bool Prefetched) ReadPending()
+    /// <summary>读取待应用记录（版本/失败次数/tarball/预热标志/自包含运行时目录）；
+    /// 无记录/损坏返回默认值。RuntimeDir 为 null 兼容旧记录。</summary>
+    public static (string? Version, int FailCount, string? Tarball, bool Prefetched, string? RuntimeDir) ReadPending()
     {
-        if (_pendingPath.Length == 0 || !File.Exists(_pendingPath)) return (null, 0, null, false);
+        if (_pendingPath.Length == 0 || !File.Exists(_pendingPath)) return (null, 0, null, false, null);
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(_pendingPath));
@@ -87,15 +84,17 @@ public static class StagedUpdate
                 : null;
             var prefetched = root.TryGetProperty("prefetched", out var p)
                 && p.ValueKind == JsonValueKind.True;
-            return (version, fail, tarball, prefetched);
+            var runtimeDir = root.TryGetProperty("runtimeDir", out var rd)
+                && rd.ValueKind == JsonValueKind.String
+                ? rd.GetString()
+                : null;
+            return (version, fail, tarball, prefetched, runtimeDir);
         }
         catch
         {
-            // P1-4（质量治理）：损坏不静默——待应用更新记录失效要可诊断（此前静默按"无待应用"处理，
-            // 用户"说好的自动更新去哪了"无从查证；按无记录处理不影响功能，仅补诊断）。
             Logger.Warn("pending-update.json is corrupt or unreadable; treating as no pending update",
                 ctx: new { path = _pendingPath });
-            return (null, 0, null, false);
+            return (null, 0, null, false, null);
         }
     }
 

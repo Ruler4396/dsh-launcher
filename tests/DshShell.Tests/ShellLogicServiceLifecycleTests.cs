@@ -23,13 +23,13 @@ public class ShellLogicServiceLifecycleTests
     public void ShouldStopServiceOnClose_Matrix(int modeInt, bool external, bool shellManaged, bool expected)
     {
         var mode = (ShellLogic.ServiceLifetime)modeInt; // ServiceLifetime 为 internal，参数用 int 规避 CS0051
-        Assert.Equal(expected, ShellLogic.ShouldStopServiceOnClose(mode, external, shellManaged));
+        Assert.Equal(expected, ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(mode, external, shellManaged));
     }
 
     // 语义回归：接管即负责——TryAdoptOrphanService 成功后 shellManaged=true，跟随窗口关窗必须停
     [Fact]
     public void AdoptedOrphan_FollowWindow_StopsService()
-        => Assert.True(ShellLogic.ShouldStopServiceOnClose(
+        => Assert.True(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
             ShellLogic.ServiceLifetime.FollowWindow, externallyManaged: false, shellManaged: true));
 
     // ---------------- T2: ResolvePendingUpdateAction（矩阵 U2，≥4 例） ----------------
@@ -37,32 +37,32 @@ public class ShellLogicServiceLifecycleTests
     [Fact]
     public void NoPending_ReturnsNone()
         => Assert.Equal(ShellLogic.PendingUpdateAction.None,
-            ShellLogic.ResolvePendingUpdateAction(false, true, "0.1.0-rc.6", null));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(false, true, "0.1.0-rc.6", null));
 
     [Fact]
     public void Pending_PortClosed_ReturnsApplyNow()
         => Assert.Equal(ShellLogic.PendingUpdateAction.ApplyNow,
-            ShellLogic.ResolvePendingUpdateAction(true, false, null, "0.1.0-rc.7"));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(true, false, null, "0.1.0-rc.7"));
 
     [Fact]
     public void Pending_PortOpen_VersionEqual_ReturnsClearPending()
         => Assert.Equal(ShellLogic.PendingUpdateAction.ClearPending,
-            ShellLogic.ResolvePendingUpdateAction(true, true, "0.1.0-rc.7", "0.1.0-rc.7"));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(true, true, "0.1.0-rc.7", "0.1.0-rc.7"));
 
     [Fact]
     public void Pending_PortOpen_VersionDifferent_ReturnsPromptRestart()
         => Assert.Equal(ShellLogic.PendingUpdateAction.PromptRestart,
-            ShellLogic.ResolvePendingUpdateAction(true, true, "0.1.0-rc.6", "0.1.0-rc.7"));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(true, true, "0.1.0-rc.6", "0.1.0-rc.7"));
 
     // 补充边界：运行版本未知（磁盘读取失败）→ 按需询问（PromptRestart），不静默跳过
     [Fact]
     public void Pending_PortOpen_RunningVersionUnknown_ReturnsPromptRestart()
         => Assert.Equal(ShellLogic.PendingUpdateAction.PromptRestart,
-            ShellLogic.ResolvePendingUpdateAction(true, true, null, "0.1.0-rc.7"));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(true, true, null, "0.1.0-rc.7"));
 
     // 补充边界：版本字符串首尾空白不误判（Trim 语义）
     [Fact]
     public void Pending_PortOpen_VersionEqual_WithWhitespace_ReturnsClearPending()
         => Assert.Equal(ShellLogic.PendingUpdateAction.ClearPending,
-            ShellLogic.ResolvePendingUpdateAction(true, true, " 0.1.0-rc.7 ", "0.1.0-rc.7"));
+            ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(true, true, " 0.1.0-rc.7 ", "0.1.0-rc.7"));
 }

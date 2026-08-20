@@ -164,12 +164,29 @@ internal sealed class DshShellForm : Form
                 // 工作区即 0px 精确铺满；ptMaxTrackSize 同为物理工作区（Normal 贴边拖拽上限，
                 // 不扣 frame，业界 Windows Terminal / Chromium 同款）。
                 // 带 frame 的补偿重载仅适用于保留 WS_CAPTION 的窗口（那里系统最大化才外扩）。
+                //
+                // v0.4.3 副屏 DPI 修复：ptMaxPosition 坐标系修正。
+                // 实测 Win10 22h2 多显示器发现：
+                //   ptMaxPosition 是相对于监视器原点（rcMonitor）的偏移量，
+                //   Windows 会将其加到监视器原点上得到最终窗口位置。
+                //
+                // 因此 ptMaxPosition = rcWork - rcMonitor（工作区相对于监视器原点的偏移）：
+                //   - 主屏有任务栏：rcWork=(68,0), rcMonitor=(0,0) → ptMaxPosition=(68,0)
+                //   - 副屏无任务栏：rcWork=(1920,-193), rcMonitor=(1920,-193) → ptMaxPosition=(0,0)
+                //
+                // 之前设为绝对坐标 (1920,-193) 导致副屏偏移 (1097,-110)；
+                // 设为 (0,0) 导致主屏偏移 (-68,0)（窗口覆盖任务栏）。
                 try
                 {
                     var metrics = _display.GetMonitorMetrics(Handle);
                     var mm = DshWeb.Win32.WindowGeometry.ComputeMaximizedMinMaxInfo(metrics.WorkArea);
                     mmi.ptMaxSize = new NativeMethods.POINT { X = mm.MaxSize.X, Y = mm.MaxSize.Y };
-                    mmi.ptMaxPosition = new NativeMethods.POINT { X = mm.MaxPos.X, Y = mm.MaxPos.Y };
+                    // ptMaxPosition = 工作区原点 - 监视器原点（相对偏移）
+                    mmi.ptMaxPosition = new NativeMethods.POINT
+                    {
+                        X = metrics.WorkArea.X - metrics.Monitor.X,
+                        Y = metrics.WorkArea.Y - metrics.Monitor.Y
+                    };
                     mmi.ptMaxTrackSize = new NativeMethods.POINT { X = mm.MaxTrack.X, Y = mm.MaxTrack.Y };
                 }
                 catch (InvalidOperationException)
@@ -187,7 +204,7 @@ internal sealed class DshShellForm : Form
                 {
                     // 64 位屏幕坐标：左侧/上方副屏为负坐标，LParam.ToInt32() 会抛 OverflowException
                     //（B1）。正确拆位：低 16 位有符号 = X，高 16 位有符号 = Y。
-                    var (x, y) = DshWeb.ShellLogic.SplitLParam(m.LParam.ToInt64());
+                    var (x, y) = DshWeb.ShellLogic.ProcessManagement.SplitLParam(m.LParam.ToInt64());
                     var pt = new Point(x, y);
                     var r = RectangleToScreen(ClientRectangle);
                     // Step 1 纯函数下沉（G4/G5）：决策在 WindowGeometry.HitTestResizeEdge，

@@ -218,6 +218,23 @@ public sealed class WindowManager : IWindowManager
     }
 
     /// <summary>
+    /// 任务三：隐藏不再需要的托盘图标（幽灵托盘修复）。
+    /// 气泡通知结束后，若托盘非永久驻留（无 lifetime 插件 / 非托盘模式），自动隐藏。
+    /// 仅隐藏 Visible，不 Dispose（下次通知时可重新显示，避免反复创建/销毁开销）。
+    /// </summary>
+    public void HideTrayIfTransient()
+    {
+        try
+        {
+            if (_trayIcon is null) return;
+            // 永久驻留场景（lifetime 插件 + 托盘模式）不隐藏
+            if (IsTrayWantedProvider?.Invoke() ?? false) return;
+            _trayIcon.Visible = false;
+        }
+        catch { /* 隐藏失败不影响功能 */ }
+    }
+
+    /// <summary>
     /// 主题实时刷新（无感切换）（Step5b 迁入）：dsh 前端写 settings.yaml 时 FileSystemWatcher
     /// 立即触发（Changed + Renamed 都监听——dsh 可能原子替换写文件），2s 轮询兜底。
     /// 两路共用同一去抖状态：主题结果变化才应用（换图标/标题栏会让任务栏重绘，频繁触发

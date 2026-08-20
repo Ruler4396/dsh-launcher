@@ -74,7 +74,7 @@ public static class DiagnoseExport
             {
                 if (level >= minLevel) sb.AppendLine(Sanitize(line));
             }
-            else if (minLevel <= Logger.Level.Warn && ShellLogic.LogShowsStartupError(line))
+            else if (minLevel <= Logger.Level.Warn && ShellLogic.ServiceReadiness.LogShowsStartupError(line))
             {
                 sb.AppendLine(Sanitize(line));
             }
@@ -136,7 +136,7 @@ public static class DiagnoseExport
         {
             if (l.Contains("WindowsDesktop", StringComparison.OrdinalIgnoreCase)) sb.AppendLine("  " + l);
         }
-        sb.AppendLine("webview2: " + (ShellLogic.ReadWebView2Version() ?? "（未检测到 Evergreen WebView2 版本注册表项）"));
+        sb.AppendLine("webview2: " + (ShellLogic.RuntimeConfig.ReadWebView2Version() ?? "（未检测到 Evergreen WebView2 版本注册表项）"));
         return sb.ToString();
     }
 
