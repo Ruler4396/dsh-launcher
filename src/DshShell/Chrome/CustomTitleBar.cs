@@ -198,19 +198,34 @@ internal sealed class CustomTitleBar : Panel
 
         // ---- 任务五：构建进度指示 ----
         // 当后台正在构建更新时，在标题栏底部绘制 2px 高的蓝色进度条。
-        // 禁止画假进度条——必须绑定真实状态（_buildStatus 由组合根写入）。
+        // pnpm 模式：真实百分比进度条 + "已构建更新 x%（版本号）"
+        // npm 模式：脉冲动画 + "正在构建更新（版本号）..."
         if (_buildStatus == BuildStatus.Building)
         {
             var progressColor = Color.FromArgb(77, 107, 254); // DeepSeek 蓝 #4D6BFE
             using var progressBrush = new SolidBrush(progressColor);
-            // 2px 高进度条，使用真实进度百分比（0.0 - 1.0）
-            // 如果进度为 0（未知进度），显示 5% 的最小宽度作为活动指示
-            var progressWidth = _buildProgressPercent > 0
-                ? (int)(Width * Math.Min(1f, _buildProgressPercent))
-                : (int)(Width * 0.05f);
-            g.FillRectangle(progressBrush, 0, Height - 2, progressWidth, 2);
 
-            // 统一显示："已构建更新 x%（版本号）"
+            if (_buildProgressPercent > 0)
+            {
+                // pnpm 真实进度：实心进度条
+                var progressWidth = (int)(Width * Math.Min(1f, _buildProgressPercent));
+                g.FillRectangle(progressBrush, 0, Height - 2, progressWidth, 2);
+            }
+            else
+            {
+                // npm 脉冲模式：循环滚动的 15% 宽度光条
+                var pulseOffset = (int)((Environment.TickCount64 / 20) % Width);
+                var pulseWidth = (int)(Width * 0.15f);
+                var x = pulseOffset - pulseWidth;
+                g.FillRectangle(progressBrush, Math.Max(0, x), Height - 2, pulseWidth, 2);
+                // 如果光条滚到右边界外，从左边再画一段
+                if (x + pulseWidth > Width)
+                    g.FillRectangle(progressBrush, 0, Height - 2, (x + pulseWidth) - Width, 2);
+                // 触发重绘以驱动动画
+                BeginInvoke(Invalidate);
+            }
+
+            // 文本显示
             if (!string.IsNullOrEmpty(_buildProgressText))
             {
                 var statusFont = new Font("Microsoft YaHei UI", 8F);
