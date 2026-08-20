@@ -18,6 +18,16 @@ internal sealed class CustomTitleBar : Panel
     private bool _dark;
     private bool _hoverMin, _hoverMax, _hoverClose;
 
+    // ---- 任务五：后台更新构建状态（UI 反馈） ----
+    /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。</summary>
+    internal enum BuildStatus { Idle, Downloading, Building, Ready }
+    /// <summary>当前构建状态（volatile 保证跨线程可见性）。</summary>
+    internal volatile BuildStatus _buildStatus = BuildStatus.Idle;
+    /// <summary>构建进度文本（如 "正在构建更新 (v0.1.0)..."）。</summary>
+    internal volatile string _buildProgressText = "";
+    /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
+    internal volatile float _buildProgressPercent = 0f;
+
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
     private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
     private static readonly Color LightBg = Color.FromArgb(240, 240, 240);
@@ -185,5 +195,36 @@ internal sealed class CustomTitleBar : Panel
         // 底部细分隔线
         using var line = new Pen(_dark ? Color.FromArgb(48, 48, 48) : Color.FromArgb(225, 225, 225));
         g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+
+        // ---- 任务五：构建进度指示 ----
+        // 当后台正在构建更新时，在标题栏底部绘制 2px 高的蓝色进度条。
+        // 禁止画假进度条——必须绑定真实状态（_buildStatus 由组合根写入）。
+        if (_buildStatus is BuildStatus.Downloading or BuildStatus.Building)
+        {
+            var progressColor = Color.FromArgb(77, 107, 254); // DeepSeek 蓝 #4D6BFE
+            using var progressBrush = new SolidBrush(progressColor);
+            // 2px 高进度条，使用真实进度百分比（0.0 - 1.0）
+            // 如果进度为 0（未知进度），显示 5% 的最小宽度作为活动指示
+            var progressWidth = _buildProgressPercent > 0
+                ? (int)(Width * Math.Min(1f, _buildProgressPercent))
+                : (int)(Width * 0.05f);
+            g.FillRectangle(progressBrush, 0, Height - 2, progressWidth, 2);
+
+            // 在标题文字后追加构建状态文本（含百分比）
+            var percentText = _buildProgressPercent > 0
+                ? $" ({(int)(_buildProgressPercent * 100)}%)"
+                : "";
+            var statusText = _buildStatus == BuildStatus.Downloading
+                ? $" (下载中{percentText}...)"
+                : $" (构建中{percentText}...)";
+            if (!string.IsNullOrEmpty(_buildProgressText))
+                statusText = " " + _buildProgressText;
+            var statusFont = new Font("Microsoft YaHei UI", 8F);
+            var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+            TextRenderer.DrawText(g, statusText, statusFont,
+                new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                _dark ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0),
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+        }
     }
 }

@@ -48,3 +48,33 @@
 - [ ] 是否吞掉异常？用户能否看到真实失败原因？→ 必须透明
 - [ ] 是否破坏 Manager 依赖方向？→ 必须经 `LauncherApp` 注入
 - [ ] 是否补了契约测试 / Headless 测试？→ 必须
+
+---
+
+## 🗺️ 因果地图铁律（Causal Map Iron Law）
+
+修复任何跨模块 Bug 时，Agent **必须**：
+
+1. **先在 `docs/SYSTEM_CAUSAL_MAP.md` 中定位 Bug 发生的节点**
+2. **检查上下游的身份传递（`DshRuntimeIdentity`）是否一致**
+3. **在因果链中标记修复点，确保不破坏上游/下游契约**
+
+### 身份一致性检查清单
+
+当修改涉及以下模块时，**必须**检查 `DshRuntimeIdentity` 的传递是否一致：
+
+| 模块 | 角色 | 检查点 |
+|---|---|---|
+| `DshDiscovery` | 统一发现 | Source + InstalledVersion 是否与 start-dsh.vbs 一致 |
+| `UpdateChecker` | 版本检测 | 是否委托 DshDiscovery（而非独立探测） |
+| `Program.ReadGlobalDshVersion` | 版本读取 | 是否委托 DshDiscovery |
+| `start-dsh.vbs` | 服务启动 | 三级回退链是否与 DshDiscovery 一致 |
+| `Program.HandlePendingUpdateAtStartup` | 更新决策 | 基于 Identity.InstalledVersion 比较 |
+
+### Outcome Contract 测试铁律
+
+停止编写细碎的 Mock 测试。新增跨模块功能时，**必须**在 `tests/DshShell.Tests/Outcomes/` 中补充对应的 Outcome Contract 测试：
+
+- 测试不关心内部调用了哪个函数
+- 测试只关心系统的最终物理状态
+- 测试跨越多个模块，验证"用户任务级不变量"

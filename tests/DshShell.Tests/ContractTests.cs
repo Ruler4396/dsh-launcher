@@ -36,21 +36,21 @@ public class ContractTests
     public void IsHttpReady_AnyHttpResponse_Ready(HttpStatusCode status)
     {
         var http = Client(_ => new HttpResponseMessage(status));
-        Assert.True(ShellLogic.IsHttpReady("http://127.0.0.1:3080/", http));
+        Assert.True(ShellLogic.ServiceReadiness.IsHttpReady("http://127.0.0.1:3080/", http));
     }
 
     [Fact]
     public void IsHttpReady_ConnectionRefused_NotReady()
     {
         var http = Client(_ => throw new HttpRequestException("connection refused"));
-        Assert.False(ShellLogic.IsHttpReady("http://127.0.0.1:1/", http));
+        Assert.False(ShellLogic.ServiceReadiness.IsHttpReady("http://127.0.0.1:1/", http));
     }
 
     [Fact]
     public void IsHttpReady_Timeout_NotReady()
     {
         var http = Client(_ => throw new TaskCanceledException("timeout"));
-        Assert.False(ShellLogic.IsHttpReady("http://127.0.0.1:3080/", http));
+        Assert.False(ShellLogic.ServiceReadiness.IsHttpReady("http://127.0.0.1:3080/", http));
     }
 
     // ---------- C3 端口探测：TCP connect 语义 ----------
@@ -68,12 +68,12 @@ public class ContractTests
         var opened = false;
         while (DateTime.UtcNow < deadline)
         {
-            if (ShellLogic.PortOpen("127.0.0.1", port)) { opened = true; break; }
+            if (ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", port)) { opened = true; break; }
             Thread.Sleep(200);
         }
         Assert.True(opened, "监听 socket 应能被 PortOpen 探测到（含 CI 时序抖动容错）");
         listener.Stop();
-        Assert.False(ShellLogic.PortOpen("127.0.0.1", port));
+        Assert.False(ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", port));
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class ContractTests
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
-        Assert.False(ShellLogic.PortOpen("127.0.0.1", port));
+        Assert.False(ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", port));
     }
 
     // ---------- C9 PID 身份：负向分支（非 node / 不存在 → 拒绝） ----------
@@ -93,13 +93,13 @@ public class ContractTests
     public void IsLikelyDshService_CurrentTestProcess_NotNode()
     {
         // testhost 进程名不是 node → 拒绝（防误杀无关进程的关键负向分支）
-        Assert.False(ShellLogic.IsLikelyDshService(Environment.ProcessId));
+        Assert.False(ShellLogic.ProcessManagement.IsLikelyDshService(Environment.ProcessId));
     }
 
     [Fact]
     public void IsLikelyDshService_NonexistentPid_False()
     {
-        Assert.False(ShellLogic.IsLikelyDshService(999_999_999));
+        Assert.False(ShellLogic.ProcessManagement.IsLikelyDshService(999_999_999));
     }
 
     // ---------- C10 Node 可用门槛：主版本 ≥18 ----------

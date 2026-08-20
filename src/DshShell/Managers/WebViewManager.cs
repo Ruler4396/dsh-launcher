@@ -41,6 +41,11 @@ public sealed class WebViewManager : IWebViewManager
     /// 解耦：WebViewManager 不直接依赖 Program 的托盘实现（S2 防恶意自动运行提示）。</summary>
     public static Action<string>? DownloadNotifyAction { get; set; }
 
+    /// <summary>插件崩溃检测事件（任务一：安全模式触发）。
+    /// dsh 前端因插件不兼容（如 bootstrap facade is missing）发送致命错误消息时广播。
+    /// 组合根接线：弹模态询问用户 → 安全模式重启 dsh 服务。</summary>
+    public static event Action<string>? PluginCrashDetected;
+
     /// <summary>页面恢复成功后复位崩溃计数（P1-3），由导航完成回调调用。</summary>
     public static void ResetCrashCount() => Interlocked.Exchange(ref _crashCount, 0);
 
@@ -75,7 +80,7 @@ public sealed class WebViewManager : IWebViewManager
         // 其余保持默认拒绝。麦克风/摄像头默认拒绝（隐私），将来有语音类插件再改为弹窗询问。
         web.CoreWebView2.PermissionRequested += (_, e) =>
         {
-            if (ShellLogic.IsAutoGrantedPermission(e.PermissionKind))
+            if (ShellLogic.WebViewPolicy.IsAutoGrantedPermission(e.PermissionKind))
                 e.State = CoreWebView2PermissionState.Allow;
         };
 
@@ -100,7 +105,7 @@ public sealed class WebViewManager : IWebViewManager
                 var downloads = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
                 Directory.CreateDirectory(downloads);
-                var name = ShellLogic.SanitizeFileName(ShellLogic.SuggestDownloadName(
+                var name = ShellLogic.FileSystemPolicy.SanitizeFileName(ShellLogic.FileSystemPolicy.SuggestDownloadName(
                     e.DownloadOperation.ContentDisposition, e.DownloadOperation.Uri, e.DownloadOperation.MimeType));
                 var path = Path.Combine(downloads, name);
                 for (var i = 1; File.Exists(path); i++)
@@ -116,7 +121,7 @@ public sealed class WebViewManager : IWebViewManager
                         {
                             // 仅无害扩展名（图片/文本/pdf 等）自动打开；其余（.html/.svg/.hta/.exe 等
                             // 可执行代码面）只落盘 + 气泡提示，不自动执行，防恶意下载自动运行（S2 修复）。
-                            if (ShellLogic.IsSafeToOpen(e.DownloadOperation.ResultFilePath))
+                            if (ShellLogic.WebViewPolicy.IsSafeToOpen(e.DownloadOperation.ResultFilePath))
                             {
                                 try { Process.Start(new ProcessStartInfo(e.DownloadOperation.ResultFilePath) { UseShellExecute = true }); }
                                 catch (Exception ex) { Logger.Warn("open downloaded file failed: " + ex.Message); }
@@ -140,7 +145,7 @@ public sealed class WebViewManager : IWebViewManager
         // - blob: / data: / about: 等 → WebView2 默认行为（插件生成的预览等）
         web.CoreWebView2.NewWindowRequested += async (_, e) =>
         {
-            switch (ShellLogic.ClassifyPopup(e.Uri))
+            switch (ShellLogic.WebViewPolicy.ClassifyPopup(e.Uri))
             {
                 case ShellLogic.PopupTarget.External:
                     e.Handled = true;
@@ -235,6 +240,32 @@ public sealed class WebViewManager : IWebViewManager
                     File.WriteAllText(readyStatePath, state);
                 }
                 catch (Exception ex) { Logger.Warn("ready-state test hook failed: " + ex.Message); }
+            };
+        }
+
+        // ---- 任务一：插件崩溃安全模式捕获 ----
+        // dsh 前端因插件不兼容（如 window.__ModuleLoader__ bootstrap facade is missing）时，
+        // 通过 window.chrome.webview.postMessage 发送致命错误消息。
+        // 仅对主窗 WebView2 注入监听器（ReferenceEquals 门控），弹窗不触发。
+        if (ReferenceEquals(web, MainWeb))
+        {
+            web.CoreWebView2.WebMessageReceived += (_, e) =>
+            {
+                try
+                {
+                    var msg = e.WebMessageAsJson ?? "";
+                    // 捕获 dsh 本体发送的致命错误消息（JSON 字符串，含特定错误标志）
+                    if (msg.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
+                        || msg.Contains("ModuleLoader", StringComparison.OrdinalIgnoreCase)
+                        || msg.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.Error($"plugin crash detected via webview message: {msg}",
+                            ErrorCodes.E1008, new { source = "webview-message" });
+                        // 广播安全模式触发事件（由组合根 LauncherApp 接线处理）
+                        PluginCrashDetected?.Invoke(msg);
+                    }
+                }
+                catch (Exception ex) { Logger.Warn("webview message handling failed: " + ex.Message); }
             };
         }
     }

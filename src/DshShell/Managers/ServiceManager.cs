@@ -29,18 +29,18 @@ public sealed class ServiceManager : IServiceManager
         Func<int, System.Collections.Generic.List<int>>? ancestors = null,
         TimeSpan? portReleaseTimeout = null)
     {
-        _tcpProbeSync = tcpProbe ?? ShellLogic.PortOpen;
+        _tcpProbeSync = tcpProbe ?? ShellLogic.ServiceReadiness.PortOpen;
         // 显式注入同步探针时保持其语义（Headless 测试/旧契约）；否则走异步 ConnectAsync，
         // 不再阻塞调用线程（v0.4.2 卡顿修复：同步 TcpClient.Connect 在本机可达 2s）。
         _tcpProbeAsync = tcpProbe is not null
             ? (h, p) => Task.Run(() => tcpProbe(h, p))
-            : tcpProbeAsync ?? ((h, p) => ShellLogic.PortOpenAsync(h, p));
-        _httpProbe = httpProbe ?? ShellLogic.IsHttpReady;
+            : tcpProbeAsync ?? ((h, p) => ShellLogic.ServiceReadiness.PortOpenAsync(h, p));
+        _httpProbe = httpProbe ?? ShellLogic.ServiceReadiness.IsHttpReady;
         _pollDelay = pollDelay ?? TimeSpan.FromSeconds(1);
-        _pidLookup = pidLookup ?? ShellLogic.GetProcessIdByPort;
-        _identityCheck = identityCheck ?? ShellLogic.IsLikelyDshService;
-        _killProcessTree = killProcessTree ?? ShellLogic.KillProcessTree;
-        _ancestors = ancestors ?? ShellLogic.GetAncestorPids;
+        _pidLookup = pidLookup ?? ShellLogic.ProcessManagement.GetProcessIdByPort;
+        _identityCheck = identityCheck ?? ShellLogic.ProcessManagement.IsLikelyDshService;
+        _killProcessTree = killProcessTree ?? ShellLogic.ProcessManagement.KillProcessTree;
+        _ancestors = ancestors ?? ShellLogic.ProcessManagement.GetAncestorPids;
         _portReleaseTimeout = portReleaseTimeout ?? TimeSpan.FromSeconds(2);
     }
 

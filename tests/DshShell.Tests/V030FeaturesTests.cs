@@ -15,7 +15,7 @@ public class V030FeaturesTests
     [Fact]
     public void ResolveEffectiveLifetime_PluginMissingWithStaleField_FallsBackAndPurges()
     {
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: false);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: false);
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
         Assert.True(purge, "插件缺失且存在残留 serviceLifetime 时应提示抹除");
     }
@@ -28,16 +28,16 @@ public class V030FeaturesTests
     [InlineData("not json")]
     public void ResolveEffectiveLifetime_PluginPresent_NeverPurges(string? json)
     {
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime(json, pluginPresent: true);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime(json, pluginPresent: true);
         Assert.False(purge);
-        Assert.Equal(ShellLogic.ParseLifetimeMode(json), mode);
+        Assert.Equal(ShellLogic.RuntimeConfig.ParseLifetimeMode(json), mode);
     }
 
     [Fact]
     public void ResolveEffectiveLifetime_PluginMissingWithoutField_NoPurge()
     {
         // 字段本来就不存在 → 无需重写文件（幂等）
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"other\":1}", pluginPresent: false);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime("{\"other\":1}", pluginPresent: false);
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
         Assert.False(purge);
     }
@@ -48,7 +48,7 @@ public class V030FeaturesTests
     public void ResolveEffectiveLifetime_PluginMissing_SubstringOnlyKey_NoPurge(string json)
     {
         // 质量治理 P2-4：旧 Contains 判定会误报，精确键判定下这些都不该清理。
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime(json, pluginPresent: false);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime(json, pluginPresent: false);
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
         Assert.False(purge);
     }
@@ -59,7 +59,7 @@ public class V030FeaturesTests
     public void ResolveEffectiveLifetime_PluginPresent_OutOfRangeValue_Purges(int n)
     {
         // 插件在但值越界（3/-1 非法）→ 回退 FollowWindow 且标记清理（A4 R2）。
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime($"{{\"serviceLifetime\":{n}}}", pluginPresent: true);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime($"{{\"serviceLifetime\":{n}}}", pluginPresent: true);
         Assert.Equal(ShellLogic.ServiceLifetime.FollowWindow, mode);
         Assert.True(purge, "越界值应被清理");
     }
@@ -68,7 +68,7 @@ public class V030FeaturesTests
     public void ResolveEffectiveLifetime_PluginPresent_ValidValue_NoPurge()
     {
         // 插件在且值合法 → 保留用户选择，不清理（显式断言）。
-        var (mode, purge) = ShellLogic.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: true);
+        var (mode, purge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime("{\"serviceLifetime\":0}", pluginPresent: true);
         Assert.Equal(ShellLogic.ServiceLifetime.AlwaysOn, mode);
         Assert.False(purge);
     }
@@ -80,7 +80,7 @@ public class V030FeaturesTests
     {
         using var tmp = new TempDir();
         Directory.CreateDirectory(Path.Combine(tmp.Path, "profiles", "web", "node_modules", "dsh-launcher-lifetime"));
-        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        Assert.True(ShellLogic.PluginConfig.IsLifetimePluginInstalled(tmp.Path));
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class V030FeaturesTests
         Directory.CreateDirectory(profile);
         File.WriteAllText(Path.Combine(profile, "package.json"),
             "{\"dependencies\":{\"dsh-launcher-lifetime\":\"file:../x\"}}");
-        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        Assert.True(ShellLogic.PluginConfig.IsLifetimePluginInstalled(tmp.Path));
     }
 
     [Fact]
@@ -102,18 +102,18 @@ public class V030FeaturesTests
         Directory.CreateDirectory(profile);
         File.WriteAllText(Path.Combine(profile, "package.json"),
             "{\"dsh\":{\"profile\":{\"bundles\":[\"@deepseek-ai/dsh-base\",\"dsh-launcher-lifetime\"]}}}");
-        Assert.True(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        Assert.True(ShellLogic.PluginConfig.IsLifetimePluginInstalled(tmp.Path));
     }
 
     [Fact]
     public void IsLifetimePluginInstalled_Absent_ReturnsFalse()
     {
         using var tmp = new TempDir();
-        Assert.False(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        Assert.False(ShellLogic.PluginConfig.IsLifetimePluginInstalled(tmp.Path));
         // 有任何读取异常也不得误报已安装
         Directory.CreateDirectory(Path.Combine(tmp.Path, "profiles", "web"));
         File.WriteAllText(Path.Combine(tmp.Path, "profiles", "web", "package.json"), "{broken json");
-        Assert.False(ShellLogic.IsLifetimePluginInstalled(tmp.Path));
+        Assert.False(ShellLogic.PluginConfig.IsLifetimePluginInstalled(tmp.Path));
     }
 
     // ---------- 多显示器窗口恢复（RestoreWindowPosition） ----------
@@ -341,7 +341,7 @@ public class V030FeaturesTests
         using var tmp = new TempDir();
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3");
-        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount);
         Assert.Null(tarball); // 未传 tarball → 旧兼容（回退线上）
@@ -356,7 +356,7 @@ public class V030FeaturesTests
         StagedUpdate.MarkPending("1.2.3");
         StagedUpdate.MarkApplyFailed();
         StagedUpdate.MarkApplyFailed();
-        var (version, failCount, _, _) = StagedUpdate.ReadPending();
+        var (version, failCount, _, _, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(2, failCount);
     }
@@ -369,7 +369,7 @@ public class V030FeaturesTests
         StagedUpdate.Init(tmp.Path);
         StagedUpdate.MarkPending("1.2.3", "deepseek-ai-dsh-1.2.3.tgz", prefetched: true);
         StagedUpdate.MarkApplyFailed();
-        var (_, _, tarball, prefetched) = StagedUpdate.ReadPending();
+        var (_, _, tarball, prefetched, _) = StagedUpdate.ReadPending();
         Assert.Equal("deepseek-ai-dsh-1.2.3.tgz", tarball);
         Assert.True(prefetched, "MarkApplyFailed 必须保留 prefetched 标志（应用失败重试仍需诚实文案）");
     }
@@ -429,7 +429,7 @@ public class V030FeaturesTests
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"),
             "{\"version\":\"1.2.3\",\"at\":\"2026-08-16 12:00:00\"}");
-        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched, _) = StagedUpdate.ReadPending();
         Assert.Equal("1.2.3", version);
         Assert.Equal(0, failCount); // 旧格式兼容：无 failCount → 0
         Assert.Null(tarball);       // 旧格式兼容：无 tarball → null（回退线上）
@@ -469,7 +469,7 @@ public class V030FeaturesTests
         Logger.Init(log);
         StagedUpdate.Init(tmp.Path);
         File.WriteAllText(Path.Combine(tmp.Path, "pending-update.json"), "{broken");
-        var (version, failCount, tarball, prefetched) = StagedUpdate.ReadPending();
+        var (version, failCount, tarball, prefetched, _) = StagedUpdate.ReadPending();
         Assert.Null(version);          // 容错按无记录处理
         Assert.Equal(0, failCount);
         Assert.Null(tarball);

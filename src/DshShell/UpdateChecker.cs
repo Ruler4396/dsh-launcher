@@ -154,37 +154,14 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 本地 dsh 版本：优先环境变量 DSH_VERSION，否则执行 `dsh --version`（找不到返回 null）。
+    /// 本地 dsh 版本：委托 DshDiscovery 统一发现（与 start-dsh.vbs 同源）。
+    /// 返回 InstalledVersion（GlobalNpm/NpmShim 时为实际版本，NpxCache 时可能为 null）。
     ///
-    /// v0.4.0 修复：npm 全局包在 Windows 生成的是 **.cmd/.ps1 shim**（如 dsh.cmd / dsh.ps1），
-    /// 直接 <c>Process.Start("dsh", ...)</c>（CreateProcess，UseShellExecute=false）**不解析 shim**，
-    /// 必然抛"系统找不到指定的文件" → 旧实现 catch 后返回 null → 更新检测永远短路（本地
-    /// dsh rc.6 / npm rc.7 却无提示的根因）。现改经 <c>cmd.exe /c dsh --version</c> 执行，
-    /// 由 cmd 负责按 PATHEXT 解析 .cmd 并执行（.ps1 在 cmd 下不可用，但 npm 总会生成 .cmd）。
-    /// 输出侧重定向 stdout+stderr 并设 CreateNoWindow，避免探测时闪黑窗。
+    /// 【身份统一】此前本方法独立执行 cmd /c dsh —version，仅检测全局 npm 安装，
+    /// 与 start-dsh.vbs 的三级回退链（where → npm shim → npx）脱节 →
+    /// "更新了全局 npm 包，但实际运行的是 npx 缓存"的幽灵 Bug。
+    /// 现统一委托 DshDiscovery.DiscoverCurrentRuntime()，确保检查与启动同源。
     /// </summary>
     public static string? ResolveLocalDshVersion()
-    {
-        try
-        {
-            var env = Environment.GetEnvironmentVariable("DSH_VERSION");
-            if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
-            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", "/c dsh --version")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return null;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(3000);
-            return string.IsNullOrWhiteSpace(output) ? null : output.Trim();
-        }
-        catch
-        {
-            return null; // dsh 不可用/未安装：视为无本地版本，不产生"有新版"误报
-        }
-    }
+        => DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
 }

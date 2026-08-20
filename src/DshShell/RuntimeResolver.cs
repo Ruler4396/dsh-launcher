@@ -347,7 +347,7 @@ public static class RuntimeResolver
                 writer.WriteString("lastNodeMirror", baseUrl);
                 writer.WriteEndObject();
             }
-            ShellLogic.AtomicWrite(RuntimeStatePath, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
+            ShellLogic.FileSystemPolicy.AtomicWrite(RuntimeStatePath, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
         }
         catch { /* 记录失败忽略 */ }
     }
