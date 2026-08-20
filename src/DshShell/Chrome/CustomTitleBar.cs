@@ -27,8 +27,8 @@ internal sealed class CustomTitleBar : Panel
     internal volatile string _buildProgressText = "";
     /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
     internal volatile float _buildProgressPercent = 0f;
-    /// <summary>脉冲动画上次绘制时间戳（限速 30fps）。</summary>
-    private long _lastMarqueeTick;
+    /// <summary>脉冲动画定时器（替代 BeginInvoke(Invalidate) 避免无限闪烁）。</summary>
+    private System.Windows.Forms.Timer? _marqueeTimer;
 
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
     private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
@@ -212,21 +212,20 @@ internal sealed class CustomTitleBar : Panel
                 // pnpm 真实进度：实心进度条
                 var progressWidth = (int)(Width * Math.Min(1f, _buildProgressPercent));
                 g.FillRectangle(progressBrush, 0, Height - 2, progressWidth, 2);
+                // 停止脉冲定时器（如果有的话）
+                StopMarqueeTimer();
             }
             else
             {
-                // npm 脉冲模式：循环滚动的 15% 宽度光条，限速 30fps
-                var tick = Environment.TickCount64;
-                var pulseOffset = (int)((tick / 33) % Width); // 33ms per frame ≈ 30fps
+                // npm 脉冲模式：循环滚动的 15% 宽度光条
+                var pulseOffset = (int)((Environment.TickCount64 / 33) % Width);
                 var pulseWidth = (int)(Width * 0.15f);
                 var x = pulseOffset - pulseWidth;
                 g.FillRectangle(progressBrush, Math.Max(0, x), Height - 2, pulseWidth, 2);
                 if (x + pulseWidth > Width)
                     g.FillRectangle(progressBrush, 0, Height - 2, (x + pulseWidth) - Width, 2);
-                // 节流重绘：延迟 33ms 后触发下一次绘制（避免无限闪烁）
-                var delay = Math.Max(1, 33 - (int)(tick - _lastMarqueeTick));
-                _lastMarqueeTick = tick;
-                BeginInvoke(() => { if (_buildStatus == BuildStatus.Building) Invalidate(); });
+                // 启动脉冲定时器（33ms 间隔，~30fps）
+                StartMarqueeTimer();
             }
 
             // 文本显示
@@ -241,5 +240,28 @@ internal sealed class CustomTitleBar : Panel
                     TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }
         }
+        else
+        {
+            // 非构建状态：停止脉冲定时器
+            StopMarqueeTimer();
+        }
+    }
+
+    /// <summary>启动脉冲定时器（仅在 npm 模式下使用）。</summary>
+    private void StartMarqueeTimer()
+    {
+        if (_marqueeTimer is not null) return; // 已经在运行
+        _marqueeTimer = new System.Windows.Forms.Timer { Interval = 33 }; // ~30fps
+        _marqueeTimer.Tick += (_, _) => Invalidate();
+        _marqueeTimer.Start();
+    }
+
+    /// <summary>停止脉冲定时器。</summary>
+    private void StopMarqueeTimer()
+    {
+        if (_marqueeTimer is null) return;
+        _marqueeTimer.Stop();
+        _marqueeTimer.Dispose();
+        _marqueeTimer = null;
     }
 }

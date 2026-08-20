@@ -1874,9 +1874,10 @@ internal static class Program
             if (p is null) return false;
 
             // 流式解析 ndjson 进度（不阻塞到进程结束）
-            var totalPackages = 0;
+            // pnpm 的 ndjson 没有明确的"总包数"字段，用事件计数估算进度
             var resolvedCount = 0;
             var linkedCount = 0;
+            var estimatedTotal = 600; // dsh 依赖树约 600 个包（基于实测 ndjson 输出）
             var errorOutput = "";
 
             // 后台读取 stderr
@@ -1899,28 +1900,20 @@ internal static class Program
                         var root = doc.RootElement;
                         var name = root.TryGetProperty("name", out var n) ? n.GetString() : null;
 
-                        // 提取总包数
-                        if (name == "pnpm:scope" && root.TryGetProperty("selected", out var sel))
-                            totalPackages = sel.GetInt32();
-
-                        // 跟踪 resolved 阶段
-                        if (name == "pnpm:progress" && root.TryGetProperty("status", out var status))
-                        {
-                            var statusStr = status.GetString();
-                            if (statusStr == "resolved" || statusStr == "found_in_store")
-                                resolvedCount++;
-                        }
+                        // 跟踪 resolved 阶段（所有 pnpm:progress 事件）
+                        if (name == "pnpm:progress")
+                            resolvedCount++;
 
                         // 跟踪 linked 阶段
                         if (name == "pnpm:link")
                             linkedCount++;
 
                         // 计算进度百分比（10%-90%）
-                        if (totalPackages > 0 && progressCallback is not null)
+                        if (progressCallback is not null)
                         {
                             // resolved 阶段占 10%-50%，link 阶段占 50%-90%
-                            var resolvedPercent = Math.Min(1.0, (double)resolvedCount / totalPackages);
-                            var linkPercent = Math.Min(1.0, (double)linkedCount / totalPackages);
+                            var resolvedPercent = Math.Min(1.0, (double)resolvedCount / estimatedTotal);
+                            var linkPercent = Math.Min(1.0, (double)linkedCount / estimatedTotal);
                             var percent = 0.10 + resolvedPercent * 0.40 + linkPercent * 0.40;
                             var phase = linkedCount > 0 ? "linking" : "resolving";
                             progressCallback((int)(percent * 100), phase);
