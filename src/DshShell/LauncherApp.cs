@@ -254,9 +254,12 @@ public sealed class LauncherApp
 
         // ---- WaitingForReadiness：轮询 HTTP 就绪（异步探测；取消/超时/日志报错三态）----
         progress?.Report("正在等待 dsh 服务就绪…");
+        // 首次运行（dsh 未安装，服务经 npx 网络下载启动）放宽就绪等待预算（与 Program.WaitServiceReady 一致）。
+        var pollBudgetSeconds = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(
+            DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source == DshWeb.Domain.DshSource.NpxCache);
         var waitResult = ReadinessProbe is not null
             ? await ReadinessProbe(ct)
-            : await _service.WaitReadyAsync(Port, TimeSpan.FromSeconds(180), ct)
+            : await _service.WaitReadyAsync(Port, TimeSpan.FromSeconds(pollBudgetSeconds), ct)
                 ? "ready" : "timeout";
         WaitResult = waitResult;
         if (waitResult != "ready")

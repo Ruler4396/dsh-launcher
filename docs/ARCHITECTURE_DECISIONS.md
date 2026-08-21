@@ -601,4 +601,109 @@ cmd.exe /c is PROHIBITED in src/ .cs files (enforced by CI static assertion).
 
 ---
 
+## ADR-022: 安全模式采用"隔离空 profile + --profile 指向"
+
+**状态**: 已生效  
+**日期**: 2024-Q4 安全模式重构  
+**影响**: `SafeProfileBuilder`（新）、`ServiceManager`/`Program.cs`（服务 cmdline）、`DshRuntimeIdentity`、`WebViewManager`（崩溃签名捕获）、`Windows/DshShellForm`（横幅）
+
+### 背景
+
+原"安全模式"通过 `DSH_SAFE_MODE=1` → `start-dsh.vbs` 加 `--safe-mode` 参数实现。**实测验证：当前 rc7 真实 dsh 根本没有 `--safe-mode` 选项**（`dsh web --help` 仅 `--host/--port/--trusted-host`），`dsh web --port X --safe-mode` 报 `unknown option '--safe-mode'`。因此安全模式从未对真实 dsh 生效：点"是"后 dsh 因 unknown option 启动失败、服务不起来、窗口消失。
+
+### 根因
+
+壳把"禁用插件"幻想成 dsh 提供 `--safe-mode` 开关，但 dsh 从未实现它。需要一个**壳自主实现**、不依赖 dsh 内部机制、且**不改动用户文件**（`~/.dsh/profiles/web`）的屏蔽插件方案。
+
+### 备选方案与否决
+
+| 方案 | 结论 |
+|---|---|
+| **node `--import` preload 拦截 bundle 读取** | **否决**。拦截面（bundle 读取路径/函数/格式）恰是 dsh 破坏性更新的高发面，且失败模式为静默假阳性（改了内部函数名不报错但拦截失效）。仅作为未来后备策略的预留缝（`ISafeModeStrategy` 接口），本次不实现。 |
+| **`--patch` overlay 禁用所有 bundle** | **否决**。overlay 只能追加不能移除 profile 自带的 `dsh.profile.bundles`。 |
+| **隔离空 profile + `--profile` 指向** | **采纳**。`--profile` 是公开 CLI 契约，失败模式响亮可观测（进程非零退出/报错），天然满足"安全模式自身失败要脸红失败"诉求。 |
+
+### 决策
+
+安全模式采用**隔离空 profile + `--profile` 指向**：
+
+1. **位置**：`--profile` 实测**只接受 name 不接受 path**（含 `/` 或 `\` 报 `invalid profile name`），因此隔离 profile 落盘于 `$DSH_HOME/profiles/.dsh-safe`（与用户 `profiles/web` 隔离；`~/.dsh` 由 DSH_HOME 指向，测试时隔离）。
+2. **SafeProfileBuilder**（幂等，每次安全启动前重建）：
+   - 浅拷贝用户 `profiles/web` 的 manifest 类文件（`package.json` 等配置），**不拷贝 node_modules**；
+   - strip bundle：**保留 dsh 自带核心**（`@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`，提供 web UI），**剥离第三方/用户插件**（`dsh-notification`、`@liustack/modlens`、`dsh-launcher-lifetime` 等，崩溃源）；compat 已知键 `dsh.profile.bundles`、`dependencies` 中的插件项；best-effort。
+   - 用户原文件**只读不写**。
+3. **cmdline**：安全模式启动 `dsh --profile .dsh-safe web ...`（根级 `--profile`，非 `web` 子命令，避 `rejectParentOptions`）。实测空 profile（含核心）可启动 web 且 HTTP 200、`__DSH_BOOT__` 存在。
+4. **Identity 收敛**：`DshRuntimeIdentity` 增加 `Profile` 字段（`Normal | Safe(ProfilePath)`），安全模式启动的 cmdline 必须含 `--profile .dsh-safe`。
+
+### 证据链（实测）
+
+- `dsh --profile <path> ...` → `invalid profile name`（只收 name）。
+- `dsh --profile .dsh-safe web --port X`（根级）→ 核心 bundle 剥离第三方后成功监听、`dsh web: http://127.0.0.1:X`、HTTP 200、含 `__DSH_BOOT__`。
+
+### 不变式
+
+```
+Safe mode = isolated .dsh-safe profile + --profile pointer (public CLI, loud failure).
+Profiles built by SafeProfileBuilder keep ONLY @deepseek-ai core bundles; user/3rd-party
+plugins stripped. User profiles/web files are READ-ONLY, never mutated.
+--profile accepts name only; safe profile dir = $DSH_HOME/profiles/.dsh-safe.
+node --import preload intercept is REJECTED (silent-false-positive risk) — ISafeModeStrategy reserved.
+```
+
+---
+
+## ADR-023: 启动崩溃检测采用"多源主动拉取融合"（壳坐四个观察位，不依赖 dsh 主动上报）
+
+**状态**: 已生效  
+**日期**: 2026-08 boot 健康监控  
+**影响**: `ShellLogic.BootGuard`（纯函数）、`Lifecycle/BootHealthMonitor`（新）、`WebViewManager`（探针执行器/CDP 订阅）、`SafeModeState`（lastFailure 证据）、`DiagnoseExport.ExportTo`、`ErrorCodes`（E2007/E2008）、`Program.cs`（组合根接线）
+
+### 背景
+
+客户端 boot 失败（如 `__ModuleLoader__` facade 缺失、插件加载崩溃、服务启动后即死）此前只有两条被动通道：dsh 的 `plugin-crash` postMessage 与 WebView2 渲染进程崩溃事件。两者都依赖"dsh 活着且愿意上报"——服务进程直接死亡、页面 JS 全局异常、日志打印插件错误时，壳一无所知，用户只看到白屏。
+
+### 决策
+
+壳**主动拉取**四层观察信号 + 一层精确采集，由 `BootHealthMonitor` 三态状态机（Pending/Healthy/Failed）融合判定：
+
+| 层 | 触发语义 | 错误码 |
+|---|---|---|
+| Process | RecordServicePid 后 attach `Process.Exited`；非零退出/消失 → failed（附真实 exit code）；exit 0 忽略（壳主动停止防线） | E2007 |
+| Log | 统一日志**字节偏移增量**扫描签名表（专属签名前置：`plugin load failed` 等 + `DSH_BOOT_SIGNATURES.log_error_signatures` 追加）；命中 → failed（附命中行原文）。壳自写条目（JSON Lines 带 `"code":"E####"` 契约字段）不参与判定 | E2003 |
+| HTTP | ready 后轮询 `Target.Url`；连续 ≥2 次 miss 才判死（单次抖动容错） | E2004 |
+| Page（主触发器） | NavigationCompleted 起：grace 后按间隔 `ExecuteScriptAsync` 探针。坏签名一次 → failed；好符号 → healthy 停止探针；连续 absent_threshold 次缺席 → failed。**坏签名优先于好符号**（boot 标志先设、插件后崩，好符号不得遮蔽崩溃） | E2008 |
+| CDP | `Runtime.exceptionThrown` 只采集原文入证据，**无判定权** | — |
+
+关键机制：
+1. **BootSignature 单点配置**（`ShellLogic.BootGuard.BootProfile`）：good_symbol/bad_signatures/grace_ms/probe_interval_ms/absent_threshold 集中定义，可被 `DSH_BOOT_SIGNATURES`（JSON）逐字段覆盖（沙盒注入假签名的验收通道）；配置损坏回退全默认。
+2. **Failed 吸收态**：终态后其他层继续补证据（S24：进程层先死、HTTP 层随后补充），`VerdictUpdated` 事件驱动 safe-mode-state.json 重写，融合视图最终完整。
+3. **判定前证据缓冲**：CDP 异常常先于判定到达（页面加载即抛错），先进 `_earlyEvidence` 缓冲，失败裁决创建时并入——证据不丢。
+4. **每会话一次询问**：`TryConsumeSessionPrompt` 闸门统一 PluginCrashDetected（postMessage 路径）与 BootHealthMonitor.Failed 两条入口；答"否"本会话不再弹。安全模式复用 ADR-022 两级阶梯（L1 KeepDeepSeekCore → L2 Minimal），重启窗口 `Suspend()/ResumeAfterRestart()` 屏蔽全部判定。
+5. **误报防护铁律**：探针自身异常只 Warn 绝不判 failed；无效结果不计缺席；慢启动由 grace+absent_threshold 预算覆盖（S23 实测 8s 迟到好符号零误报）。
+
+### 实测教训（每条都已固化为契约测试或 [INVARIANT] 注释）
+
+| 教训 | 根因 | 固化 |
+|---|---|---|
+| 日志层误判壳自写行 | 壳的 E1008 行含 "bootstrap facade is missing" 文本 | `IsShellAuthoredLogEntry`（E#### 契约过滤） |
+| 页面探针静默挂死 | UI 线程上 `GetResult()` 等待需 UI 线程投递完成的 Task = 自我死锁 | 执行器必须 `await`（async void + tcs 兜底） |
+| 探针结果恒 Invalid | ExecuteScriptAsync 对脚本返回值再编码一层字符串字面量 | 求值器解一层双重编码 |
+| 好符号遮蔽崩溃 | `__DSH_BOOT__` 先设置、插件后崩 | 坏签名优先于好符号 |
+| Healthy 后进程死亡无感知 | （设计期即规避）Healthy 只停页面探针，进程/HTTP 层持续值守 | S24 场景验收 |
+
+### 不变式
+
+```
+Boot failure detection is PULL-based: the shell observes process/log/http/page itself;
+it never relies on dsh reporting its own death.
+Page probe: bad signature beats good symbol; probe exceptions NEVER judge failed.
+Log layer judges SERVICE output only — shell-authored JSON lines (code:"E####") are excluded.
+HTTP layer needs 2 consecutive misses; exit code 0 is ignored (intentional-stop guard).
+Healthy stops ONLY the page probe; process/http layers keep watching (post-ready regression).
+Evidence fusion view is re-persisted on post-failure appends (VerdictUpdated).
+Safe-mode ask happens at most once per session, shared by all detection paths.
+```
+
+---
+
 *本文档随架构决策变更持续更新。每条 ADR 的源码位置以 `[INVARIANT]` 注释标注。*

@@ -15,6 +15,15 @@ public enum DshSource
     External,
 }
 
+/// <summary>服务启动时使用的 profile 模式（安全模式重构 ADR-022）。</summary>
+public enum DshProfileMode
+{
+    /// <summary>正常模式：用用户 web profile（默认）。</summary>
+    Normal,
+    /// <summary>安全模式：用隔离空 profile（<c>DSH_HOME/profiles/.dsh-safe</c>），剥离第三方插件。</summary>
+    Safe,
+}
+
 /// <summary>
 /// dsh 运行时身份：统一"发现、启动、检查、更新"的唯一身份抽象。
 ///
@@ -34,7 +43,8 @@ public sealed record DshRuntimeIdentity(
     string? ExecutablePath,      // 运行时根目录或 dsh.cmd 的物理路径
     string InvocationCommand,    // 实际用于启动的命令
     string? InstalledVersion,    // 当前物理安装/缓存的版本
-    string PackageName           // "@deepseek-ai/dsh"
+    string PackageName,          // "@deepseek-ai/dsh"
+    DshProfileMode Profile = DshProfileMode.Normal  // 服务 profile 模式（安全模式重构 ADR-022）
 )
 {
     /// <summary>是否为壳管理的本地安装（SelfContained 或 GlobalNpm 或 NpmShim）。</summary>
@@ -45,4 +55,7 @@ public sealed record DshRuntimeIdentity(
 
     /// <summary>自包含运行时的根目录（仅 SelfContained 类型有效）。</summary>
     public string? RuntimeDir => Source == DshSource.SelfContained ? ExecutablePath : null;
+
+    /// <summary>是否为安全模式启动（Profile == Safe）。</summary>
+    public bool IsSafe => Profile == DshProfileMode.Safe;
 }

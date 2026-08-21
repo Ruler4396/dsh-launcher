@@ -2,7 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- [v0.4.1] windows10.0.19041：引入 SDK 的 WinRT 投影（Windows.UI.Notifications），
+         系统通知（Toast）不再依赖托盘图标 NotifyIcon。 -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

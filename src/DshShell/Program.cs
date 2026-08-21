@@ -32,8 +32,10 @@ internal static class Program
             Environment.GetEnvironmentVariable("DSH_WEB_PORT"));
 
     /// 设置 DSH_WEB_URL 时视为"外部托管服务"，壳不再自动拉起 dsh（DSH_WEB_PORT 则相反：壳托管拉起）。
+    /// 测试开关：DSH_TEST_FORCE_MANAGED=1 时强制使用托管模式（忽略 DSH_WEB_URL）。
     private static readonly bool ServerManagedExternally =
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"));
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"))
+        && !string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_FORCE_MANAGED"), "1", StringComparison.OrdinalIgnoreCase);
 
     // WebView2 crash throttle / main-web ref / recovery flag: migrated to WebViewManager.
     // Theme monitor (_themeTimer/_themeWatcher/_themeEventsHandler): migrated to WindowManager.
@@ -51,6 +53,22 @@ internal static class Program
 
     /// 本次会话壳托管服务的监听 PID（内存缓存，关窗时直接使用，避免再跑 netstat 造成卡顿）。
     private static int _servicePid;
+
+    // ---- 安全模式重构（ADR-022）：隔离空 profile + --profile 指向 ----
+    /// <summary>安全模式状态（落盘持久化，崩溃/重启仍记忆）。</summary>
+    internal static readonly DshWeb.Domain.SafeModeState SafeMode =
+        new(DshWeb.Domain.SafeModeState.DefaultStorePath(DshHomeDir));
+
+    /// <summary>安全模式 profile 构建器（隔离 .dsh-safe，不碰用户文件）。</summary>
+    internal static readonly DshWeb.Domain.SafeProfileBuilder SafeProfile = new(DshHomeDir);
+
+    // ---- 启动健康融合监控（ADR-023）：进程/日志/HTTP/页面四观察位主动拉取，CDP 只采集 ----
+    /// <summary>生效签名档：DSH_BOOT_SIGNATURES（JSON）可整体覆盖默认值（沙盒注入假签名用）。</summary>
+    internal static readonly ShellLogic.BootGuard.BootProfile BootSignatures =
+        ShellLogic.BootGuard.ResolveProfile(Environment.GetEnvironmentVariable("DSH_BOOT_SIGNATURES"));
+
+    /// <summary>启动健康监控实例（服务就绪后创建；null = 尚未启动/已停止）。</summary>
+    internal static DshWeb.Lifecycle.BootHealthMonitor? BootMonitor { get; private set; }
 
     // Tray state (_trayIcon/_trayExitRequested): migrated to WindowManager.Instance.
 
@@ -376,6 +394,10 @@ internal static class Program
         if (!ServerManagedExternally && !_serviceStartedByShell)
             TryAdoptOrphanService();
 
+        // ---- ADR-023：服务就绪即进入启动健康监控（进程/日志/HTTP 层立即武装；
+        // 页面层等主窗 NavigationCompleted 后由 RunUserInterface 武装）----
+        StartBootHealthMonitor();
+
         if (!PortOpen(Target.Port))
         {
             ShowError(ErrorCodes.E2004, $"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看统一日志：{UnifiedLogPath}");
@@ -394,9 +416,20 @@ internal static class Program
     /// <summary>Stage 6: Create main form, wire up WebView2/theme/tray, run Application.Run.</summary>
     private static void RunUserInterface(string[] args)
     {
+        // 正常模式启动：清理历史遗留的隔离 profile（Task 4）。安全模式启动时 SafeProfile.Build
+        // 会幂等重建，故此处清理无副作用；若本次为安全模式则保留（服务正在使用）。
+        if (!SafeMode.IsActive && SafeProfile.SafeProfileExists())
+        {
+            SafeProfile.Cleanup();
+            Trace("SAFEMODE: cleaned up stale safe profile (normal mode launch)");
+        }
+
+        // 测试标记：DSH_TEST_INSTANCE=1 时添加窗口标题后缀
+        var testSuffix = string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_INSTANCE"), "1", StringComparison.OrdinalIgnoreCase)
+            ? " [TEST]" : "";
         var form = new DshShellForm
         {
-            Text = "DeepSeek Harness",
+            Text = "DeepSeek Harness" + testSuffix,
             ClientSize = new Size(1280, 840),
             StartPosition = FormStartPosition.CenterScreen,
             MinimumSize = new Size(800, 600),
@@ -445,10 +478,9 @@ internal static class Program
             WindowManager.Instance.TrayExitAction = () =>
             {
                 WindowManager.Instance.MarkTrayExitRequested();
-                if (ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
-                        ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell))
-                    StopShellService();
-                Application.Exit();
+                // [2026-08 关窗异步化] 托盘退出与关窗共用编排：窗口即刻消失，
+                // 服务清理后台执行（原为 UI 线程同步 StopShellService，卡 1.5s+）
+                BeginShutdownAsync(GetMainFormForDialog());
             };
             WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
             WindowManager.Instance.VerifyDependencies();
@@ -470,6 +502,10 @@ internal static class Program
 
         form.FormClosing += (_, e) =>
         {
+            // 异步退出编排已在进行（BeginShutdownAsync → Application.Exit 收尾触发）：
+            // 放行关闭，绝不拦截/重复清理。
+            if (_shutdownInitiated) return;
+
             var mode = ReadLifetimeMode();
             // Tray 模式：关闭窗口隐藏到托盘（插件控制，壳读取配置）
             // 仅在托盘图标存在时拦截（避免插件未启用时误拦截）
@@ -501,7 +537,6 @@ internal static class Program
                     // 用户选择强制关闭：取消构建（kill npm 进程）并放行
                     _buildCts?.Cancel();
                     _isBuildInProgress = false;
-                    e.Cancel = false;
                     Trace("user forced close during build; build process canceled");
                 }
                 else
@@ -512,14 +547,11 @@ internal static class Program
                 }
             }
 
-            SaveWindowState(form);
-            WindowManager.Instance.ReleaseThemeWatcher();
-            if (ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
-                    mode, ServerManagedExternally, _serviceStartedByShell))
-            {
-                StopShellService();
-            }
-            // 托盘清理已迁移到 dsh-launcher-lifetime 插件
+            // [2026-08 关窗异步化] 不再在 UI 线程同步停服务（netstat 轮询 + taskkill 等待
+            // 实测卡 1.5s+）：取消本次关闭 → 窗口即刻隐藏（视觉上已关），清理转后台，
+            // 完成后 Application.Exit；3s 看门狗兜底强制退出。
+            e.Cancel = true;
+            BeginShutdownAsync(form);
         };
 
         form.Load += async (_, _) =>
@@ -568,6 +600,7 @@ internal static class Program
                 web.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
                     if (e.IsSuccess) WebViewManager.ResetCrashCount();
+                    BootMonitor?.OnNavigationCompleted(); // ADR-023：页面层探针武装点
                     if (!e.IsSuccess && !navWarned)
                     {
                         navWarned = true;
@@ -575,6 +608,7 @@ internal static class Program
                             $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}");
                     }
                 };
+                WireBootHealthPageLayer();
             }
             catch (Exception ex)
             {
@@ -598,6 +632,7 @@ internal static class Program
                         web.CoreWebView2.NavigationCompleted += (_, e) =>
                         {
                             if (e.IsSuccess) WebViewManager.ResetCrashCount();
+                            BootMonitor?.OnNavigationCompleted(); // ADR-023：页面层探针武装点
                             if (!e.IsSuccess && !navWarned)
                             {
                                 navWarned = true;
@@ -605,6 +640,7 @@ internal static class Program
                                     $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}");
                             }
                         };
+                        WireBootHealthPageLayer();
                         return;
                     }
                     catch
@@ -623,51 +659,54 @@ internal static class Program
 
         // ---- 任务一：插件崩溃安全模式接线 ----
         // WebViewManager 检测到插件不兼容的致命错误消息时广播 PluginCrashDetected。
-        // 组合根接线：弹模态询问用户 → 重启 dsh 服务进入安全模式（DSH_SAFE_MODE=1）。
+        // 组合根接线：经 AskEnterSafeModeOnce（每会话仅询问一次，ADR-023 与页面层共用闸门）
+        // → 弹模态询问用户 → 重启 dsh 服务进入安全模式（两级降级阶梯 L1/L2）。
         WebViewManager.PluginCrashDetected += errorMsg =>
         {
             try
             {
                 form.BeginInvoke(() =>
                 {
-                    var result = MessageBox.Show(
-                        form,
-                        "检测到插件冲突导致启动失败（dsh 前端无法加载）。\n\n" +
-                        "是否进入安全模式（禁用所有插件）并重启 dsh 服务？\n" +
-                        "（安全模式下所有插件将被临时禁用，仅保留 dsh 核心功能）",
-                        "DeepSeek Harness - 插件冲突",
-                        MessageBoxButtons.YesNo,
-                        MessageBoxIcon.Warning);
-                    if (result == DialogResult.Yes)
+                    // 外部托管模式：尝试通过 URL 参数通知服务进入安全模式
+                    if (ServerManagedExternally)
                     {
-                        Trace("user accepted safe mode; restarting dsh service with DSH_SAFE_MODE=1");
-                        // 停止当前服务
-                        StopShellService();
-                        // 注入安全模式环境变量（start-dsh.vbs → cmd → dsh 依次继承）
-                        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", "1");
-                        // 重启服务
-                        if (StartDshServiceViaVbs())
+                        if (!AskEnterSafeModeOnce(form,
+                            "检测到插件冲突导致启动失败（dsh 前端无法加载）。", errorMsg))
                         {
-                            // 等待服务就绪后刷新页面
-                            _ = Task.Run(async () =>
+                            return;
+                        }
+                        try
+                        {
+                            // 在 URL 中添加 safe_mode 参数
+                            var uri = new Uri(Target.Url);
+                            var safeModeUrl = uri.Query.Length > 0
+                                ? $"{Target.Url}&safe_mode=1"
+                                : $"{Target.Url}?safe_mode=1";
+                            Trace($"navigating to safe mode URL: {safeModeUrl}");
+                            form.BeginInvoke(() =>
                             {
-                                var deadline = DateTime.UtcNow.AddSeconds(60);
-                                while (DateTime.UtcNow < deadline && !HttpReady())
-                                    await Task.Delay(500);
-                                try
+                                if (WebViewManager.MainWeb?.CoreWebView2 is not null)
                                 {
-                                    form.BeginInvoke(() =>
-                                    {
-                                        if (WebViewManager.MainWeb?.CoreWebView2 is not null)
-                                        {
-                                            try { WebViewManager.MainWeb.CoreWebView2.Reload(); } catch { }
-                                        }
-                                    });
+                                    WebViewManager.MainWeb.CoreWebView2.Navigate(safeModeUrl);
                                 }
-                                catch { }
                             });
                         }
+                        catch (Exception ex)
+                        {
+                            Logger.Warn("safe mode URL navigation failed: " + ex.Message);
+                        }
+                        return;
                     }
+
+                    // 壳托管模式：进入安全模式（隔离空 profile）并重启真实 dsh
+                    if (!AskEnterSafeModeOnce(form,
+                        "检测到插件冲突导致启动失败（dsh 前端无法加载）。",
+                        "是否进入安全模式（禁用第三方插件，仅保留 dsh 核心功能）？\n（不会修改你的任何配置文件）"))
+                    {
+                        return;
+                    }
+                    Trace("user accepted safe mode; entering 2-tier isolated-profile safe mode");
+                    RunSafeModeLadder(form);
                 });
             }
             catch (Exception ex)
@@ -990,6 +1029,8 @@ internal static class Program
         // 任务一：把 Splash 进度桥接进 RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志。
         // 应用更新阶段用 "[apply] " 前缀标记（Splash 更新 Label 并禁用取消按钮）。
         _updateApplyProgress = s => textProgress.Report("[apply] " + s);
+        // 首次运行预装进度：普通文本前缀（保持取消可用，不进入 IsApplyingUpdate）。
+        _firstRunProvisionProgress = s => textProgress.Report(s);
         try
         {
             var ok = await app.RunStartupAsync(textProgress, ct);
@@ -1004,6 +1045,7 @@ internal static class Program
         finally
         {
             _updateApplyProgress = null; // 本次会话结束，清理桥接（防跨会话污染）
+            _firstRunProvisionProgress = null; // 同上：首次运行预装进度桥接
         }
     }
 
@@ -1037,7 +1079,7 @@ internal static class Program
                     SweepStaleServicePid();   // 僵尸清扫：上次崩溃记录过、已不在监听的进程
                 }
             },
-            StartService = StartDshServiceViaVbs,
+            StartService = StartDshServiceViaVbsWithProvision,
             ReadinessProbe = ct => Task.Run(() => WaitServiceReady(ct, Target.Port, Target.Url, UnifiedLogPath, E2EMode), ct),
         };
     }
@@ -1070,6 +1112,10 @@ internal static class Program
     /// <summary>更新安装进度桥接（任务一）：RunLauncherAppPipelineAsync 装配时指向 Splash 进度转发，
     /// RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志逐行上报。会话结束清空防污染。</summary>
     private static Action<string>? _updateApplyProgress;
+
+    /// <summary>首次运行预装（SelfContained 运行时）进度桥接：指向 Splash 进度转发（普通文本，可取消）。
+    /// 仅"本地未安装 dsh"的首次运行触发；会话结束清空防污染。</summary>
+    private static Action<string>? _firstRunProvisionProgress;
 
     /// <summary>
     /// 启动早期待应用更新决策（v0.4.0 T2，纯函数矩阵 U2 的接线）：
@@ -1132,7 +1178,7 @@ internal static class Program
     {
         try
         {
-            var pid = FindPidListeningOn(port);
+            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
             if (pid <= 0) return;
             Logger.Info($"[Apply] Killing old service PID={pid} on port {port}");
             if (KillProcess(pid))
@@ -1178,6 +1224,39 @@ internal static class Program
         Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
         Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
 
+        // 测试开关：DSH_SERVICE_CMD 指定自定义启动命令（用于沙盒测试）。
+        // ADR-021：严禁 cmd.exe 包装——直接拆分 (exe, args) 后 ProcessStartInfo 直启
+        //（node.exe + .js 入口，绕开 .cmd/编码/引号全部陷阱）。格式：["]<exe>["] [args]。
+        var testCmd = Environment.GetEnvironmentVariable("DSH_SERVICE_CMD");
+        Trace($"DSH_SERVICE_CMD={testCmd ?? "(null)"}");
+        if (!string.IsNullOrWhiteSpace(testCmd))
+        {
+            var split = ShellLogic.ProcessManagement.SplitCommandLine(testCmd);
+            if (split is null)
+            {
+                Logger.Warn($"DSH_SERVICE_CMD unparseable (missing exe or unterminated quote): {testCmd}");
+            }
+            else
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(split.Value.Exe, split.Value.Args)
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                    Process.Start(psi);
+                    Trace($"service start via DSH_SERVICE_CMD: {split.Value.Exe} {split.Value.Args}");
+                    _serviceStartedByShell = true;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"DSH_SERVICE_CMD start failed: {ex.Message}");
+                }
+            }
+        }
+
         // [Fix] 优先使用 SelfContained 运行时（node.exe 直接执行，秒级启动）
         var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
         if (identity.Source == DshWeb.Domain.DshSource.SelfContained && identity.ExecutablePath is not null)
@@ -1190,15 +1269,24 @@ internal static class Program
                 {
                     try
                     {
-                        var psi = new ProcessStartInfo(nodeExe,
-                            $"\"{binJs}\" web --host 127.0.0.1 --port {Target.Port}")
+                        // 安全模式（ADR-022）：用根级 --profile .dsh-safe（web 子命令与 --profile
+                        // 互斥），剥离第三方插件，仅供 dsh 核心 bundle。正常运行保持 web 子命令。
+                        // [2026-08 回归修复] 参数统一经 ShellLogic.ServiceLaunch 拼装：两分支
+                        // 都带 --no-open（dsh web 默认 ShellExecute 打开系统浏览器；旧普通分支
+                        // 漏传 → 安装 SelfContained 运行时后每次启动都拉起浏览器）。
+                        var launchArgs = ShellLogic.ServiceLaunch.BuildSelfContainedArgs(
+                            binJs, Target.Port,
+                            SafeMode.IsActive ? DshWeb.Domain.SafeProfileBuilder.SafeProfileName : null);
+                        if (SafeMode.IsActive)
+                            Trace($"service start via SelfContained (SAFE profile): node.exe {launchArgs}");
+                        var psi = new ProcessStartInfo(nodeExe, launchArgs)
                         {
                             UseShellExecute = false,
                             CreateNoWindow = true,
                             WorkingDirectory = identity.ExecutablePath,
                         };
                         Process.Start(psi);
-                        Trace($"service start via SelfContained: node.exe {binJs}");
+                        Trace($"service start via SelfContained: {launchArgs}");
                         return true;
                     }
                     catch (Exception ex)
@@ -1229,6 +1317,473 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 安全模式双重观测（ADR-022 Task 3）：readiness + 插件崩溃签名消失。
+    /// - 阶段一：等 TCP+HTTP ready（最长 60s）；
+    /// - 阶段二：观察窗口（5s）内不再收到新的插件崩溃签名（WebViewManager.LastPluginCrashUtc 不再前进）。
+    /// 任一失败 ⇒ 明确返回 false（调用方据此响亮报错，绝不假成功）。
+    /// </summary>
+    private static bool WaitSafeModeVerified()
+    {
+        // 阶段一：readiness
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < deadline && !HttpReady())
+            Task.Delay(500).Wait();
+        if (!HttpReady())
+        {
+            Logger.Error("safe mode verification: service not ready within 60s", ErrorCodes.E1011);
+            return false;
+        }
+
+        // 阶段二：崩溃签名消失（观察窗口 5s 内无新的插件崩溃消息）
+        var baseline = WebViewManager.LastPluginCrashUtc;
+        var observeDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < observeDeadline)
+        {
+            if (WebViewManager.LastPluginCrashUtc > baseline)
+            {
+                Logger.Error("safe mode verification: plugin crash signature still present", ErrorCodes.E1011);
+                return false; // 签名仍在 → 安全模式失败
+            }
+            Task.Delay(300).Wait();
+        }
+        Trace("SAFEMODE: verification OK (ready + crash signature absent)");
+        return true;
+    }
+
+    /// <summary>
+    /// 在后台线程执行一次给定梯级的安全模式启动（ADR-022 分级策略）。
+    /// 步骤：构建该梯级 .dsh-safe → Activate(落盘) → 停旧服务 → 以 --profile 重启 →
+    /// 双重观测（readiness + 崩溃签名消失）。全部通过才返回 true。
+    /// </summary>
+    private static bool TryStartSafeMode(DshWeb.Windows.DshShellForm form, DshWeb.Domain.SafeProfileTier tier)
+    {
+        try
+        {
+            Trace($"SAFEMODE(bg): building tier {tier}");
+            if (!SafeProfile.Build(tier))
+            {
+                Logger.Error($"safe mode disabled: failed to build tier {tier} profile", ErrorCodes.E1010);
+                return false;
+            }
+            SafeMode.Activate(tier);
+            Trace($"SAFEMODE: activated tier {tier}, safe profile={SafeProfile.SafeProfileDir}");
+
+            // 关键：安全模式用隔离 profile 启动。设置 DSH_PROFILE 环境变量，使
+            // start-dsh.vbs 回退路径也走 `--profile .dsh-safe`（根级，替代 web 子命令）。
+            // SelfContained 分支由 SafeMode.IsActive 已切换为 --profile。两路一致。
+            Environment.SetEnvironmentVariable("DSH_PROFILE", DshWeb.Domain.SafeProfileBuilder.SafeProfileName);
+
+            // ADR-023：壳主动重启服务 = 判定挂起窗口（进程退出/HTTP 断链/日志错误都不判 failed）
+            BootMonitor?.Suspend();
+
+            Trace("SAFEMODE(bg): stopping service");
+            StopShellService();
+            Trace("SAFEMODE(bg): StopShellService returned");
+            var restartOk = StartDshServiceViaVbs();
+            Trace($"SAFEMODE(bg): StartDshServiceViaVbs returned {restartOk}");
+            if (!restartOk)
+            {
+                BootMonitor?.Stop(); // 重启失败且不再有服务可监视
+                SafeMode.Deactivate();
+                return false;
+            }
+
+            var safeOk = WaitSafeModeVerified();
+            Trace($"SAFEMODE(bg): verification={safeOk}");
+            if (!safeOk)
+            {
+                // 安全模式未真正生效：退出安全状态、恢复窗口原样（不谎报成功）
+                BootMonitor?.Stop(); // 两级阶梯都失败 → 不再有受监视的健康服务
+                SafeMode.Deactivate();
+                Environment.SetEnvironmentVariable("DSH_PROFILE", null);
+                try
+                {
+                    form.BeginInvoke(() =>
+                    {
+                        try
+                        {
+                            if (form.TitleBar is not null) form.TitleBar._titleText = "DeepSeek Harness";
+                            form.Text = "DeepSeek Harness";
+                            form.TitleBar?.Invalidate();
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
+                return false;
+            }
+
+            // —— 只有真正通过双重观测（readiness + 崩溃签名消失）才标注安全模式横幅 ——
+            // ADR-023：恢复监控（清终态回 Pending、attach 新进程；页面层随下方 Reload 的
+            // NavigationCompleted 重新武装）——安全模式下的服务同样受崩溃检测保护。
+            BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+            try
+            {
+                form.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        if (form.TitleBar is not null) form.TitleBar._titleText = "DeepSeek Harness（安全模式）";
+                        form.Text = "DeepSeek Harness（安全模式）";
+                        form.TitleBar?.Invalidate();
+                        // 刷新页面（此时服务已按 --profile .dsh-safe 正常提供核心 UI）
+                        if (WebViewManager.MainWeb?.CoreWebView2 is not null)
+                        {
+                            try { WebViewManager.MainWeb.CoreWebView2.Reload(); } catch { }
+                        }
+                    }
+                    catch { }
+                });
+            }
+            catch { }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("safe mode start exception: " + ex.Message);
+            BootMonitor?.Stop(); // 重启流程异常中断：服务状态未知，停止监控防误报
+            SafeMode.Deactivate();
+            return false;
+        }
+    }
+
+    // ==================== 启动健康融合监控（ADR-023）组合根接线 ====================
+
+    /// <summary>
+    /// 服务就绪后创建并启动 BootHealthMonitor：进程层（RecordServicePid/认领的 PID attach）、
+    /// 日志层（统一日志增量扫描）、HTTP 层（Target.Url 回死探测）。页面层由主窗
+    /// NavigationCompleted 后的 <see cref="WireBootHealthPageLayer"/> 武装。
+    /// 幂等：已有实例时跳过（Headless/重复调用安全）。
+    /// </summary>
+    private static void StartBootHealthMonitor()
+    {
+        if (BootMonitor is not null) return;
+        try
+        {
+            var pid = ResolveServicePidBestEffort();
+            var monitor = new DshWeb.Lifecycle.BootHealthMonitor(
+                BootSignatures,
+                UnifiedLogPath,
+                Target.Url,
+                pageProbe: script => WebViewManager.ExecuteScriptOnMainWebAsync(script),
+                // 统一 [boot-monitor] 前缀：所有层轨迹在统一日志中可被 grep/场景断言识别
+                trace: message => Trace("[boot-monitor] " + message));
+            monitor.Failed += HandleBootHealthFailed;
+            // 吸收态证据追加（如进程死后 HTTP 层补充）→ 重写 safe-mode-state 融合视图（S24 验收）
+            monitor.VerdictUpdated += v =>
+            {
+                try
+                {
+                    PersistBootFailureEvidence(v);
+                    Logger.Info("boot-monitor: failure evidence re-persisted (fusion view updated)");
+                }
+                catch (Exception ex) { Logger.Warn("boot-monitor: re-persist failed: " + ex.Message); }
+            };
+            BootMonitor = monitor;
+            monitor.Start();
+            if (pid > 0) monitor.AttachProcess(pid);
+            Logger.Info($"[boot-monitor] started url={Target.Url} log={UnifiedLogPath} servicePid={(pid > 0 ? pid.ToString() : "n/a")}");
+        }
+        catch (Exception ex)
+        {
+            // 监控自身装配失败绝不阻断启动（降级为无监控运行）
+            Logger.Warn("[boot-monitor] failed to start: " + ex.Message);
+            BootMonitor = null;
+        }
+    }
+
+    /// <summary>尽力解析受监视服务 PID：壳记录的 _servicePid 优先，否则按端口反查（外部托管场景）。</summary>
+    private static int ResolveServicePidBestEffort()
+    {
+        if (_servicePid > 0) return _servicePid;
+        try
+        {
+            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
+            return ShellLogic.ProcessManagement.IsLikelyDshService(pid) ? pid : 0;
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// 页面层武装 + CDP 精确层订阅（主窗 WebView2 初始化完成后调用一次）。
+    /// 探针执行经 WebViewManager 封送 UI 线程；CDP 只采集不判定。
+    /// </summary>
+    private static void WireBootHealthPageLayer()
+    {
+        try
+        {
+            WebViewManager.CdpExceptionCaptured -= OnCdpExceptionCaptured; // 防重订阅
+            WebViewManager.CdpExceptionCaptured += OnCdpExceptionCaptured;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[boot-monitor] cdp wiring failed (precise layer disabled): " + ex.Message);
+        }
+    }
+
+    private static void OnCdpExceptionCaptured(string rawJson) => BootMonitor?.CollectCdpException(rawJson);
+
+    /// <summary>
+    /// failed 裁决处理（四层证据融合出口）：证据写 safe-mode.json + 静默导出诊断包，
+    /// 然后经每会话一次闸门询问是否进入安全模式（两级降级阶梯 L1/L2）。
+    /// 询问与阶梯封送到 UI 线程（Report 触发线程是后台轮询/进程事件线程）。
+    /// </summary>
+    private static void HandleBootHealthFailed(DshWeb.Lifecycle.BootVerdict verdict)
+    {
+        try
+        {
+            // 1) 证据落盘：safe-mode-state.json 的 lastFailure 字段（原子写，崩溃/重启仍可查）
+            PersistBootFailureEvidence(verdict);
+
+            // 2) 诊断包：静默落 DataDir\diagnostics\（失败仅 Warn，不二次弹窗打扰）
+            ExportBootDiagnostics();
+
+            // 3) 分支询问（2026-08 用户回归：无插件也弹"插件不兼容/安全模式"——误导）：
+            //    - 有插件相关证据（坏签名命中 / 本会话插件崩溃消息）→ 安全模式阶梯（原路径）；
+            //    - 纯"好符号缺席"（无坏签名、无插件崩溃）→ 与插件无关，不弹安全模式
+            //      （无第三方插件可禁，安全模式必然无效），改问"重启 dsh 服务"。
+            var detail = string.Join("\n", verdict.Evidence.Select(e => $"· [{e.Layer}] {e.Summary}"));
+            var form = GetMainFormForDialog();
+            if (VerdictIndicatesPluginInvolvement(verdict))
+            {
+                var askBody = "是否进入安全模式（禁用第三方插件，仅保留 dsh 核心功能）？\n"
+                    + "（不会修改你的任何配置文件）\n\n检测到的证据：\n" + detail;
+                var headline = $"{ErrorCodes.Describe(verdict.ErrorCode)}（[{verdict.ErrorCode}]）";
+                if (form is not null && form.IsHandleCreated)
+                    form.BeginInvoke(() => AskAndMaybeEnterSafeMode(form, headline, askBody));
+                else
+                    AskAndMaybeEnterSafeMode(form, headline, askBody);
+            }
+            else
+            {
+                var headline = $"dsh 页面启动自检未通过（[{ErrorCodes.E2008}]）：页面已加载但启动确认符号持续缺席。\n"
+                    + "未检测到插件相关证据，多与 dsh 版本兼容性或服务状态有关。\n\n检测到的证据：\n" + detail;
+                if (form is not null && form.IsHandleCreated)
+                    form.BeginInvoke(() => AskRestartDshServiceAfterBootFailure(form, headline));
+                else
+                    Logger.Warn("[boot-monitor] no-plugin boot failure without main window; restart ask skipped (logged only)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[boot-monitor] failure handling threw: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 裁决是否携带插件相关证据（决定 E2008 弹"安全模式"还是"重启服务"）：
+    /// 页面层坏签名命中（detail 以 dom[/err[ 开头，见 BootGuard.EvaluatePageProbe）或
+    /// 本会话收到过插件崩溃 WebMessage（WebViewManager.PluginCrashDetected 路径）。
+    /// CDP 异常不参与判定：核心页面自身异常也会被采集，不足以归因插件（保守防误导）。
+    /// </summary>
+    private static bool VerdictIndicatesPluginInvolvement(DshWeb.Lifecycle.BootVerdict verdict)
+    {
+        foreach (var e in verdict.Evidence)
+        {
+            if (e.Layer == DshWeb.Lifecycle.BootLayer.Page
+                && e.Detail is not null
+                && (e.Detail.StartsWith("dom[", StringComparison.Ordinal)
+                    || e.Detail.StartsWith("err[", StringComparison.Ordinal)))
+                return true;
+        }
+        return WebViewManager.LastPluginCrashUtc != default;
+    }
+
+    /// <summary>
+    /// 无插件证据的启动自检失败恢复动作：询问后后台重启 dsh 服务，就绪后刷新页面。
+    /// 复用安全模式重启的观测语义：Suspend（壳主动重启窗口不判死）→ 停启 → 就绪等待 →
+    /// ResumeAfterRestart（重挂进程层；页面层随 Reload 的 NavigationCompleted 重新武装）。
+    /// </summary>
+    private static void AskRestartDshServiceAfterBootFailure(DshShellForm form, string headline)
+    {
+        try
+        {
+            try { form.Activate(); } catch { }
+            var r = MessageBox.Show(form,
+                headline + "\n\n是否立即重启 dsh 服务？（不会修改你的任何配置文件）",
+                "DeepSeek Harness - 启动异常",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            Trace($"restart-service ask answered: {(r == DialogResult.Yes ? "yes" : "no")}");
+            if (r != DialogResult.Yes) return;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    BootMonitor?.Suspend();
+                    Trace("restart-service(bg): stopping service");
+                    StopShellService();
+                    var startOk = StartDshServiceViaVbs();
+                    Trace($"restart-service(bg): StartDshServiceViaVbs returned {startOk}");
+                    if (!startOk)
+                    {
+                        BootMonitor?.Stop();
+                        try { form.BeginInvoke(() => ShowError(ErrorCodes.E2001,
+                            "dsh 服务重启失败，请查看统一日志后重新打开 dsh-launcher。", log: false)); } catch { }
+                        return;
+                    }
+                    var deadline = DateTime.UtcNow.AddSeconds(60);
+                    while (DateTime.UtcNow < deadline && !HttpReady())
+                        await Task.Delay(500);
+                    if (!HttpReady())
+                    {
+                        Logger.Error("restart-service: service not ready within 60s after reboot", ErrorCodes.E2004);
+                        BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
+                        try { form.BeginInvoke(() => ShowError(ErrorCodes.E2004,
+                            "dsh 服务重启后 60 秒内未就绪，请查看统一日志。", log: false)); } catch { }
+                        return;
+                    }
+                    BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+                    try
+                    {
+                        form.BeginInvoke(() =>
+                        {
+                            try { WebViewManager.MainWeb?.CoreWebView2?.Reload(); } catch { /* 页面已关 */ }
+                        });
+                    }
+                    catch { /* 窗体已关闭 */ }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("restart-service(bg) threw: " + ex.Message);
+                    BootMonitor?.Stop();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("restart-service ask failed: " + ex.Message);
+        }
+    }
+
+    private static void AskAndMaybeEnterSafeMode(DshShellForm? form, string headline, string askBody)
+    {
+        try
+        {
+            if (!AskEnterSafeModeOnce(form, headline, askBody)) return;
+            if (form is null || form.IsDisposed)
+            {
+                // 无主窗可承载安全模式重启（罕见：失败早于建窗）——响亮记录，不静默假成功
+                Logger.Warn("[boot-monitor] safe mode accepted but no main window available; ladder skipped");
+                return;
+            }
+            RunSafeModeLadder(form);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[boot-monitor] safe-mode ask/ladder threw: " + ex.Message);
+        }
+    }
+
+    private static DshShellForm? GetMainFormForDialog()
+        => Application.OpenForms.OfType<DshShellForm>().FirstOrDefault();
+
+    /// <summary>证据持久化到 safe-mode.json（best-effort：失败只 Warn，不影响询问流程）。</summary>
+    private static void PersistBootFailureEvidence(DshWeb.Lifecycle.BootVerdict verdict)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(
+                DshWeb.Lifecycle.BootHealthMonitor.BuildFailureRecord(verdict)));
+            SafeMode.RecordFailure(doc.RootElement);
+            Trace("boot-monitor: failure evidence persisted to safe-mode-state.json");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[boot-monitor] evidence persistence failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>静默导出诊断包到 DSH_HOME\dsh-launcher\diagnostics\（含 safe-mode.json 证据）。</summary>
+    private static void ExportBootDiagnostics()
+    {
+        _ = Task.Run(() =>
+        {
+            var zip = DiagnoseExport.ExportTo(
+                Path.Combine(DataDir, "diagnostics",
+                    $"boot-failure-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip"),
+                DshHomeDir, UnifiedLogPath, minLevel: Logger.Level.Warn);
+            Trace(zip is null
+                ? "boot-monitor: diagnostic export failed (see E5001)"
+                : $"boot-monitor: diagnostic package written: {zip}");
+        });
+    }
+
+    /// <summary>
+    /// 每会话仅一次的安全模式询问闸门。顺序：监控状态机闸门（BootMonitor.TryConsumeSessionPrompt）
+    /// → 测试钩子（DSH_TEST_SAFE_MODE_ANSWER=yes|no，沙盒自动化用）/ 无头模式仅记日志 → 真实弹窗。
+    /// 返回 true = 用户（或钩子）同意进入安全模式。
+    /// </summary>
+    private static bool AskEnterSafeModeOnce(DshShellForm? form, string headline, string body)
+    {
+        // 闸门一：状态机内的会话级一次性闸门（与页面层/插件消息路径共用）
+        var gate = BootMonitor?.TryConsumeSessionPrompt() ?? true;
+        if (!gate)
+        {
+            Trace("safe-mode ask suppressed: already asked this session");
+            return false;
+        }
+
+        // 闸门二：测试钩子 / 无头环境（不打断自动化、不留挂起弹窗）
+        var hookAnswer = Environment.GetEnvironmentVariable("DSH_TEST_SAFE_MODE_ANSWER");
+        if (!string.IsNullOrWhiteSpace(hookAnswer))
+        {
+            var yes = string.Equals(hookAnswer, "yes", StringComparison.OrdinalIgnoreCase);
+            Logger.Info($"[boot-monitor] safe-mode ask auto-answered={hookAnswer.ToLowerInvariant()} (test hook)");
+            return yes;
+        }
+        if (NoUiMode)
+        {
+            Logger.Info("[boot-monitor] safe-mode ask suppressed (no-ui mode)");
+            return false;
+        }
+
+        var result = MessageBox.Show(
+            form,
+            headline + "\n\n" + body,
+            "DeepSeek Harness - 启动异常",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        Trace($"safe-mode ask answered: {(result == DialogResult.Yes ? "yes" : "no")}");
+        return result == DialogResult.Yes;
+    }
+
+    /// <summary>
+    /// 执行安全模式两级降级阶梯（ADR-022）：Tier1 保留全部 @deepseek-ai 核心 → 失败降 Tier2 最小核心；
+    /// 每一级以物理证据（readiness + 崩溃签名消失）把关。后台线程执行（进程终止/同步等待不卡 UI）。
+    /// </summary>
+    private static void RunSafeModeLadder(DshShellForm form)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var ok = TryStartSafeMode(form, DshWeb.Domain.SafeProfileTier.Tier1KeepDeepSeekCore); // L1
+                if (!ok)
+                {
+                    Trace("SAFEMODE(bg): Tier1(L1) failed, falling back to Tier2 (minimal core)");
+                    ok = TryStartSafeMode(form, DshWeb.Domain.SafeProfileTier.Tier2Minimal); // L2
+                }
+                if (!ok)
+                {
+                    // 两级都失败 → 响亮报错（含证据），绝不宣称成功
+                    Trace("SAFEMODE(bg): all safe-mode tiers failed");
+                    SafeMode.Deactivate();
+                    form.BeginInvoke(() => MessageBox.Show(form,
+                        "安全模式启动失败：两级隔离 profile 均未通过启动验证（" +
+                        ErrorCodes.E1011 + "）。\n请查看统一日志，或手动卸载问题插件后以正常模式启动。",
+                        "DeepSeek Harness - 安全模式失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("safe mode restart failed: " + ex.Message);
+                SafeMode.Deactivate();
+            }
+        });
+    }
+
     /// <summary>在 SelfContained 运行时目录中查找 dsh 的 bin.js 入口。</summary>
     private static string? FindDshBinJs(string runtimeDir)
     {
@@ -1251,6 +1806,139 @@ internal static class Program
         return env?.NodeExe;
     }
 
+    /// <summary>
+    /// 首次运行预装 SelfContained 运行时（本地未安装 dsh 时的"更快下载/启动"路径，用户要求的
+    /// 修复方向之一）：用 npm 一次性把最新版 dsh 完整安装进 DataDir/runtimes/&lt;version&gt;，
+    /// 之后 <see cref="StartDshServiceViaVbs"/> 的发现会命中 SelfContained → node.exe 秒级启动
+    /// （本此与后续均不再依赖慢速/易超时的 npx 冷下载）。
+    ///
+    /// 纯降级友好：任何失败（无网络、无 node、npm 错误、非"未安装"状态）都静默回退到 npx 路径
+    /// （该路径的就绪超时已放宽到 360s），绝不阻塞启动、绝不打扰用户。
+    /// 测试/无头/沙盒模式一律跳过（避免 CI 触发真实网络下载）。
+    /// </summary>
+    private static bool TryProvisionFirstRunRuntime()
+    {
+        // 测试/自动化/沙盒环境不触发真实网络下载预装
+        if (E2EMode || NoUiMode || IsSandboxMode
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_SERVICE_CMD")))
+            return false;
+
+        try
+        {
+            var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
+            // 仅"完全未安装"（唯一可用路径是 npx 网络下载）才值得预装；
+            // 已装全局 dsh / 已存在 SelfContained / 外部托管都不需要。
+            if (identity.Source != DshWeb.Domain.DshSource.NpxCache)
+                return true;
+
+            _firstRunProvisionProgress?.Invoke("正在获取 dsh 最新版本…");
+            string? version;
+            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
+                version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                Logger.Warn("first-run provision: cannot resolve latest dsh version, falling back to npx");
+                return false; // 无网络：回退 npx（就绪超时已放宽）
+            }
+            Logger.Info($"first-run provision: installing dsh {version} into SelfContained runtime");
+
+            var runtimesDir = Path.Combine(DataDir, "runtimes");
+            var targetDir = Path.Combine(runtimesDir, version);
+            if (File.Exists(Path.Combine(targetDir, "node_modules", "@deepseek-ai", "dsh", "package.json")))
+                return true; // 已预装过同一版本，直接复用
+
+            _firstRunProvisionProgress?.Invoke($"正在下载并安装 dsh v{version}（首次运行，仅需一次）…");
+
+            // 构建到 staging，完成后原子移动到 runtimes/<version>（与更新 Apply 路径 A 一致的原子切换）
+            var staging = Path.Combine(DataDir, "staging");
+            var buildDir = Path.Combine(staging, $"runtime-build-{version}");
+            Directory.CreateDirectory(staging);
+            TryDeleteDir(buildDir); // 清理上次失败的残留
+            Directory.CreateDirectory(buildDir);
+
+            if (!ProvisionBuildSelfContained(buildDir, version))
+            {
+                Logger.Warn("first-run provision: build failed, falling back to npx");
+                TryDeleteDir(buildDir);
+                return false;
+            }
+
+            var dshPkg = Path.Combine(buildDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+            if (!File.Exists(dshPkg))
+            {
+                Logger.Warn("first-run provision: build produced no dsh package, falling back to npx");
+                TryDeleteDir(buildDir);
+                return false;
+            }
+
+            // 原子切换到 runtimes/<version>
+            Directory.CreateDirectory(runtimesDir);
+            if (Directory.Exists(targetDir)) TryDeleteDir(targetDir);
+            Directory.Move(buildDir, targetDir);
+            Logger.Info($"first-run provision: SelfContained runtime ready at {targetDir}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("first-run provision failed, falling back to npx: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 在一个干净的 buildDir 里完成 dsh 包的下载 + 安装（pnpm 机会主义加速 / npm 回退，与更新
+    /// 构建 <see cref="DownloadDshUpdateStaged"/> 同源）。成功（node_modules/@deepseek-ai/dsh 就绪）
+    /// 返回 true；任何失败返回 false（调用方清理并回退 npx）。
+    /// </summary>
+    private static bool ProvisionBuildSelfContained(string buildDir, string version)
+    {
+        try
+        {
+            var tarballName = $"deepseek-ai-dsh-{version}.tgz";
+            var tarballPath = Path.Combine(buildDir, tarballName);
+
+            // 步骤 1：npm pack 下载 tarball（本地/就近镜像，秒级）
+            _firstRunProvisionProgress?.Invoke($"正在下载 dsh v{version} 安装包…");
+            if (!RunNpmCommand(
+                    $"pack @deepseek-ai/dsh@{version} --pack-destination \"" + buildDir + "\"",
+                    out var packTail))
+            {
+                Logger.Warn($"first-run provision pack failed: {packTail}");
+                return false;
+            }
+            if (!File.Exists(tarballPath)) return false;
+
+            // 步骤 2：完整安装（pnpm ~10s / npm ~60s）。与更新构建同源，同一镜像保证 cache 命中。
+            _firstRunProvisionProgress?.Invoke($"正在安装 dsh v{version}（首次运行，仅需一次）…");
+            var nodeEnv = RuntimeResolver.ResolveExisting();
+            var nodeExe = nodeEnv?.NodeExe;
+            var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
+            if (nodeExe is not null && pnpmEntryJs is not null)
+            {
+                if (RunPnpmInstall(nodeExe, pnpmEntryJs, tarballPath, buildDir))
+                    return true;
+                Logger.Warn("first-run provision pnpm install failed, falling back to npm");
+            }
+            return RunNpmCommand(
+                $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
+                    + GetNpmRegistryArgs(),
+                out var installTail, timeoutMs: 1200000, workingDirectory: buildDir);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("first-run provision build exception: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>拉起 dsh 服务：首次运行（未安装）先预装 SelfContained 运行时以加速/规避 npx 超时，
+    /// 再走统一发现链启动。失败静默回退（TryProvisionFirstRunRuntime 内部已兜底）。</summary>
+    private static bool StartDshServiceViaVbsWithProvision()
+    {
+        TryProvisionFirstRunRuntime();
+        return StartDshServiceViaVbs();
+    }
+
     /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。</summary>
     private static void HandleStartupFailure(SplashForm.Outcome outcome)
     {
@@ -1258,7 +1946,7 @@ internal static class Program
         // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
         if (outcome.WaitResult is "logerror" or "timeout" && outcome.ServiceStartedByShell && PortOpen(Target.Port))
         {
-            var pid = FindPidListeningOn(Target.Port);
+            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
             if (pid > 0)
             {
                 Logger.Warn("service failed to become ready; cleaning up", ErrorCodes.E2005, new { pid });
@@ -1362,23 +2050,33 @@ internal static class Program
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) }; // P2-9：弱网放宽 8s→15s
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
 
-                // 1) launcher 安全更新优先（安全修复比功能更新重要）
-                var lr = await UpdateChecker.FetchLatestLauncherReleaseAsync(http);
-                if (lr is not null && lr.IsSecurity
-                    && UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                // 1) launcher 安全更新优先（安全修复比功能更新重要）。
+                // 独立 try/catch：此步任何意外异常都不得中断后面的 dsh 检查（此前整段任务只有
+                // 一个静默总 catch，一处抛出 → dsh 检查无声消失，日志零痕迹难排查）。
+                try
                 {
-                    form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
-                        UpdateChecker.CurrentLauncherVersion ?? "?"));
-                    return;
+                    var lr = await UpdateChecker.FetchLatestLauncherReleaseAsync(http);
+                    if (lr is not null && lr.IsSecurity
+                        && UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                    {
+                        form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
+                            UpdateChecker.CurrentLauncherVersion ?? "?"));
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("launcher security update check failed; continuing with dsh check",
+                        ctx: new { error = ex.Message });
                 }
 
                 // 2) dsh 新版
                 var latest = await UpdateChecker.FetchLatestDshVersionAsync(http);
                 var local = UpdateChecker.ResolveLocalDshVersion();
-                // 诊断留痕（v0.4.0）：检测未命中时记录原因，用户可查 dsh.log 判断是"无更新"还是
-                // "取不到本地版本/远端版本"（此前完全静默，难排查）。
-                if (string.IsNullOrWhiteSpace(latest))
-                    Trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"} (skip)");
+                // 诊断留痕（v0.4.1）：无论命中与否都记录 latest/local。此前只在 latest 为空时
+                // 留痕——"检测成功、准备弹气泡"路径完全静默，气泡一旦被系统吞掉（托盘不可见/
+                // 专注助手收进通知中心），用户与日志双双无迹可查（rc6→rc7 无提示排查根因之一）。
+                Trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"}");
                 // [Fix] local 为 null 时仍然提示更新（用户卸载了全局 dsh 或首次安装）
                 if (!string.IsNullOrWhiteSpace(latest)
                     && (string.IsNullOrWhiteSpace(local) || UpdateChecker.CompareVersions(latest, local) > 0))
@@ -1405,10 +2103,15 @@ internal static class Program
                         Trace($"dsh update {latest} skipped by user (skipped={skipped})");
                         return;
                     }
+                    Trace($"dsh update {latest} available (local={local ?? "<null>"}); prompting tray balloon");
                     form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, latest, local));
                 }
             }
-            catch { /* 检测失败静默 */ }
+            catch (Exception ex)
+            {
+                // 质量治理：检测失败不再完全静默——至少留 Warn 痕迹（日志失败本身不影响启动）
+                Logger.Warn("update check aborted unexpectedly", ctx: new { error = ex.Message });
+            }
         });
     }
 
@@ -1444,43 +2147,33 @@ internal static class Program
         catch { return null; }
     }
 
-    /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：托盘气泡告知落盘位置，
-    /// 不自动打开——防恶意页面触发下载后自动执行本地代码（S2 修复）。</summary>
+    /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：系统通知告知落盘位置，
+    /// 不自动打开——防恶意页面触发下载后自动执行本地代码（S2 修复）。
+    /// [v0.4.1] 从托盘气泡迁移到系统 Toast（不再依赖托盘图标）。</summary>
     private static void NotifyDownloadComplete(string filePath)
     {
-        try
-        {
-            if (WindowManager.Instance.TrayIcon is null) return;
-            WindowManager.Instance.ShowBalloonTip(8000, "下载完成",
-                "文件已保存：\n" + filePath + "\n（点击 dsh-launcher 托盘图标查看）",
-                ToolTipIcon.Info);
-        }
-        catch { /* 气泡失败忽略 */ }
+        SystemToast.TryShow(_pendingForm, "下载完成",
+            "文件已保存：\n" + filePath, TimeSpan.FromSeconds(8), onClick: null);
     }
 
     private static void NotifyPending(PendingUpdate type, string latest, string local)
     {
-        try
-        {
-            _pendingUpdate = type;
-            _pendingLatest = latest;
-            _pendingLocal = local;
-            // v0.3.0：托盘按需显示——有待通知的更新时临时创建托盘（无插件也提示更新）
-            if (_pendingForm is null) return;
-            WindowManager.Instance.EnsureTrayIcon(_pendingForm);
-            var tray = WindowManager.Instance.TrayIcon;
-            if (tray is null) return;
-            tray.BalloonTipClicked -= OnPendingBalloonClicked;
-            tray.BalloonTipClicked += OnPendingBalloonClicked;
-            // 任务三：气泡关闭后，若托盘非永久驻留则自动隐藏（幽灵托盘修复）
-            tray.BalloonTipClosed -= OnBalloonTipClosedHideIfTransient;
-            tray.BalloonTipClosed += OnBalloonTipClosedHideIfTransient;
-            var (title, body) = type == PendingUpdate.LauncherSecurity
-                ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
-                : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
-            tray.ShowBalloonTip(25000, title, body, ToolTipIcon.Info); // 驻留 25s，安全更新要让人看到
-        }
-        catch { /* 气泡提示失败忽略 */ }
+        _pendingUpdate = type;
+        _pendingLatest = latest;
+        _pendingLocal = local;
+        var (title, body) = type == PendingUpdate.LauncherSecurity
+            ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
+            : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
+        // [v0.4.1] 系统 Toast 替代托盘气泡：通知不再依赖托盘图标（此前非 tray 常驻模式下
+        // TrayIcon 恒为 null，更新气泡被静默丢弃——rc6→rc7 无提示根因）。
+        // 点击 → OnPendingBalloonClicked（SystemToast 内部编组回 UI 线程），语义与原 BalloonTipClicked 一致。
+        var shown = SystemToast.TryShow(_pendingForm, title, body,
+            TimeSpan.FromSeconds(25), // 驻留 25s，安全更新要让人看到
+            () => OnPendingBalloonClicked(null, EventArgs.Empty));
+        if (shown)
+            Logger.Info($"update toast shown: {title} / {body.Replace("\n", " ")}");
+        else
+            Logger.Warn("update toast unavailable; user will not see this update notice");
     }
 
     /// <summary>质量治理 P1-6/P1-8："已下载待应用"更新的一次性气泡提示（无点击行为）。
@@ -1498,25 +2191,17 @@ internal static class Program
                     "suppressing balloon. Manual: npm install -g @deepseek-ai/dsh@" + version);
                 return;
             }
-            if (_pendingForm is null) return;
-            WindowManager.Instance.EnsureTrayIcon(_pendingForm, force: true); // 无插件/无待通知更新时也临时建托盘提示
-            var tray = WindowManager.Instance.TrayIcon;
-            if (tray is null) return;
-            // 任务三：气泡关闭后，若托盘非永久驻留则自动隐藏（幽灵托盘修复）
-            tray.BalloonTipClosed -= OnBalloonTipClosedHideIfTransient;
-            tray.BalloonTipClosed += OnBalloonTipClosedHideIfTransient;
-            tray.ShowBalloonTip(15000, "dsh 更新待应用",
+            // [v0.4.1] 系统 Toast 替代托盘气泡（不依赖托盘图标；TryShow 绝不抛出）
+            var shown = SystemToast.TryShow(_pendingForm, "dsh 更新待应用",
                 $"dsh {version} 主程序已下载。下次重启启动器后自动安装（需联网解析依赖，预计 1-2 分钟）。",
-                ToolTipIcon.Info);
+                TimeSpan.FromSeconds(15), onClick: null);
+            if (!shown)
+                Logger.Warn("pending-apply toast unavailable", ctx: new { version });
         }
-        catch { /* 气泡提示失败忽略 */ }
-    }
-
-    /// <summary>任务三：气泡关闭后自动隐藏临时托盘图标（幽灵托盘修复）。
-    /// 仅当托盘非永久驻留（无 lifetime 插件 / 非托盘模式）时隐藏。</summary>
-    private static void OnBalloonTipClosedHideIfTransient(object? s, EventArgs e)
-    {
-        try { WindowManager.Instance.HideTrayIfTransient(); } catch { }
+        catch (Exception ex)
+        {
+            Logger.Warn("pending-apply notice failed", ctx: new { error = ex.Message });
+        }
     }
 
     private static void OnPendingBalloonClicked(object? s, EventArgs e)
@@ -1542,10 +2227,10 @@ internal static class Program
         // 带 owner 的 MessageBox 会居中于 owner 且置于其上层；调用前先 Activate 把主窗提到前台，
         // 避免"询问弹窗被其他窗口遮挡/不跳到前台"（v0.4.0 用户反馈）。
         try { form.Activate(); } catch { /* 窗体已关闭则忽略 */ }
+        // [2026-08 用户反馈] 文案精简：只说"更新到哪个版本 + 是否静默安装"。
         var r = MessageBox.Show(
             form,
-            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n\n是否在后台静默下载，下次重启时自动安装？\n" +
-            "（下载在后台进行，不影响你当前使用；下次重启启动器时自动安装，需联网解析依赖，预计 1-2 分钟）",
+            $"检测到 dsh 新版本 {latest}（当前 {local}）。\n是否在后台静默下载，下次重启时自动安装？",
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
@@ -1634,6 +2319,8 @@ internal static class Program
         var buildDir = Path.Combine(staging, $"runtime-build-{latest}");
         _buildCts = new CancellationTokenSource();
         _isBuildInProgress = true;
+        _lastBuildUiText = null; // 新构建：重置 UI 合流状态（防上次构建的节流窗口吞掉首帧）
+        _lastBuildUiPercent = int.MinValue;
         try
         {
             Directory.CreateDirectory(staging);
@@ -1678,41 +2365,17 @@ internal static class Program
             var nodeExe = nodeEnv?.NodeExe;
             var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
             Logger.Info($"pnpm detection: nodeExe={nodeExe ?? "null"}, pnpmEntry={pnpmEntryJs ?? "not found"}");
-
-            // 进度回调：pnpm 用真实百分比，npm 用脉冲模式（0）
             var isPnpm = pnpmEntryJs is not null && nodeExe is not null;
 
-            // 初始进度显示
-            if (isPnpm)
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"已构建更新 5%（v{latest}）", 0.05f);
-            else
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
+            // 初始态：不确定进度（脉冲动画由 CustomTitleBar 的 marquee 定时器驱动，
+            // 无需轮询线程反复 Invalidate——旧实现 100/500ms 线程是闪烁源之一）。
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
 
-            Action<int, string>? progressCallback = (percent, phase) =>
-            {
-                var text = $"已构建更新 {percent}%（v{latest}）— {phase}";
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, text, percent / 100f);
-            };
-
-            // 启动进度追踪线程（仅 npm 模式需要，pnpm 用真实进度回调）
-            var buildStartTime = DateTime.UtcNow;
-            using var progressCts = new CancellationTokenSource();
-            System.Threading.Tasks.Task? progressTask = null;
-            if (!isPnpm)
-            {
-                // npm 脉冲模式：每 500ms 递增进度，显示日志行
-                progressTask = System.Threading.Tasks.Task.Run(async () =>
-                {
-                    while (!progressCts.Token.IsCancellationRequested)
-                    {
-                        await System.Threading.Tasks.Task.Delay(500, progressCts.Token).ConfigureAwait(false);
-                        var elapsed = (DateTime.UtcNow - buildStartTime).TotalSeconds;
-                        var percent = Math.Min(0.90f, 0.10f + (float)(elapsed / 90.0) * 0.80f);
-                        UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
-                            $"已构建更新 {(int)(percent * 100)}%（v{latest}）", percent);
-                    }
-                }, progressCts.Token);
-            }
+            // 进度回调：pnpm 真实百分比（packageId 自归一化）；文案不含相位后缀
+            // （旧实现 resolving/linking 来回翻转是"文案闪烁"的直接来源）。
+            Action<int>? progressCallback = percent =>
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
+                    $"已构建更新 {percent}%（v{latest}）", percent / 100f);
 
             if (isPnpm)
             {
@@ -1729,24 +2392,11 @@ internal static class Program
                 }
             }
 
-            // pnpm 失败回退到 npm 时，启动 npm 脉冲进度线程（无百分比，只显示动画）
-            if (!buildOk && progressTask is null)
-            {
-                progressTask = System.Threading.Tasks.Task.Run(async () =>
-                {
-                    while (!progressCts.Token.IsCancellationRequested)
-                    {
-                        await System.Threading.Tasks.Task.Delay(100, progressCts.Token).ConfigureAwait(false);
-                        // percent=0 触发脉冲模式，文本不含百分比
-                        UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
-                            $"正在构建更新（v{latest}）...", 0f);
-                    }
-                }, progressCts.Token);
-            }
-
             if (!buildOk)
             {
                 Logger.Info($"building dsh runtime with npm: {latest}");
+                // npm 模式无真实进度：保持初始脉冲态（不显示时间伪造的百分比），marquee 动画照常。
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
                 buildOk = RunNpmCommand(
                     $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
                         + GetNpmRegistryArgs(),
@@ -1757,11 +2407,6 @@ internal static class Program
                     TryDeleteDir(buildDir);
                 }
             }
-
-            // 停止进度追踪线程
-            progressCts.Cancel();
-            if (progressTask is not null)
-                try { progressTask.Wait(1000); } catch { }
 
             if (!buildOk)
             {
@@ -1805,15 +2450,8 @@ internal static class Program
             _sessionStagedVersions.Add(latest);
 
             var balloon = $"dsh {latest} 已在后台构建完成。下次重启启动器时将自动切换（秒级）。";
-            try
-            {
-                form.BeginInvoke(() =>
-                {
-                    if (WindowManager.Instance.TrayIcon is null) return;
-                    WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新已就绪", balloon, ToolTipIcon.Info);
-                });
-            }
-            catch { }
+            // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）
+            SystemToast.TryShow(form, "dsh 更新已就绪", balloon, TimeSpan.FromSeconds(8), onClick: null);
             Logger.Info($"dsh runtime build complete: {latest}",
                 ctx: new { tool = buildTool, bin = binEntry, buildDir });
 
@@ -1838,17 +2476,35 @@ internal static class Program
 
     /// <summary>任务五：更新标题栏构建状态（UI 反馈）。
     /// 线程安全：可从后台构建线程调用，自动 Invoke 到 UI 线程。
-    /// <paramref name="percent"/> 进度百分比（0.0 - 1.0），0 表示未知进度。</summary>
+    /// <paramref name="percent"/> 进度百分比（0.0 - 1.0），0 表示未知进度。
+    /// [2026-08 回归修复] UI 合流节流：pnpm ndjson 每秒数百行回调，旧实现每行都
+    /// BeginInvoke+Invalidate 整个标题栏（重绘风暴=闪烁源）。现在 150ms 节流窗口内
+    /// 且视觉状态（文本+整数百分比）未变化时直接丢弃；终态（Ready/Idle）直通。</summary>
+    private static string? _lastBuildUiText;
+    private static int _lastBuildUiPercent = int.MinValue;
+    private static long _lastBuildUiApplyTicks;
+
     private static void UpdateBuildStatus(Form form, CustomTitleBar.BuildStatus status, string text, float percent = 0f)
     {
         try
         {
             if (form.IsDisposed) return;
+            // 快路径合流（Invoke 前）：视觉状态未变且处于节流窗口 → 不排队、不重绘
+            var pctInt = (int)Math.Round(percent * 100f);
+            var isTerminal = status != CustomTitleBar.BuildStatus.Building;
+            if (!isTerminal
+                && text == _lastBuildUiText
+                && pctInt == _lastBuildUiPercent
+                && Environment.TickCount64 - _lastBuildUiApplyTicks < 150)
+                return;
             if (form.InvokeRequired)
             {
                 form.BeginInvoke(() => UpdateBuildStatus(form, status, text, percent));
                 return;
             }
+            _lastBuildUiText = text;
+            _lastBuildUiPercent = pctInt;
+            _lastBuildUiApplyTicks = Environment.TickCount64;
             if (form is DshShellForm sf && sf.TitleBar is not null)
             {
                 sf.TitleBar._buildStatus = status;
@@ -1862,11 +2518,11 @@ internal static class Program
 
     /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟。
     /// 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim 和 cmd.exe。
-    /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（逐包 resolved/downloaded/linked）。
+    /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（按 packageId 自归一化，见 UpdateProgress）。
     /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
     /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。</summary>
     private static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
-        Action<int, string>? progressCallback = null)
+        Action<int>? progressCallback = null)
     {
         try
         {
@@ -1894,11 +2550,11 @@ internal static class Program
             using var p = System.Diagnostics.Process.Start(psi);
             if (p is null) return false;
 
-            // 流式解析 ndjson 进度（不阻塞到进程结束）
-            // pnpm 的 ndjson 没有明确的"总包数"字段，用事件计数估算进度
-            var resolvedCount = 0;
-            var linkedCount = 0;
-            var estimatedTotal = 600; // dsh 依赖树约 600 个包（基于实测 ndjson 输出）
+            // 流式解析 ndjson 进度（不阻塞到进程结束）。
+            // [2026-08 回归修复] 旧实现把所有 pnpm:progress 事件混计入一个计数再除以硬编码
+            // estimatedTotal=600，很快封顶 → 进度条长期钉在 50%。改用 ShellLogic.UpdateProgress
+            // 聚合器：按 packageId 自归一化（已见/已完成两集合），真实完成占比平滑推进。
+            var aggregator = new ShellLogic.UpdateProgress.PnpmAggregator();
             var errorOutput = "";
 
             // 后台读取 stderr
@@ -1914,33 +2570,12 @@ internal static class Program
                 {
                     var line = p.StandardOutput.ReadLine();
                     if (string.IsNullOrWhiteSpace(line)) continue;
-
-                    try
+                    aggregator.OnLine(line);
+                    if (progressCallback is not null)
                     {
-                        using var doc = System.Text.Json.JsonDocument.Parse(line);
-                        var root = doc.RootElement;
-                        var name = root.TryGetProperty("name", out var n) ? n.GetString() : null;
-
-                        // 跟踪 resolved 阶段（所有 pnpm:progress 事件）
-                        if (name == "pnpm:progress")
-                            resolvedCount++;
-
-                        // 跟踪 linked 阶段
-                        if (name == "pnpm:link")
-                            linkedCount++;
-
-                        // 计算进度百分比（10%-90%）
-                        if (progressCallback is not null)
-                        {
-                            // resolved 阶段占 10%-50%，link 阶段占 50%-90%
-                            var resolvedPercent = Math.Min(1.0, (double)resolvedCount / estimatedTotal);
-                            var linkPercent = Math.Min(1.0, (double)linkedCount / estimatedTotal);
-                            var percent = 0.10 + resolvedPercent * 0.40 + linkPercent * 0.40;
-                            var phase = linkedCount > 0 ? "linking" : "resolving";
-                            progressCallback((int)(percent * 100), phase);
-                        }
+                        var (percent, hasData) = aggregator.Snapshot();
+                        if (hasData) progressCallback(percent); // 无数据回退脉冲模式（不显示伪百分比）
                     }
-                    catch { /* 非 JSON 行忽略 */ }
                 }
             }
             catch { /* 流读取中断 */ }
@@ -1972,17 +2607,10 @@ internal static class Program
 
     private static void NotifyBuildFallback(Form form, string version)
     {
-        try
-        {
-            form.BeginInvoke(() =>
-            {
-                if (WindowManager.Instance.TrayIcon is null) return;
-                WindowManager.Instance.ShowBalloonTip(8000, "dsh 更新下载完成",
-                    $"dsh {version} 主程序已下载。重启后安装时可能需要较长时间（依赖未完全构建）。",
-                    ToolTipIcon.Info);
-            });
-        }
-        catch { }
+        // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）
+        SystemToast.TryShow(form, "dsh 更新下载完成",
+            $"dsh {version} 主程序已下载。重启后安装时可能需要较长时间（依赖未完全构建）。",
+            TimeSpan.FromSeconds(8), onClick: null);
     }
 
     private static string? FindOnPath(string fileName, string? customPath = null)
@@ -2740,7 +3368,7 @@ internal static class Program
     {
         try
         {
-            var pid = FindPidListeningOn(Target.Port);
+            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
             if (pid > 0)
             {
                 _servicePid = pid;
@@ -2766,7 +3394,7 @@ internal static class Program
         {
             if (!File.Exists(ServicePidFile)) return;
             if (!int.TryParse(File.ReadAllText(ServicePidFile).Trim(), out var pid) || pid <= 0) return;
-            if (FindPidListeningOn(Target.Port) == pid)
+            if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) == pid)
             {
                 if (HttpReady())
                 {
@@ -2805,7 +3433,7 @@ internal static class Program
                 ClearServicePidFile();
                 return;
             }
-            if (FindPidListeningOn(Target.Port) != pid)
+            if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) != pid)
             {
                 // P1-3（质量治理）：记录过但未监听目标端口的 node 大概率是 PID 复用（无关进程）——
                 // 不杀（KillProcess 的端口校验也会拒绝），只清 pid 文件；进程本身不是我们管理的服务。
@@ -2850,20 +3478,12 @@ internal static class Program
     /// <summary>尽力而为：目标进程有控制台时投递 CTRL_BREAK；无控制台返回 false（走温和 taskkill）。</summary>
     private static bool TryGracefulStop(int pid)
     {
-        try
-        {
-            if (!AttachConsole((uint)pid)) return false;
-            try
-            {
-                SetConsoleCtrlHandler(IntPtr.Zero, true); // 本进程忽略 Ctrl 事件，避免波及自身
-                return GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0); // 发给共享该控制台的进程组
-            }
-            finally
-            {
-                FreeConsole();
-            }
-        }
-        catch { return false; }
+        // 安全修复：禁用 CTRL_BREAK 广播路径。
+        // GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) 的进程组 0 会广播给与目标
+        // 共享控制台的所有进程——包括 shell 自身（AttachConsole 后 shell 与目标共享
+        // 同一控制台）。实测：安全模式重启时该广播直接杀死 shell 进程，导致重启中断、
+        // 窗口消失。优雅终止的收益远小于此误杀风险，故直接返回 false，走温和 taskkill。
+        return false;
     }
 
     /// <summary>停止指定 PID（v0.3.1 P2 优雅终止 + 质量治理 P1-2/P2-10）：
@@ -2876,6 +3496,7 @@ internal static class Program
     {
         try
         {
+            Trace($"KILL: start pid={pid} targetPort={Target.Port}");
             // 质量治理 P1-2：PID 复用防护——pid 文件/端口反查得到的 PID 可能已被系统
             // 复用给无关进程，杀前必须确认它是 dsh 服务（node）进程。
             if (!ShellLogic.ProcessManagement.IsLikelyDshService(pid))
@@ -2884,19 +3505,28 @@ internal static class Program
                     ErrorCodes.E2005, new { pid });
                 return false;
             }
+            Trace($"KILL: IsLikelyDshService ok pid={pid}");
             // P1-3（质量治理）：端口归属校验——记录过的 PID 必须正在监听目标端口。
             // "node 进程但不在监听"几乎必然是 PID 复用给了无关 node（我们的服务就绪时才写
             // pid 文件，就绪即监听；进程活着却丢监听不符合 dsh 运行特征），拒绝误杀。
-            if (FindPidListeningOn(Target.Port) != pid)
+            var listeningPid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
+            Trace($"KILL: FindPidListeningOn(port)={listeningPid}");
+            if (listeningPid != pid)
             {
                 Logger.Warn($"refusing to kill pid={pid}: not listening on port {Target.Port} (possible PID reuse)",
                     ErrorCodes.E2005, new { pid, port = Target.Port });
                 return false;
             }
+            Trace($"KILL: calling TryGracefulStop pid={pid}");
             if (!TryGracefulStop(pid))
             {
+                Trace($"KILL: TryGracefulStop failed, fallback taskkill /T pid={pid}");
                 Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid + " /T")
                 { UseShellExecute = false, CreateNoWindow = true });
+            }
+            else
+            {
+                Trace($"KILL: TryGracefulStop (CTRL_BREAK) sent to pid={pid}");
             }
             // v0.4.0：等待从 1.5s 缩短至 800ms——taskkill /T 已发出即任务完成，OS 回收进程
             // 需要的时间短于此；缩短同步等待消除"关窗卡两秒"（用户反馈，曾修过同类问题）。
@@ -2923,19 +3553,90 @@ internal static class Program
         catch { return false; }
     }
 
+    // ---- 关窗/退出异步化（2026-08 用户回归：点关闭后 UI 线程同步停服务卡 1.5s+） ----
+
+    /// <summary>退出编排进行中标志（组合根会话状态，风格同 _isBuildInProgress）：
+    /// 幂等闸门 + FormClosing 收尾放行。</summary>
+    private static bool _shutdownInitiated;
+
+    /// <summary>
+    /// 关窗与托盘退出共用的异步退出编排：
+    /// ① 窗口即刻隐藏（视觉上"已关闭"，<100ms）；② SaveWindowState / 主题注销 / BootMonitor.Stop
+    /// 在 UI 线程快速完成；③ StopShellService（netstat→TcpTable 反查 + taskkill 等待）转后台线程；
+    /// ④ 清理完成后回 UI 线程 Application.Exit；⑤ 3s 看门狗兜底：taskkill 挂死也强制退出，
+    /// 绝不让用户对着已消失的窗口等。幂等（重复调用安全）。
+    /// </summary>
+    private static void BeginShutdownAsync(DshShellForm? mainForm)
+    {
+        if (_shutdownInitiated) return;
+        _shutdownInitiated = true;
+        try
+        {
+            if (mainForm is { IsDisposed: false })
+            {
+                try { SaveWindowState(mainForm); }
+                catch (Exception ex) { Logger.Warn("shutdown: save window state failed: " + ex.Message); }
+                try { mainForm.Hide(); } catch { /* 已在关闭中 */ }
+            }
+            try { WindowManager.Instance.ReleaseThemeWatcher(); } catch { }
+            BootMonitor?.Stop(); // ADR-023：壳主动收尾，监控停止（此后进程退出不再判 failed）
+            var shouldStopService = ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
+                ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell);
+            // 看门狗：消息泵仍在跑（窗口只是隐藏），Timer 到点强制结束进程
+            var watchdog = new System.Windows.Forms.Timer { Interval = 3000 };
+            watchdog.Tick += (_, _) =>
+            {
+                watchdog.Stop();
+                Logger.Warn("shutdown: cleanup exceeded 3s watchdog; forcing exit");
+                Environment.Exit(0);
+            };
+            watchdog.Start();
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    if (shouldStopService) StopShellService();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("shutdown: StopShellService threw: " + ex.Message);
+                }
+                finally
+                {
+                    Trace("shutdown: cleanup done; exiting message loop");
+                    try
+                    {
+                        if (mainForm is { IsDisposed: false }) mainForm.BeginInvoke(new Action(Application.Exit));
+                        else Environment.Exit(0);
+                    }
+                    catch
+                    {
+                        Environment.Exit(0); // 句柄已失效/封送失败：直接结束，不留僵尸进程
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // 编排自身失败也要保证能退出（透明留痕后强制结束）
+            Logger.Error("shutdown orchestration failed: " + ex.Message, ErrorCodes.E9001);
+            Environment.Exit(0);
+        }
+    }
+
     /// <summary>
     /// 停止"壳本次会话拉起的"dsh 服务：优先用内存缓存的 PID（就绪时已记录，
-    /// 关窗路径不再跑 netstat）。温和 taskkill 对无窗口进程（wscript 隐藏启动的
-    /// node）发 WM_CLOSE 无效，必须**在壳退出前同步确认**：短等待未停则立即
-    /// 强制 /f——此前强制杀在后台 Task 里延迟 1.5s，壳退出后 Task 未及执行，
-    /// 导致"跟随窗口"关窗后服务残留（issue #…）。全程限时（&lt;1s），不卡关窗。
+    /// 端口反查走 TcpTable 亚毫秒级）。温和 taskkill 对无窗口进程（wscript 隐藏启动的
+    /// node）发 WM_CLOSE 无效：短等待未停则立即强制 /f。v0.4.x 起由 BeginShutdownAsync
+    /// 在后台线程调用（窗口已隐藏，同步等待不再卡 UI）。全程限时（&lt;1s），杀不干净则
+    /// 保留 pid 文件，下次启动由 SweepStaleServicePid 认领。
     /// </summary>
     private static void StopShellService()
     {
         try
         {
             var pid = _servicePid;
-            if (pid <= 0) pid = FindPidListeningOn(Target.Port); // 兜底：内存没有时再查
+            if (pid <= 0) pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port); // 兜底：内存没有时再查
             if (pid <= 0)
             {
                 ClearServicePidFile();
@@ -2948,9 +3649,9 @@ internal static class Program
                 // 等待，确保关窗后 node 不残留、不占端口。等待上限 1s（原 2s）：TIME_WAIT 由
                 // SO_REUSEADDR 自动收敛，超过即记日志不阻塞关窗（消除"关窗卡两秒"）。
                 var deadline = DateTime.UtcNow.AddSeconds(1);
-                while (DateTime.UtcNow < deadline && FindPidListeningOn(Target.Port) > 0)
+                while (DateTime.UtcNow < deadline && ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
                     Thread.Sleep(80);
-                if (FindPidListeningOn(Target.Port) > 0)
+                if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
                     Logger.Warn($"service pid={pid} killed but port {Target.Port} still occupied",
                         ErrorCodes.E2005, new { pid, port = Target.Port });
                 else
@@ -2964,32 +3665,10 @@ internal static class Program
         }
     }
 
-    /// <summary>按端口找出监听进程 PID（netstat 解析）；找不到返回 0。</summary>
-    private static int FindPidListeningOn(int port)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("netstat", "-ano -p tcp")
-            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
-            using var p = Process.Start(psi);
-            if (p is null) return 0;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(3000);
-            var token = ":" + port + " ";
-            foreach (var line in output.Split('\n'))
-            {
-                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase)) continue;
-                if (!line.Contains(token)) continue;
-                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length > 0 && int.TryParse(parts[^1], out var pid)) return pid;
-            }
-        }
-        catch
-        {
-            // 忽略
-        }
-        return 0;
-    }
+    // FindPidListeningOn（netstat -ano 子进程解析）已删除：所有端口反查统一走
+    // ShellLogic.ProcessManagement.GetProcessIdByPort（GetExtendedTcpTable 亚毫秒级，
+    // netstat 仅其内部兜底）。2026-08 关窗卡顿修复：KillProcess/StopShellService 的
+    // 轮询循环此前每 80ms 拉起一次 netstat 子进程，是关窗同步等待的主要耗时来源。
 
     // 托盘图标已由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
     // 壳只读取配置，不硬编码托盘逻辑。
@@ -3007,7 +3686,13 @@ internal static class Program
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         // e2e 探针模式（E2EMode）：轮询上限 20s 自动结束（不弹状态窗、不无限等服务）。
         // 否则无头 CI 上服务未就绪时会一直转圈，探针路径卡死。
-        for (var i = 0; i < (e2eMode ? 20 : 180); i++)
+        // 首次运行（dsh 未安装，服务只能经 npx 网络下载启动）放宽等待预算 180s → 360s：
+        // 让"慢但能成功的首次下载+启动"跑完，避免被误判超时（SelfContained/全局安装则维持 180s）。
+        var networkFallback = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source
+            == DshWeb.Domain.DshSource.NpxCache;
+        var pollBudget = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(networkFallback);
+        Trace($"poll: networkDownloadFallback={networkFallback}, budget={pollBudget}s");
+        for (var i = 0; i < (e2eMode ? 20 : pollBudget); i++)
         {
             if (token.IsCancellationRequested) return "canceled";
             if ((DateTime.UtcNow - lastLogCheck).TotalSeconds >= 5)
@@ -3058,7 +3743,7 @@ internal static class Program
             // 尚未就绪说明在下载/初始化，低频即可，避免空转）。
             Thread.Sleep(i < 8 ? 200 : 1000);
         }
-        Trace("poll: timeout after 180s");
+        Trace($"poll: timeout after {pollBudget}s");
         return "timeout";
     }
 

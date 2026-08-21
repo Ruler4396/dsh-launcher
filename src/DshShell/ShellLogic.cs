@@ -268,6 +268,358 @@ public static class ShellLogic
             }
             return false;
         }
+
+        /// <summary>默认就绪轮询预算（秒）：本地直启 dsh 服务（SelfContained/全局安装）的等待上限。</summary>
+        internal const int DefaultPollBudgetSeconds = 180;
+
+        /// <summary>网络下载兜底（npx）路径的就绪轮询预算（秒）：首次运行需联网下载 dsh 包，
+        /// 耗时远超本地直启，放宽预算让"慢但最终能成功的首次下载+启动"跑完，而不是被误判超时。</summary>
+        internal const int NetworkFallbackPollBudgetSeconds = 360;
+
+        /// <summary>
+        /// 服务就绪轮询预算（秒）。
+        /// <paramref name="networkDownloadFallback"/> = true 表示服务通过 npx/网络下载启动
+        /// （本地未安装 dsh）：首次需联网拉包，放宽等待上限（180s → 360s）；否则保持 180s。
+        /// </summary>
+        internal static int GetPollBudgetSeconds(bool networkDownloadFallback)
+            => networkDownloadFallback ? NetworkFallbackPollBudgetSeconds : DefaultPollBudgetSeconds;
+    }
+
+    /// <summary>
+    /// 启动健康探针的纯决策逻辑（ADR-023，BootSignature 单点配置）。
+    ///
+    /// 崩溃检测采用"多源主动拉取融合"：壳坐在进程追踪者/页面宿主/日志读者/HTTP 探测者
+    /// 四个观察位，不依赖 dsh 主动上报。本类只承载**可纯函数化**的部分：
+    /// - 签名档（BootProfile）：good_symbol 探针表达式、bad_signatures、grace_ms、
+    ///   probe_interval_ms、absent_threshold 的唯一定义点（DSH_BOOT_SIGNATURES JSON 可整体覆盖）；
+    /// - 页面探针结果求值（EvaluatePageProbe）：good / 坏签名命中 / 缺席 / 无效 四分类；
+    /// - 日志层签名表（MatchBootErrorSignature）：插件/boot 错误标志。
+    /// 有状态的融合状态机见 Lifecycle/BootHealthMonitor.cs（依赖注入探针，Headless 可测）。
+    /// </summary>
+    public static class BootGuard
+    {
+        /// <summary>启动健康签名档。全部字段有安全默认值；DSH_BOOT_SIGNATURES 可覆盖。</summary>
+        public sealed record BootProfile
+        {
+            /// <summary>
+            /// 好符号 JS 表达式：求值为真 ⇒ 页面 boot 成功。
+            /// 析取式覆盖两代 dsh 引导链（2026-08 E2008 无插件误报回归修复）：
+            /// - 旧版（≤0.1.0-rc.7）：页面注入 window.__DSH_BOOT__ = { version }；
+            /// - 新版（≥0.1.1-rc.2）：内联脚本注入 window.__ModuleLoader__ 队列门面，
+            ///   dsh-client-modules boot 完成时将其 mode 置 "live"（client.js: target.mode="live"）。
+            /// 任一支命中即 Healthy；两支都缺席才计入 AbsentThreshold。
+            /// </summary>
+            public string GoodSymbol { get; init; } =
+                "(window.__DSH_BOOT__&&window.__DSH_BOOT__.version)"
+                + "||(window.__ModuleLoader__&&window.__ModuleLoader__.mode===\"live\")";
+
+            /// <summary>坏签名列表：页面 DOM 文本/错误原文命中任一 ⇒ failed（一次即判）。</summary>
+            public IReadOnlyList<string> BadSignatures { get; init; } = new[]
+            {
+                "bootstrap facade is missing",
+                "plugin fatal",
+                "dsh-boot-failed",
+            };
+
+            /// <summary>NavigationCompleted 后的静默宽限（毫秒）：慢启动不误报的第一道闸。</summary>
+            public int GraceMs { get; init; } = 12000;
+
+            /// <summary>页面探针间隔（毫秒）。</summary>
+            public int ProbeIntervalMs { get; init; } = 2000;
+
+            /// <summary>连续缺席阈值：grace 后连续 N 次好符号缺席 ⇒ failed。</summary>
+            public int AbsentThreshold { get; init; } = 5;
+
+            /// <summary>日志层附加签名（在内置表之上追加；沙盒注入假签名用）。</summary>
+            public IReadOnlyList<string> ExtraLogSignatures { get; init; } = Array.Empty<string>();
+
+            /// <summary>由 good_symbol 组装的单点页面探针脚本：返回 JSON {good,text,err}。
+            /// err 取 window.__dshLastError（WebViewManager 在文档创建时注入的错误收集器），
+            /// 用于"捕获异常原文"。脚本自身 try/catch——探针永不因页面异常而抛错。</summary>
+            public string BuildProbeScript()
+                => "(function(){try{var t=(document.body&&document.body.innerText)?document.body.innerText.slice(0,2000):'';"
+                 + "var e=(window.__dshLastError&&window.__dshLastError.message)||'';"
+                 + $"return JSON.stringify({{good:!!({GoodSymbol}),text:t,err:e}});}}catch(x)"
+                 + "{return JSON.stringify({good:false,text:'',err:'probe-error:'+x.message});}})()";
+        }
+
+        /// <summary>默认签名档（单例：无环境覆盖时的唯一真相）。</summary>
+        internal static readonly BootProfile DefaultProfile = new();
+
+        /// <summary>
+        /// 解析生效签名档：DSH_BOOT_SIGNATURES（JSON）非空时逐字段覆盖默认值；
+        /// 整体解析失败或字段类型非法 → 该字段保持默认（绝不因配置错误而失去监控）。
+        /// </summary>
+        internal static BootProfile ResolveProfile(string? envJson)
+        {
+            if (string.IsNullOrWhiteSpace(envJson)) return DefaultProfile;
+            var p = DefaultProfile;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(envJson);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return p;
+                if (TryGetString(root, "good_symbol", out var gs)) p = p with { GoodSymbol = gs };
+                if (TryGetStringArray(root, "bad_signatures", out var bad)) p = p with { BadSignatures = bad };
+                if (TryGetInt(root, "grace_ms", out var grace)) p = p with { GraceMs = grace };
+                if (TryGetInt(root, "probe_interval_ms", out var interval)) p = p with { ProbeIntervalMs = interval };
+                if (TryGetInt(root, "absent_threshold", out var threshold)) p = p with { AbsentThreshold = threshold };
+                if (TryGetStringArray(root, "log_error_signatures", out var logs)) p = p with { ExtraLogSignatures = logs };
+                return p;
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+            {
+                return p; // 配置损坏 → 全默认（预期内操作失败，调用方记 Warn）
+            }
+        }
+
+        private static bool TryGetString(System.Text.Json.JsonElement root, string name, out string value)
+        {
+            value = "";
+            if (!root.TryGetProperty(name, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.String) return false;
+            var s = v.GetString();
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            value = s;
+            return true;
+        }
+
+        private static bool TryGetInt(System.Text.Json.JsonElement root, string name, out int value)
+        {
+            value = 0;
+            // ValueKind 守卫必须先行：TryGetInt32 对非 Number 元素抛 InvalidOperationException
+            if (!root.TryGetProperty(name, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.Number) return false;
+            return v.TryGetInt32(out value);
+        }
+
+        private static bool TryGetStringArray(System.Text.Json.JsonElement root, string name, out IReadOnlyList<string> value)
+        {
+            value = Array.Empty<string>();
+            if (!root.TryGetProperty(name, out var v) || v.ValueKind != System.Text.Json.JsonValueKind.Array) return false;
+            var list = new List<string>();
+            foreach (var item in v.EnumerateArray())
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String && item.GetString() is { Length: > 0 } s)
+                    list.Add(s);
+            value = list;
+            return true;
+        }
+
+        /// <summary>页面探针结果的四分类。</summary>
+        public enum PageProbeKind
+        {
+            /// <summary>好符号出现 → healthy（停止探针）。</summary>
+            GoodSymbol,
+            /// <summary>坏签名命中 → failed（一次即判，附原文）。</summary>
+            BadSignature,
+            /// <summary>有效结果但好符号缺席 → 计入 absent_threshold。</summary>
+            Absent,
+            /// <summary>无效结果（null/解析失败）→ 只 Warn，绝不参与判定（误报防护）。</summary>
+            Invalid,
+        }
+
+        /// <summary>页面探针求值结果（kind + 命中详情/原文摘录）。</summary>
+        public sealed record PageProbeResult(PageProbeKind Kind, string? Detail)
+        {
+            public static readonly PageProbeResult Invalid = new(PageProbeKind.Invalid, null);
+        }
+
+        /// <summary>
+        /// 求值 ExecuteScriptAsync 返回的 JSON（{good:bool,text:string,err:string}）：
+        /// **坏签名优先于好符号**——dsh 的 boot 标志在启动早期设置、插件在其后才加载，
+        /// 致命插件错误可以发生在 __DSH_BOOT__ 已存在的页面上；若好符号一票遮蔽，
+        /// 崩溃会被静默掩盖（S22 实测教训）。顺序：text/err 命中坏签名 → BadSignature
+        /// （detail=原文摘录）→ good=true → GoodSymbol → 否则 Absent；
+        /// null/空/解析失败 → Invalid（探针异常路径，不判死）。
+        /// </summary>
+        internal static PageProbeResult EvaluatePageProbe(string? scriptJson, BootProfile profile)
+        {
+            if (string.IsNullOrWhiteSpace(scriptJson) || scriptJson == "undefined")
+                return PageProbeResult.Invalid;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(scriptJson);
+                var root = doc.RootElement;
+                System.Text.Json.JsonDocument? innerDoc = null;
+                try
+                {
+                    if (root.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        // [INVARIANT] ExecuteScriptAsync 双重编码：探针脚本 return JSON.stringify(...)
+                        // 时，返回值本身是字符串，SDK 再做一次 JSON 编码 → 结果是字符串字面量，
+                        // 必须解一层才能拿到 {good,text,err}（S22 实测教训）。
+                        innerDoc = System.Text.Json.JsonDocument.Parse(root.GetString() ?? "");
+                        root = innerDoc.RootElement;
+                    }
+                    if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                        return PageProbeResult.Invalid;
+                    var good = root.TryGetProperty("good", out var g) && g.ValueKind == System.Text.Json.JsonValueKind.True;
+                    var text = root.TryGetProperty("text", out var t) && t.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? t.GetString() ?? "" : "";
+                    var err = root.TryGetProperty("err", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? e.GetString() ?? "" : "";
+
+                    // 坏签名匹配顺序：错误原文优先（更精确）。证据携带**异常原文**（截断），
+                    // 不只带命中的签名——"捕获原文"是 S22 验收的硬要求。
+                    if (err.Length > 0 && MatchBadSignature(err, profile.BadSignatures) is { } hitErr)
+                        return new PageProbeResult(PageProbeKind.BadSignature,
+                            "err[" + hitErr + "]=" + Truncate(err, 300));
+                    if (MatchBadSignature(text, profile.BadSignatures) is { } hitText)
+                        return new PageProbeResult(PageProbeKind.BadSignature,
+                            "dom[" + hitText + "]=" + Truncate(text, 300));
+                    if (good) return new PageProbeResult(PageProbeKind.GoodSymbol, null);
+                    return new PageProbeResult(PageProbeKind.Absent, err.Length > 0 ? "err=" + Truncate(err, 200) : null);
+                }
+                finally { innerDoc?.Dispose(); }
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException)
+            {
+                return PageProbeResult.Invalid;
+            }
+        }
+
+        /// <summary>文本是否命中任一坏签名；命中返回该签名（OrdinalIgnoreCase 包含匹配）。</summary>
+        internal static string? MatchBadSignature(string text, IReadOnlyList<string> signatures)
+        {
+            foreach (var s in signatures)
+                if (!string.IsNullOrWhiteSpace(s) && text.Contains(s, StringComparison.OrdinalIgnoreCase))
+                    return s;
+            return null;
+        }
+
+        /// <summary>截断过长证据（防 safe-mode-state.json 被整页 DOM 文本撑爆）。</summary>
+        internal static string Truncate(string s, int max)
+            => s.Length <= max ? s : s.Substring(0, max) + "…(truncated)";
+
+        /// <summary>日志层内置签名表（就绪后监控用；与启动期 StartupErrorMarkers 分表，
+        /// 避免把启动期的良性告警带进运行期判定）。**专属签名在前**：一行同时命中多条时
+        /// 返回更精确的插件/boot 签名作为证据。命中返回签名，否则 null。</summary>
+        private static readonly string[] BootErrorMarkers =
+        {
+            "plugin load failed", "plugin fatal",
+            "bootstrap facade is missing",
+            "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND",
+            "Cannot find module",
+            "npm ERR", "npm error",
+            "EACCES",
+            "FATAL ERROR",
+        };
+
+        /// <summary>
+        /// 壳自写日志条目识别：统一日志是壳 JSON Lines 与服务原始输出混排，壳自己的事件行
+        /// （如 E1008 插件崩溃捕获——该事件已由页面/消息通道原生处理）若被日志层再次判定，
+        /// 会造成跨层重复触发（实测 S22 教训）。契约：壳的 Warn/Error 条目必带 "code":"E####"
+        /// 字段；服务原始输出不会恰好长成这样。返回 true = 壳自写行，日志层跳过。
+        /// </summary>
+        internal static bool IsShellAuthoredLogEntry(string line)
+        {
+            if (!line.StartsWith('{')) return false;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && doc.RootElement.TryGetProperty("code", out var c)
+                    && c.ValueKind == System.Text.Json.JsonValueKind.String
+                    && System.Text.RegularExpressions.Regex.IsMatch(
+                        c.GetString() ?? "", "^E\\d{4}$");
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 日志行是否命中 boot 错误签名（内置表 + DSH_BOOT_SIGNATURES.log_error_signatures 追加项）。
+        /// 命中返回首个命中的签名（作为证据），否则 null。
+        /// </summary>
+        internal static string? MatchBootErrorSignature(string line, BootProfile profile)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return null;
+            foreach (var marker in BootErrorMarkers)
+                if (line.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                    return marker;
+            return MatchBadSignature(line, profile.ExtraLogSignatures);
+        }
+    }
+
+    /// <summary>
+    /// 更新构建进度纯逻辑（2026-08 用户回归修复：进度长期钉 50% + 文案闪烁）。
+    /// 契约（ContractTests.UpdateProgress*）：
+    /// - pnpm ndjson 按 packageId 自归一化，不依赖硬编码包总数；
+    /// - 百分比单调不回退、封顶 90、下限 10；
+    /// - 解析不出任何 packageId 时 HasData=false（调用方回退脉冲模式，绝不显示伪百分比）。
+    /// </summary>
+    public static class UpdateProgress
+    {
+        /// <summary>
+        /// pnpm --reporter=ndjson 安装事件聚合器。旧实现把所有 pnpm:progress 事件
+        /// （resolving/fetching/extracting…）混计为一个计数再除以硬编码 600，很快封顶
+        /// → 进度条卡在 50% 直到结尾。新实现按 packageId 维护「已见/已完成」两集合：
+        /// percent = 10 + 80 × done/max(1, seen)，随真实完成占比平滑推进。
+        /// </summary>
+        public sealed class PnpmAggregator
+        {
+            private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
+            private readonly HashSet<string> _done = new(StringComparer.Ordinal);
+            private int _lastPercent;
+
+            /// <summary>消费一行 ndjson 输出。非 JSON / 无 packageId 的行安全忽略。</summary>
+            public void OnLine(string? line)
+            {
+                if (string.IsNullOrWhiteSpace(line)) return;
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+                    var pkgId = root.TryGetProperty("packageId", out var p)
+                        && p.ValueKind == System.Text.Json.JsonValueKind.String
+                        ? p.GetString() : null;
+                    if (string.IsNullOrEmpty(pkgId)) return;
+                    _seen.Add(pkgId);
+                    // 完成判定：pnpm:link 事件，或 progress 事件的 status 推进到 link 阶段
+                    var name = root.TryGetProperty("name", out var n)
+                        && n.ValueKind == System.Text.Json.JsonValueKind.String ? n.GetString() : null;
+                    var status = root.TryGetProperty("status", out var s)
+                        && s.ValueKind == System.Text.Json.JsonValueKind.String ? s.GetString() : null;
+                    if (name == "pnpm:link"
+                        || (status is not null && status.Contains("link", StringComparison.OrdinalIgnoreCase)))
+                        _done.Add(pkgId);
+                }
+                catch (System.Text.Json.JsonException) { /* 非 JSON 行：忽略 */ }
+            }
+
+            /// <summary>当前快照：(百分比 0/10-90, 是否有真实数据)。单调不回退。</summary>
+            public (int Percent, bool HasData) Snapshot()
+            {
+                if (_seen.Count == 0) return (0, false);
+                var pct = 10 + (int)Math.Round(80.0 * _done.Count / Math.Max(1, _seen.Count));
+                pct = Math.Min(90, Math.Max(10, pct));
+                if (pct > _lastPercent) _lastPercent = pct; // 分母增长可能令比值短暂回落：钳制单调
+                return (_lastPercent, true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// dsh 服务启动参数拼装（纯函数，契约测试锁定）。
+    /// [2026-08 用户回归修复] SelfContained node.exe 直启路径此前漏传 --no-open：
+    /// dsh web 默认 ShellExecute 打开系统浏览器，壳自管 WebView2 窗口并不需要；
+    /// start-dsh.vbs 三条路径均显式带 --no-open，唯独该分支遗漏 → 安装 SelfContained
+    /// 运行时后每次冷启动都会弹出浏览器窗口。统一在此拼装保证两条路径一致。
+    /// </summary>
+    public static class ServiceLaunch
+    {
+        /// <summary>
+        /// 构造 node.exe 直启 dsh 的完整参数串。
+        /// <paramref name="safeProfileName"/> 非 null 时走根级 --profile（安全模式 ADR-022，
+        /// web 子命令与 --profile 互斥）；null 时为常规 web 子命令。两分支均含 --no-open。
+        /// </summary>
+        public static string BuildSelfContainedArgs(string binJs, int port, string? safeProfileName)
+            => safeProfileName is null
+                ? $"\"{binJs}\" web --host 127.0.0.1 --port {port} --no-open"
+                : $"\"{binJs}\" " + string.Join(" ",
+                      Domain.SafeProfileBuilder.BuildSafeProfileArguments(safeProfileName, port))
+                  + " --no-open";
     }
 
     /// <summary>运行时配置解析：目标地址端口、生命周期模式、WebView2 版本。</summary>
@@ -667,6 +1019,28 @@ public static class ShellLogic
             return pid > 0 ? pid : PidByPortViaNetstat(port);
         }
 
+        /// <summary>
+        /// 拆分命令行为 (exe, args)：带引号的可执行路径取首对引号内内容，否则取首个空格前段。
+        /// 供 DSH_SERVICE_CMD 测试钩子直接 ProcessStartInfo(exe, args) 启动——ADR-021 禁止
+        /// cmd.exe 包装，此纯函数让"自定义服务命令"同样走 node.exe 直启路径。无法拆分返回 null。
+        /// </summary>
+        internal static (string Exe, string Args)? SplitCommandLine(string? command)
+        {
+            if (string.IsNullOrWhiteSpace(command)) return null;
+            var trimmed = command.Trim();
+            if (trimmed.StartsWith('"'))
+            {
+                var close = trimmed.IndexOf('"', 1);
+                if (close < 0) return null; // 引号不闭合 → 拒绝（响亮失败优于误启动）
+                var exe = trimmed.Substring(1, close - 1);
+                var args = trimmed.Substring(close + 1).TrimStart();
+                return exe.Length == 0 ? null : (exe, args);
+            }
+            var space = trimmed.IndexOf(' ');
+            if (space < 0) return (trimmed, "");
+            return (trimmed.Substring(0, space), trimmed.Substring(space + 1).TrimStart());
+        }
+
         /// <summary>强杀进程树（taskkill /PID &lt;pid&gt; /T /F）：连同挂死的 cmd / npx 外壳一并结束。
         /// 返回是否已发起（taskkill 执行成功）；端口释放由调用方轮询确认。</summary>
         internal static bool KillProcessTree(int pid)
@@ -994,5 +1368,31 @@ public static class ShellLogic
         internal static bool IsOurShortcutTarget(string? targetPath) =>
             !string.IsNullOrWhiteSpace(targetPath)
             && string.Equals(Path.GetFileName(targetPath), "DshWeb.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 系统通知（Toast）纯策略：AUMID 与通知 XML 构造。WinRT 交互（注册/发送）在
+    /// Windows/SystemToast.cs，此处只放可契约测试的纯函数。
+    /// [v0.4.1] 更新类通知从托盘气泡迁移到系统 Toast——不再依赖 NotifyIcon 托盘图标
+    /// （此前非托盘常驻模式下托盘为 null，更新气泡被静默丢弃）。
+    /// </summary>
+    public static class ToastPolicy
+    {
+        /// <summary>未打包应用的 AUMID：与 HKCU\SOFTWARE\Classes\AppUserModelId 注册键同名。
+        /// 固定值保证系统按同一来源聚合通知（设置里可按此名关闭）。</summary>
+        public const string ToastAumid = "dsh-launcher";
+
+        /// <summary>
+        /// 构造 ToastText02 模板 XML（标题 + 正文两行）。title/body 做 XML 转义，
+        /// 防止版本号等外部输入破坏结构（npm 版本串理论可控，但防御性转义零成本）。
+        /// </summary>
+        public static string BuildToastXml(string title, string body)
+        {
+            var esc = System.Security.SecurityElement.Escape;
+            return "<toast><visual><binding template=\"ToastText02\">"
+                 + $"<text id=\"1\">{esc(title ?? "")}</text>"
+                 + $"<text id=\"2\">{esc(body ?? "")}</text>"
+                 + "</binding></visual></toast>";
+        }
     }
 }
