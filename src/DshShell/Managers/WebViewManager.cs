@@ -46,6 +46,46 @@ public sealed class WebViewManager : IWebViewManager
     /// 组合根接线：弹模态询问用户 → 安全模式重启 dsh 服务。</summary>
     public static event Action<string>? PluginCrashDetected;
 
+    /// <summary>最近一次插件崩溃被检测到的时间（UTC）。安全模式双重观测用：
+    /// 验证"崩溃签名消失"＝重装后的观察窗口内没有再收到崩溃消息。</summary>
+    public static DateTime LastPluginCrashUtc { get; private set; } = DateTime.MinValue;
+
+    /// <summary>CDP Runtime.exceptionThrown 原文捕获事件（ADR-023 精确层：只采集不判定）。
+    /// 参数为 DevTools 协议事件参数 JSON。仅主窗 WebView2 触发。</summary>
+    public static event Action<string>? CdpExceptionCaptured;
+
+    /// <summary>
+    /// 在主窗 WebView2 的 UI 线程执行脚本并返回原始 JSON 结果（ADR-023 页面层探针执行器）。
+    /// 控件不可用/已释放 → null（调用方按"探针无效"处理，绝不判死）；线程封送经 Control.BeginInvoke。
+    /// [INVARIANT] CoreWebView2 属性访问本身要求 UI 线程——守卫只能摸 IsDisposed/IsHandleCreated，
+    /// 真正的 CoreWebView2 判空必须在封送后的 UI 线程内做（S22 实测教训）。
+    /// </summary>
+    public static Task<string?> ExecuteScriptOnMainWebAsync(string script)
+    {
+        var web = MainWeb;
+        if (web is null || web.IsDisposed || !web.IsHandleCreated)
+        {
+            Logger.Info("[boot-monitor] probe exec: main web unavailable (null/disposed/no handle)");
+            return Task.FromResult<string?>(null);
+        }
+        var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // [INVARIANT] 必须 await 而非 GetResult()：ExecuteScriptAsync 的完成回调要经 UI 线程
+        // 消息循环投递，在 UI 线程上同步阻塞等待它 = 自我死锁（S22 实测教训）。
+        async void Run()
+        {
+            try
+            {
+                var core = web.CoreWebView2; // 此刻已在 UI 线程，访问安全
+                if (core is null || web.IsDisposed) { tcs.TrySetResult(null); return; }
+                tcs.TrySetResult(await core.ExecuteScriptAsync(script));
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); } // 异常全部入 tcs，绝不逃逸 async void
+        }
+        try { web.BeginInvoke(new Action(Run)); }
+        catch (Exception ex) { tcs.TrySetException(ex); } // 控件句柄未创建/已释放
+        return tcs.Task;
+    }
+
     /// <summary>页面恢复成功后复位崩溃计数（P1-3），由导航完成回调调用。</summary>
     public static void ResetCrashCount() => Interlocked.Exchange(ref _crashCount, 0);
 
@@ -249,6 +289,19 @@ public sealed class WebViewManager : IWebViewManager
         // 仅对主窗 WebView2 注入监听器（ReferenceEquals 门控），弹窗不触发。
         if (ReferenceEquals(web, MainWeb))
         {
+            // ADR-023 页面层前置：文档创建即注入错误收集器（先于页面脚本执行），
+            // 把 uncaught error / unhandled rejection 原文存入 window.__dshLastError，
+            // 供 BootSignature 探针脚本带回"异常原文"证据。只采集，不判定。
+            // await：组合根在 InitializeAsync 返回后立即 Navigate，必须保证收集器先注册。
+            try
+            {
+                await web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+                    "window.__dshLastError=null;"
+                    + "window.addEventListener('error',function(e){window.__dshLastError={message:(e&&e.message)||String(e)};});"
+                    + "window.addEventListener('unhandledrejection',function(e){window.__dshLastError={message:String(e&&(e.reason||e))};});");
+            }
+            catch (Exception ex) { Logger.Warn("boot error collector injection failed: " + ex.Message); }
+
             web.CoreWebView2.WebMessageReceived += (_, e) =>
             {
                 try
@@ -261,12 +314,31 @@ public sealed class WebViewManager : IWebViewManager
                     {
                         Logger.Error($"plugin crash detected via webview message: {msg}",
                             ErrorCodes.E1008, new { source = "webview-message" });
+                        // 记录最近崩溃时间（安全模式双重观测：签名消失判定用）
+                        LastPluginCrashUtc = DateTime.UtcNow;
                         // 广播安全模式触发事件（由组合根 LauncherApp 接线处理）
                         PluginCrashDetected?.Invoke(msg);
                     }
                 }
                 catch (Exception ex) { Logger.Warn("webview message handling failed: " + ex.Message); }
             };
+
+            // ADR-023 精确层（可选）：CDP Runtime.exceptionThrown 原文采集——只入库不判定，
+            // 判定权完全在四层主动探针。Runtime.enable 失败仅 Warn（精确层是尽力而为的增强）。
+            try
+            {
+                var receiver = web.CoreWebView2.GetDevToolsProtocolEventReceiver("Runtime.exceptionThrown");
+                // SDK 1.0.4129：receiver 仅暴露 DevToolsProtocolEventReceived 事件（订阅即注册）。
+                // await Runtime.enable：组合根在 InitializeAsync 返回后立即 Navigate，
+                // 必须保证精确层先激活，否则首屏抛出的异常会被错过（S22 实测教训）。
+                await web.CoreWebView2.CallDevToolsProtocolMethodAsync("Runtime.enable", "{}");
+                receiver.DevToolsProtocolEventReceived += (_, e) =>
+                {
+                    try { CdpExceptionCaptured?.Invoke(e.ParameterObjectAsJson ?? ""); }
+                    catch (Exception ex) { Logger.Warn("cdp exception capture handling failed: " + ex.Message); }
+                };
+            }
+            catch (Exception ex) { Logger.Warn("cdp exception receiver setup failed (precise layer disabled): " + ex.Message); }
         }
     }
 

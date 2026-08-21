@@ -171,6 +171,57 @@ graph TD
 
 ---
 
+## 5. 启动崩溃检测因果链（ADR-023 多源主动拉取融合）
+
+壳坐四个观察位 + CDP 精确采集，`BootHealthMonitor` 三态状态机（Pending/Healthy/Failed）融合判定，failed → 安全模式询问（每会话一次）→ ADR-022 两级阶梯。
+
+```mermaid
+graph TD
+    A["EnsureServiceAndRuntime<br/>服务就绪"] --> B["StartBootHealthMonitor()<br/>BootSignatures = BootGuard.ResolveProfile(DSH_BOOT_SIGNATURES)"]
+    B --> C["LogLoopAsync: 字节偏移增量扫签名表<br/>(IsShellAuthoredLogEntry 过滤壳自写行)"]
+    B --> D["HttpLoopAsync: 轮询 Target.Url<br/>连续 ≥2 miss 才判死"]
+    B --> E["AttachProcess(pid)<br/>Process.Exited 订阅; exit 0 忽略"]
+    F["NavigationCompleted"] --> G["OnNavigationCompleted()<br/>grace 后按 interval 探针"]
+    G --> H["ExecuteScriptOnMainWebAsync<br/>UI 线程 await（禁 GetResult 死锁）"]
+    H --> I["EvaluatePageProbe<br/>解一层双重编码; 坏签名 > 好符号"]
+    I -->|"BadSignature"| J["Report(Page, E2008)"]
+    I -->|"GoodSymbol"| K["MarkHealthy<br/>只停页面探针"]
+    I -->|"Absent ×threshold"| J
+    C -->|"命中"| L["Report(Log, E2003)"]
+    D -->|"回死"| M["Report(Http, E2004)"]
+    E -->|"非零退出"| N["Report(Process, E2007)"]
+    L & J & M & N --> O["Failed 恰好一次<br/>Failed 事件"]
+    P["CDP Runtime.exceptionThrown"] -->|"_earlyEvidence 缓冲<br/>或直接并入 verdict"| O
+    O --> Q["PersistBootFailureEvidence<br/>safe-mode.json lastFailure (原子写)"]
+    O --> R["ExportBootDiagnostics<br/>diagnostics/boot-failure-*.zip"]
+    O --> S["AskEnterSafeModeOnce<br/>闸门1: TryConsumeSessionPrompt<br/>闸门2: DSH_TEST_SAFE_MODE_ANSWER / NoUiMode"]
+    S -->|"yes"| T["RunSafeModeLadder<br/>Suspend() → Tier1 → Tier2 → ResumeAfterRestart"]
+    S -->|"no"| U["本会话不再询问"]
+    T -.->|"吸收态证据追加"| Q2["VerdictUpdated → 重写融合视图"]
+```
+
+### False Positives 陷阱（误报防护验收 Task 3）
+
+| 陷阱 | 场景 | 拦截方式 |
+|---|---|---|
+| 探针异常 | 服务死亡瞬间 WebView 断连，ExecuteScriptAsync 抛错 | catch → Warn，异常轮不计缺席、绝不判 failed |
+| 瞬时 HTTP 抖动 | 端口瞬断/代理抖动 | 连续 ≥2 次 miss 才判死；单次 miss 清零计数 |
+| 壳主动重启窗口 | 安全模式 Tier 切换重启服务 | `Suspend()` 屏蔽全部判定并清零计数器，`ResumeAfterRestart` 重挂进程层 |
+| 慢启动 | dsh 8s 后才就绪好符号 | grace_ms + absent_threshold 预算（S23：4s+8×1s=12s > 8s 零误报） |
+| 旧日志误判 | 上次崩溃的日志残留 | 日志层从监控起点的字节偏移增量扫描，旧内容不参与判定 |
+| 壳自写行误判 | E1008 插件崩溃捕获行含坏签名文本 | `IsShellAuthoredLogEntry`：JSON 行带 `"code":"E####"` 契约字段 → 跳过 |
+| 好符号遮蔽真崩溃 | boot 标志先设、插件后崩 | 坏签名优先于好符号判定 |
+| exit code 0 | 壳主动停止服务 | 进程层忽略 exit 0（降级 Warn） |
+
+### 观察证据落点
+
+- 统一日志：`[boot-monitor]` 前缀全层轨迹（armed/probe round/FAILED/HEALTHY/evidence appended）
+- `safe-mode.json`：`lastFailure.{utc,code,summary,layers[]}`（四层融合视图，VerdictUpdated 重写）
+- `diagnostics/boot-failure-*.zip`：log-warn.txt/state.txt/errors.txt
+- 沙盒验收：`sandbox/verify-bootmonitor.ps1 S20–S24`
+
+---
+
 ## 如何使用本地图
 
 ### 修 Bug 流程

@@ -25,6 +25,8 @@ internal sealed class CustomTitleBar : Panel
     internal volatile BuildStatus _buildStatus = BuildStatus.Idle;
     /// <summary>构建进度文本（如 "已构建更新 50%（v0.1.0-rc.7）"）。</summary>
     internal volatile string _buildProgressText = "";
+    /// <summary>窗口标题（安全模式时为 "DeepSeek Harness（安全模式）"，ADR-022 Task 4 横幅）。</summary>
+    internal volatile string _titleText = "DeepSeek Harness";
     /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
     internal volatile float _buildProgressPercent = 0f;
     /// <summary>脉冲动画定时器（替代 BeginInvoke(Invalidate) 避免无限闪烁）。</summary>
@@ -43,6 +45,11 @@ internal sealed class CustomTitleBar : Panel
     {
         _owner = owner;
         _dark = dark;
+        // [2026-08 回归修复] 双缓冲：构建进度高频 Invalidate 时旧实现每帧先擦背景再绘制
+        // （WM_ERASEBKGND + OnPaint 两段），产生可见闪烁。三样式联用把绘制合并到内存位图。
+        SetStyle(ControlStyles.UserPaint
+            | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.OptimizedDoubleBuffer, true);
         // DPI 缩放：150% 缩放下 32px 物理高度会显得又矮又挤（按钮/图标/间距全按逻辑缩放）
         _scale = owner.DeviceDpi / 96f;
         _btnWidth = (int)Math.Round(46 * _scale);
@@ -166,7 +173,7 @@ internal sealed class CustomTitleBar : Panel
 
         // 标题
         var titleLeft = (int)Math.Round(34 * _scale);
-        TextRenderer.DrawText(g, "DeepSeek Harness", TitleFont,
+        TextRenderer.DrawText(g, _titleText, TitleFont,
             new Rectangle(titleLeft, 0, Math.Max(0, Width - _btnWidth * 3 - titleLeft - 8), Height),
             textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
 

@@ -15,15 +15,26 @@ public static class DiagnoseExport
     /// <summary>入口（在 Main 最早期调用，不初始化 UI）。返回写入的 zip 路径；失败返回 null。</summary>
     public static string? Run(string[] args, string dshHomeDir, string logPath)
     {
+        var downloads = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        if (!Directory.Exists(downloads)) downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var minLevel = ParseMinLevel(args);
+        var zipPath = Path.Combine(downloads, $"dsh-launcher-diagnose-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip");
+        return ExportTo(zipPath, dshHomeDir, logPath, minLevel);
+    }
+
+    /// <summary>
+    /// 导出诊断包到**指定** zip 路径（ADR-023：启动健康 failed 时由壳静默落一份到
+    /// DSH_HOME\dsh-launcher\diagnostics\，证据随包可查；用户下载目录路径仅供 --diagnose 手动入口）。
+    /// <paramref name="includeVersions"/>=false 跳过 node/npm/dotnet 版本采集（Outcome 测试提速用）。
+    /// 返回写入的 zip 路径；失败返回 null（调用方 Warn 降级）。
+    /// </summary>
+    public static string? ExportTo(string zipPath, string dshHomeDir, string logPath, Logger.Level? minLevel = null, bool includeVersions = true)
+    {
         try
         {
-            var downloads = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-            if (!Directory.Exists(downloads)) downloads = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-            var minLevel = ParseMinLevel(args); // null = 全量
-            var zipPath = Path.Combine(downloads, $"dsh-launcher-diagnose-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip");
-
+            var dir = Path.GetDirectoryName(zipPath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
             {
                 if (minLevel is null)
@@ -32,7 +43,8 @@ public static class DiagnoseExport
                     AddTextEntry(zip, "log-warn.txt", FilterByLevel(logPath, minLevel.Value));
 
                 AddTextEntry(zip, "env.txt", CollectEnv(dshHomeDir));
-                AddTextEntry(zip, "versions.txt", CollectVersions());
+                if (includeVersions)
+                    AddTextEntry(zip, "versions.txt", CollectVersions());
                 AddTextEntry(zip, "settings.txt", ReadSafe(Path.Combine(dshHomeDir, "dsh-launcher", "settings.json")));
                 AddTextEntry(zip, "state.txt", CollectState(dshHomeDir));
                 AddTextEntry(zip, "errors.txt", SummarizeErrors(logPath));
@@ -144,7 +156,7 @@ public static class DiagnoseExport
     {
         var dir = Path.Combine(dshHomeDir, "dsh-launcher");
         var sb = new StringBuilder();
-        foreach (var name in new[] { "window-state.json", "pending-update.json", "runtime-state.json", "theme.json" })
+        foreach (var name in new[] { "window-state.json", "pending-update.json", "runtime-state.json", "theme.json", "safe-mode.json" })
         {
             var p = Path.Combine(dir, name);
             if (File.Exists(p))
