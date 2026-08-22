@@ -2325,6 +2325,10 @@ internal static class Program
         try
         {
             Directory.CreateDirectory(staging);
+            // [2026-08-22 回归] 清场再构建：复用残留 buildDir 会让 pnpm 命中旧 lockfile
+            // 秒级 no-op "成功"，把上次中断/失败的破损布局原样保留——bin 入口校验失败的
+            // 根因之一（10:02/10:32 两次 4 秒假成功均因此）。每次必须全新安装。
+            if (Directory.Exists(buildDir)) TryDeleteDir(buildDir);
             Directory.CreateDirectory(buildDir);
 
             // 立即显示初始进度（用户点击更新后第一时间看到反馈）
