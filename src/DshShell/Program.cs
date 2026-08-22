@@ -2672,8 +2672,13 @@ internal static class Program
                 File.WriteAllText(buildPkgJson, """{"name":"dsh-runtime-build","version":"1.0.0","private":true}""");
 
             // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs + --reporter=ndjson 获取精确进度；
-            // [2026-08-22] registryArgs 由调用方按源序列传入（快源优先/降级），缺省取首选源
-            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --reporter=ndjson"
+            // [2026-08-22] registryArgs 由调用方按源序列传入（快源优先/降级），缺省取首选源。
+            // [--ignore-workspace 铁律] pnpm 会从 buildDir 向上查找 pnpm-workspace.yaml——
+            // 一旦用户主目录等祖先路径存在游离工作区清单（真实案例：C:\Users\<user>\ 下残留
+            // diag-fix 实验的 package.json+pnpm-workspace.yaml），整个安装会被劫持到那个根：
+            // 包装进用户主目录 node_modules，构建目录缺 bin 入口 → E4001 假性"产物不完整"。
+            // 此参数强制以 buildDir 自身为项目根，与任何外部工作区彻底隔离（沙盒对照已验证）。
+            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --ignore-workspace --reporter=ndjson"
                 + (registryArgs ?? GetNpmRegistrySources()[0]);
 
             var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
