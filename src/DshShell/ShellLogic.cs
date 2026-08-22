@@ -617,25 +617,35 @@ public static class ShellLogic
 
     /// <summary>
     /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
-    /// [2026-08 用户回归] npmjs 直连不稳（undici 连接反复被重置）导致更新构建失败；
-    /// node 二进制下载早有镜像链（RuntimeResolver.BaseUrls），npm 包却没有——补齐同款策略：
-    /// attempt=0 用主源（DSH_NPM_MIRROR 环境变量或 npm 默认），attempt≥1 自动切
-    /// npmmirror（registry.npmmirror.com）兜底重试一次。主源本身就是 npmmirror 时
-    /// 兜底轮返回空串，避免重复 --registry 参数。
+    /// [2026-08 用户回归] npmjs 直连不稳且慢（HEAD 2055ms、undici 连接反复被重置），
+    /// npmmirror 快且稳（264ms）。策略：优先走最快的源，失败才降级——
+    ///   ① DSH_NPM_MIRROR 环境变量（显式指定最高优先）；
+    ///   ② npmmirror（默认首选；公共 scope 会被同步，新版本可能有分钟级延迟）；
+    ///   ③ npm 官方源（空串 = 默认 registry，垫底兜底：镜像未同步的新版本从这里拿）。
+    /// 序列去重（同一源最多出现一次），调用方按序尝试、整条流粘住首个成功源。
     /// </summary>
     public static class NpmRegistryPolicy
     {
-        /// <summary>兜底镜像：阿里 npmmirror（国内可达性最好；@deepseek-ai 为公共 scope 会被同步）。</summary>
+        /// <summary>兜底/默认首选镜像：阿里 npmmirror。</summary>
         public const string FallbackMirror = "https://registry.npmmirror.com";
 
-        public static string RegistryArgForAttempt(int attempt, string? dshNpmMirror)
+        /// <summary>按优先级返回 --registry 参数序列（含末尾的官方源空参）。永不重复
+        /// （URL 按忽略大小写、忽略尾斜杠归一后判重）。</summary>
+        public static string[] RegistrySources(string? dshNpmMirror)
         {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<string>();
+            void Add(string arg)
+            {
+                // 归一化判重：去前导空格与尾斜杠，URL 大小写不敏感（契约：EnvIsNpmmirror 变体）
+                var norm = arg.Trim().TrimEnd('/').ToLowerInvariant();
+                if (seen.Add(norm)) list.Add(arg);
+            }
             var mirror = string.IsNullOrWhiteSpace(dshNpmMirror) ? null : dshNpmMirror.Trim();
-            if (attempt <= 0)
-                return mirror is null ? "" : " --registry=" + mirror;
-            if (mirror is not null && mirror.TrimEnd('/').Equals(FallbackMirror, StringComparison.OrdinalIgnoreCase))
-                return "";
-            return " --registry=" + FallbackMirror;
+            if (mirror is not null) Add(" --registry=" + mirror);
+            Add(" --registry=" + FallbackMirror);
+            Add(""); // npm 官方默认源（最后手段）
+            return list.ToArray();
         }
     }
 

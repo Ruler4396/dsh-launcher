@@ -1914,18 +1914,19 @@ internal static class Program
             var nodeEnv = RuntimeResolver.ResolveExisting();
             var nodeExe = nodeEnv?.NodeExe;
             var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
+            var regSources = GetNpmRegistrySources();
             if (nodeExe is not null && pnpmEntryJs is not null)
             {
-                if (TryNpmWithMirrorFallback(attempt => RunPnpmInstall(
+                if (TryNpmOverRegistries(regSources, srcIdx => RunPnpmInstall(
                         nodeExe, pnpmEntryJs, tarballPath, buildDir,
-                        registryArgs: GetNpmRegistryArgs(attempt)), "provision-pnpm"))
+                        registryArgs: regSources[srcIdx]), "provision-pnpm", out _))
                     return true;
                 Logger.Warn("first-run provision pnpm install failed, falling back to npm");
             }
-            return TryNpmWithMirrorFallback(attempt => RunNpmCommand(
+            return TryNpmOverRegistries(regSources, srcIdx => RunNpmCommand(
                 $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
-                    + GetNpmRegistryArgs(attempt),
-                out var installTail, timeoutMs: 1200000, workingDirectory: buildDir), "provision-npm");
+                    + regSources[srcIdx],
+                out var installTail, timeoutMs: 1200000, workingDirectory: buildDir), "provision-npm", out _);
         }
         catch (Exception ex)
         {
@@ -2273,11 +2274,12 @@ internal static class Program
                 var pending = StagedUpdate.ReadPending();
                 var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
                 var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
-                // 任务二一致性：--no-audit --no-fund + registry 与预热匹配（秒级 cache 命中）
+                // 任务二一致性：--no-audit --no-fund；快源优先、失败沿源序列降级
                 string applyErrorTail = "";
-                if (TryNpmWithMirrorFallback(attempt => RunNpmCommand(
-                        $"install -g \"{installSpec}\" --no-audit --no-fund" + GetNpmRegistryArgs(attempt),
-                        out applyErrorTail), "apply-restart"))
+                var applySources = GetNpmRegistrySources();
+                if (TryNpmOverRegistries(applySources, srcIdx => RunNpmCommand(
+                        $"install -g \"{installSpec}\" --no-audit --no-fund" + applySources[srcIdx],
+                        out applyErrorTail), "apply-restart", out _))
                 {
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
@@ -2340,14 +2342,15 @@ internal static class Program
             // [2026-08 取证锚点] 此前从点击到 pnpm detection 之间日志真空，无法定位静默失败
             Logger.Info($"staged update flow started: v{latest}");
 
-            // ---- 步骤 1：npm pack 下载 tarball（约 3 秒；主源失败自动切 npmmirror 兜底） ----
+            // ---- 步骤 1：npm pack 下载 tarball（快源优先，失败沿序列降级） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
             var tarballPath = Path.Combine(buildDir, tarballName);
             string errorTail = "";
-            var ok = TryNpmWithMirrorFallback(attempt => RunNpmCommand(
+            var regSources = GetNpmRegistrySources();
+            var ok = TryNpmOverRegistries(regSources, srcIdx => RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\""
-                    + GetNpmRegistryArgs(attempt),
-                out errorTail), "download-tarball");
+                    + regSources[srcIdx],
+                out errorTail), "download-tarball", out var packSourceIdx);
             // tarball 下载完成，进度更新由 pnpm 检测后统一处理
             if (!ok || !File.Exists(tarballPath))
             {
@@ -2399,9 +2402,13 @@ internal static class Program
                 try
                 {
                     Logger.Info($"building dsh runtime with pnpm (ndjson progress): {latest}");
-                    buildOk = TryNpmWithMirrorFallback(attempt => RunPnpmInstall(
+                    // 粘住 pack 成功的源（依赖解析/缓存与下载同源），失败再沿其余源降级
+                    var pnpmSources = packSourceIdx > 0
+                        ? regSources.Skip(packSourceIdx).Concat(regSources.Take(packSourceIdx)).ToArray()
+                        : regSources;
+                    buildOk = TryNpmOverRegistries(pnpmSources, srcIdx => RunPnpmInstall(
                         nodeExe!, pnpmEntryJs!, tarballPath, buildDir, progressCallback,
-                        GetNpmRegistryArgs(attempt)), "pnpm-build");
+                        pnpmSources[srcIdx]), "pnpm-build", out _);
                     buildTool = "pnpm";
                     Logger.Info($"pnpm build result: {buildOk}");
                 }
@@ -2417,10 +2424,13 @@ internal static class Program
                 // npm 模式无真实进度：保持初始脉冲态（不显示时间伪造的百分比），marquee 动画照常。
                 UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
                 string buildTail = "";
-                buildOk = TryNpmWithMirrorFallback(attempt => RunNpmCommand(
+                var npmSources = packSourceIdx > 0
+                    ? regSources.Skip(packSourceIdx).Concat(regSources.Take(packSourceIdx)).ToArray()
+                    : regSources;
+                buildOk = TryNpmOverRegistries(npmSources, srcIdx => RunNpmCommand(
                     $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
-                        + GetNpmRegistryArgs(attempt),
-                    out buildTail, timeoutMs: 1200000, workingDirectory: buildDir), "npm-build");
+                        + npmSources[srcIdx],
+                    out buildTail, timeoutMs: 1200000, workingDirectory: buildDir), "npm-build", out _);
                 if (!buildOk)
                 {
                     Logger.Warn($"npm build failed: {buildTail}");
@@ -2662,9 +2672,9 @@ internal static class Program
                 File.WriteAllText(buildPkgJson, """{"name":"dsh-runtime-build","version":"1.0.0","private":true}""");
 
             // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs + --reporter=ndjson 获取精确进度；
-            // [2026-08-22] registryArgs 由调用方按尝试轮次传入（主源/npmmirror 兜底）
+            // [2026-08-22] registryArgs 由调用方按源序列传入（快源优先/降级），缺省取首选源
             var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --reporter=ndjson"
-                + (registryArgs ?? GetNpmRegistryArgs());
+                + (registryArgs ?? GetNpmRegistrySources()[0]);
 
             var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
             {
@@ -2893,12 +2903,13 @@ internal static class Program
         var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
         var npmArgs = $"install -g \"{installSpec}\" --prefer-offline --no-audit --no-fund";
 
-        // [Evidence-2] 执行 npm install（主源失败自动切 npmmirror 兜底）
+        // [Evidence-2] 执行 npm install（快源优先，失败沿源序列降级）
         Logger.Info($"[Apply] Executing: npm {npmArgs}");
         var npmSw = System.Diagnostics.Stopwatch.StartNew();
         string errorTail = "";
-        if (TryNpmWithMirrorFallback(attempt => RunNpmCommand(
-                npmArgs + GetNpmRegistryArgs(attempt), out errorTail, ct, progress), "apply-pending"))
+        var applySources = GetNpmRegistrySources();
+        if (TryNpmOverRegistries(applySources, srcIdx => RunNpmCommand(
+                npmArgs + applySources[srcIdx], out errorTail, ct, progress), "apply-pending", out _))
         {
             npmSw.Stop();
             // [Evidence-3] npm 成功
@@ -3007,36 +3018,34 @@ internal static class Program
     /// npm registry 镜像参数（与 start-dsh.vbs 的 DSH_NPM_MIRROR 约定一致）：
     /// 设置 → 追加 "--registry=&lt;mirror&gt;"；未设置 → 返回空串（用 npm 默认 registry）。
     /// 预热与安装都用同一镜像，保证 cache 命中（任务一/二：不同 registry 会 miss 缓存）。</summary>
-    /// <summary>npm registry 参数（attempt 感知）：0=主源（DSH_NPM_MIRROR 或默认），
-    /// ≥1=npmmirror 兜底。策略见 ShellLogic.NpmRegistryPolicy（契约测试锁定）。</summary>
-    private static string GetNpmRegistryArgs(int attempt = 0)
-        => ShellLogic.NpmRegistryPolicy.RegistryArgForAttempt(attempt,
+    /// <summary>npm 源序列（快源优先）：DSH_NPM_MIRROR（若设）→ npmmirror → 官方默认。
+    /// 策略见 ShellLogic.NpmRegistryPolicy（契约测试锁定）。</summary>
+    private static string[] GetNpmRegistrySources()
+        => ShellLogic.NpmRegistryPolicy.RegistrySources(
             Environment.GetEnvironmentVariable("DSH_NPM_MIRROR"));
 
     /// <summary>
-    /// npm 网络操作主源失败后自动切 npmmirror 兜底重试一次（2026-08 用户回归：
-    /// npmjs 直连不稳，undici 连接反复被重置；与 RuntimeResolver 的 node 镜像链同策略）。
-    /// run(attempt)：按第几次尝试执行（0=主源，1=npmmirror），返回是否成功。
-    /// 成功来源记入日志，便于事后定位走了哪条源。
+    /// 按 npm 源序列依次尝试（优先最快可达的源，失败才降级下一个）。
+    /// run(sourceIndex)：用 sources[sourceIndex] 的 --registry 参数执行一次，返回是否成功。
+    /// 成功来源记入日志；winningIndex 返回首个成功源下标（-1=全部失败），供同流程
+    /// 后续步骤粘住同一源（pack 与 build 同源，保证依赖解析与缓存命中一致）。
+    /// [2026-08 用户回归：npmjs 直连不稳且慢 → npmmirror 优先]
     /// </summary>
-    private static bool TryNpmWithMirrorFallback(Func<int, bool> run, string opName)
+    private static bool TryNpmOverRegistries(string[] sources, Func<int, bool> run, string opName, out int winningIndex)
     {
-        for (var attempt = 0; ; attempt++)
+        for (var i = 0; i < sources.Length; i++)
         {
-            var ok = run(attempt);
-            if (ok)
+            if (run(i))
             {
-                if (attempt > 0)
-                    Logger.Info($"npm op '{opName}' succeeded via npmmirror fallback");
+                winningIndex = i;
+                if (i > 0)
+                    Logger.Info($"npm op '{opName}' succeeded via registry source #{i} (fallback)");
                 return true;
             }
-            if (attempt >= 1)
-            {
-                Logger.Warn($"npm op '{opName}' failed on both primary and npmmirror registries");
-                return false;
-            }
-            Logger.Warn($"npm op '{opName}' failed on primary registry; retrying once via npmmirror");
         }
+        winningIndex = -1;
+        Logger.Warn($"npm op '{opName}' failed on all {sources.Length} registries");
+        return false;
     }
 
     /// <summary>
