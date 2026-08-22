@@ -616,6 +616,30 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
+    /// [2026-08 用户回归] npmjs 直连不稳（undici 连接反复被重置）导致更新构建失败；
+    /// node 二进制下载早有镜像链（RuntimeResolver.BaseUrls），npm 包却没有——补齐同款策略：
+    /// attempt=0 用主源（DSH_NPM_MIRROR 环境变量或 npm 默认），attempt≥1 自动切
+    /// npmmirror（registry.npmmirror.com）兜底重试一次。主源本身就是 npmmirror 时
+    /// 兜底轮返回空串，避免重复 --registry 参数。
+    /// </summary>
+    public static class NpmRegistryPolicy
+    {
+        /// <summary>兜底镜像：阿里 npmmirror（国内可达性最好；@deepseek-ai 为公共 scope 会被同步）。</summary>
+        public const string FallbackMirror = "https://registry.npmmirror.com";
+
+        public static string RegistryArgForAttempt(int attempt, string? dshNpmMirror)
+        {
+            var mirror = string.IsNullOrWhiteSpace(dshNpmMirror) ? null : dshNpmMirror.Trim();
+            if (attempt <= 0)
+                return mirror is null ? "" : " --registry=" + mirror;
+            if (mirror is not null && mirror.TrimEnd('/').Equals(FallbackMirror, StringComparison.OrdinalIgnoreCase))
+                return "";
+            return " --registry=" + FallbackMirror;
+        }
+    }
+
+    /// <summary>
     /// dsh 服务启动参数拼装（纯函数，契约测试锁定）。
     /// [2026-08 用户回归修复] SelfContained node.exe 直启路径此前漏传 --no-open：
     /// dsh web 默认 ShellExecute 打开系统浏览器，壳自管 WebView2 窗口并不需要；
