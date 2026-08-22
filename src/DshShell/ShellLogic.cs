@@ -616,6 +616,29 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 更新应用的目标目录决策（纯函数，ContractTests.StagedApplyPolicyContractTests 锁定）。
+    /// [2026-08-22 用户回归] 目标 runtimes\&lt;ver&gt; 已存在时 Directory.Move 抛
+    /// "Cannot create ... because a file or directory with the same name already exists"
+    /// → 弹"原子切换失败"。策略：
+    ///   目标不存在 → ProceedFresh；
+    ///   存在且 bin 可解析且版本一致 → AlreadyApplied（幂等短路，重复应用同版本静默成功）;
+    ///   存在但无效（半成品/损坏/异版本）→ ReplaceStale（调用方备份挪走后换新）。
+    /// </summary>
+    public static class StagedApplyPolicy
+    {
+        public enum ExistingTargetAction { AlreadyApplied, ReplaceStale, ProceedFresh }
+
+        public static ExistingTargetAction DecideExistingTarget(
+            bool targetExists, bool binResolvable, bool versionMatches)
+        {
+            if (!targetExists) return ExistingTargetAction.ProceedFresh;
+            return binResolvable && versionMatches
+                ? ExistingTargetAction.AlreadyApplied
+                : ExistingTargetAction.ReplaceStale;
+        }
+    }
+
+    /// <summary>
     /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
     /// [2026-08 用户回归] npmjs 直连不稳且慢（HEAD 2055ms、undici 连接反复被重置），
     /// npmmirror 快且稳（264ms）。策略：优先走最快的源，失败才降级——

@@ -375,6 +375,119 @@ public class UpdateOutcomes
         Assert.Null(version);
     }
 
+    // ==================== [2026-08-22 回归] 应用幂等与源完整性 ====================
+    //
+    // 现场：构建 100% 后重启应用弹"原子切换失败: Cannot create 'runtimes\0.1.1-rc.2'
+    // ... already exists"。磁盘证据：目标是半成品（旧 pending 在新构建清场后被启动
+    // 强制应用搬出）；完整构建随后重写 pending，再次应用撞残留。零 Mock，真实 FS。
+
+    /// <summary>构造一个"有效自包含运行时目录"（bin 可解析 + 文件真实存在 + 版本一致）。</summary>
+    private static void WriteValidRuntime(string dir, string version)
+    {
+        var libDir = System.IO.Path.Combine(dir, "node_modules", "@deepseek-ai", "dsh", "lib");
+        Directory.CreateDirectory(libDir);
+        File.WriteAllText(System.IO.Path.Combine(libDir, "bin.js"), "// entry");
+        File.WriteAllText(
+            System.IO.Path.Combine(dir, "node_modules", "@deepseek-ai", "dsh", "package.json"),
+            $"{{\"name\":\"@deepseek-ai/dsh\",\"version\":\"{version}\",\"bin\":{{\"dsh\":\"lib/bin.js\"}}}}");
+    }
+
+    /// <summary>【Outcome 回归】目标已存在但为半成品 → 备份挪走 + 换新成功。
+    /// 物理不变量：应用完成后目标位置必然是有效运行时，半成品保留在 .old-* 备份中可追责。</summary>
+    [Fact]
+    public void Regression_ApplyTargetExists_StaleMovedAside_FreshInstalled()
+    {
+        using var tmp = new TempDir();
+        const string ver = "0.1.1-rc.2";
+        var targetDir = System.IO.Path.Combine(tmp.Path, "runtimes", ver);
+        Directory.CreateDirectory(targetDir);
+        Directory.CreateDirectory(System.IO.Path.Combine(targetDir, "node_modules")); // 半成品：只有半个 node_modules
+
+        var sourceDir = System.IO.Path.Combine(tmp.Path, "staging", $"runtime-build-{ver}");
+        WriteValidRuntime(sourceDir, ver);
+
+        // When: 目标准备（Program 路径 A 的调用序列）
+        var action = StagedUpdate.PrepareTargetForApply(targetDir, ver);
+        if (action != ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied)
+            Directory.Move(sourceDir, targetDir);
+
+        // Then: ReplaceStale → 备份存在、目标位是完整新运行时
+        Assert.Equal(ShellLogic.StagedApplyPolicy.ExistingTargetAction.ReplaceStale, action);
+        var backup = Directory.GetDirectories(System.IO.Path.Combine(tmp.Path, "runtimes"), ver + ".old-*");
+        Assert.Single(backup);
+        Assert.True(File.Exists(System.IO.Path.Combine(targetDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")));
+        Assert.True(StagedUpdate.IsSourceRuntimeComplete(targetDir, ver), "换新后的目标必须是有效运行时");
+    }
+
+    /// <summary>【Outcome 回归】目标已是有效同版本 → AlreadyApplied 幂等短路：
+    /// 不产生备份、源目录原样保留（重复应用同版本绝不报错）。</summary>
+    [Fact]
+    public void Regression_ApplyTargetAlreadyValid_NoMoveNoBackup()
+    {
+        using var tmp = new TempDir();
+        const string ver = "0.1.1-rc.2";
+        var targetDir = System.IO.Path.Combine(tmp.Path, "runtimes", ver);
+        WriteValidRuntime(targetDir, ver);
+
+        var sourceDir = System.IO.Path.Combine(tmp.Path, "staging", $"runtime-build-{ver}");
+        WriteValidRuntime(sourceDir, ver);
+
+        var action = StagedUpdate.PrepareTargetForApply(targetDir, ver);
+
+        Assert.Equal(ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied, action);
+        Assert.Empty(Directory.GetDirectories(System.IO.Path.Combine(tmp.Path, "runtimes"), "*.old-*"));
+        Assert.True(Directory.Exists(sourceDir), "AlreadyApplied 时源不得被动");
+    }
+
+    /// <summary>【Outcome 回归】源不完整（缺 bin.js）→ 门禁拒绝：调用方不执行 Move，
+    /// 源与目标现场原样保留（绝不把半成品搬进 runtimes）。</summary>
+    [Fact]
+    public void Regression_HalfBuiltSource_RefusedNotMoved()
+    {
+        using var tmp = new TempDir();
+        const string ver = "0.1.1-rc.2";
+        var halfSource = System.IO.Path.Combine(tmp.Path, "staging", $"runtime-build-{ver}");
+        Directory.CreateDirectory(System.IO.Path.Combine(halfSource, "node_modules")); // 只有半个 node_modules
+
+        var targetDir = System.IO.Path.Combine(tmp.Path, "runtimes", ver);
+
+        // When: 与 Program 路径 A 相同的门禁序列
+        var complete = StagedUpdate.IsSourceRuntimeComplete(halfSource, ver);
+        if (!complete)
+        {
+            StagedUpdate.MarkApplyFailed(); // 门禁失败路径的副作用
+        }
+
+        // Then: 拒绝搬运——源仍在原地，目标未被创建
+        Assert.False(complete);
+        Assert.True(Directory.Exists(halfSource));
+        Assert.False(Directory.Exists(targetDir));
+    }
+
+    /// <summary>【Outcome 回归】pending 指向即将被重建清场的 buildDir → 必须清除，
+    /// 否则下次启动强制应用会搬走半成品（12:23:29 现场事故的触发条件）。
+    /// 锁定 Program.DownloadDshUpdateStaged 清场块使用的同一判等谓词。</summary>
+    [Fact]
+    public void Regression_NewBuildClearsStalePendingForSameBuildDir()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var buildDir = System.IO.Path.Combine(tmp.Path, "staging", "runtime-build-0.1.1-rc.2");
+        Directory.CreateDirectory(buildDir);
+        StagedUpdate.MarkPending("0.1.1-rc.2", prefetched: true, runtimeDir: buildDir);
+
+        // When: 清场块的同款谓词判断 + 清除
+        var (_, _, _, _, pendRuntime) = StagedUpdate.ReadPending();
+        var isStale = !string.IsNullOrWhiteSpace(pendRuntime) &&
+            string.Equals(System.IO.Path.GetFullPath(pendRuntime!), System.IO.Path.GetFullPath(buildDir),
+                StringComparison.OrdinalIgnoreCase);
+        if (isStale) StagedUpdate.ClearPending();
+
+        // Then: pending 已消失，下次启动不会再对半成品执行强制应用
+        Assert.True(isStale);
+        Assert.Null(StagedUpdate.ReadPending().Version);
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(

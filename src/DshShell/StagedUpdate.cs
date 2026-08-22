@@ -164,4 +164,84 @@ public static class StagedUpdate
     /// <summary>后台依赖预热临时目录（任务一：prefetch_temp）——预热在 staging 下进行，应用成功后整体清理。</summary>
     public static string? PrefetchTempDir =>
         StagingDir is null ? null : Path.Combine(StagingDir, "prefetch_temp");
+
+    // ==================== [2026-08-22 用户回归] 应用幂等与源完整性 ====================
+    //
+    // 现场：构建完成 100% 后重启应用，弹"原子切换失败: Cannot create
+    // 'runtimes\0.1.1-rc.2' because ... already exists"。磁盘证据：目标目录是
+    // 半成品（仅半个 node_modules，无 package.json/bin.js）——旧 pending 在新构建
+    // 清场后被"启动强制应用"搬出；随后完整构建重写 pending，再次应用撞上残留。
+    // 两道防线：① 源不完整绝不搬运；② 目标已存在时按策略幂等处理。
+
+    /// <summary>
+    /// 校验自包含运行时目录的完整性：bin 入口可解析且对应 JS 文件真实存在，
+    /// 且 package.json 的 version 与期望一致（OrdinalIgnoreCase）。
+    /// 任何 IO/解析异常视为不完整（Warn 日志，透明不吞）。
+    /// </summary>
+    public static bool IsSourceRuntimeComplete(string runtimeDir, string expectedVersion)
+    {
+        var (binOk, verMatch) = InspectRuntimeDir(runtimeDir, expectedVersion);
+        Logger.Info($"runtime completeness check: dir={runtimeDir}, binOk={binOk}, versionMatch={verMatch} (expected {expectedVersion})");
+        return binOk && verMatch;
+    }
+
+    /// <summary>
+    /// 应用前的目标目录准备（StagedApplyPolicy 决策 + 真实 FS 动作）：
+    /// - 不存在 → ProceedFresh；
+    /// - 有效同版本 → AlreadyApplied（调用方按成功收尾，不执行 Move）；
+    /// - 无效/异版本 → 把旧目录备份挪走（&lt;target&gt;.old-yyyyMMdd-HHmmss，
+    ///   先清历史 .old-* 备份），返回 ReplacedStale 后调用方可安全 Move。
+    /// 备份挪走失败（文件锁等）直接抛出，由调用方按"原子切换失败"上报（透明原则）。
+    /// </summary>
+    public static ShellLogic.StagedApplyPolicy.ExistingTargetAction PrepareTargetForApply(
+        string targetDir, string expectedVersion)
+    {
+        var targetExists = Directory.Exists(targetDir);
+        if (!targetExists)
+            return ShellLogic.StagedApplyPolicy.ExistingTargetAction.ProceedFresh;
+
+        var (binOk, verMatch) = InspectRuntimeDir(targetDir, expectedVersion);
+        var action = ShellLogic.StagedApplyPolicy.DecideExistingTarget(targetExists, binOk, verMatch);
+        Logger.Info($"apply target prepare: {targetDir}, exists=true, binOk={binOk}, versionMatch={verMatch} → {action}");
+        if (action != ShellLogic.StagedApplyPolicy.ExistingTargetAction.ReplaceStale)
+            return action;
+
+        // 清历史备份（只保留本次一个）
+        var parent = Path.GetDirectoryName(targetDir)!;
+        var name = Path.GetFileName(targetDir);
+        foreach (var old in Directory.GetDirectories(parent, name + ".old-*"))
+        {
+            try { Directory.Delete(old, recursive: true); }
+            catch (Exception ex) { Logger.Warn($"failed to remove previous backup '{old}': {ex.Message}"); }
+        }
+
+        var backup = targetDir + ".old-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        Directory.Move(targetDir, backup);
+        Logger.Warn($"invalid apply target moved aside (bin={binOk}, versionMatch={verMatch}): {backup}");
+        return ShellLogic.StagedApplyPolicy.ExistingTargetAction.ReplaceStale;
+    }
+
+    /// <summary>检查目录内 dsh 包的 bin 解析与版本匹配。内部辅助：不做任何写操作。</summary>
+    private static (bool BinOk, bool VersionMatch) InspectRuntimeDir(string dir, string expectedVersion)
+    {
+        try
+        {
+            var dshDir = Path.Combine(dir, "node_modules", "@deepseek-ai", "dsh");
+            var pkgJson = Path.Combine(dshDir, "package.json");
+            if (!File.Exists(pkgJson)) return (false, false);
+            using var doc = JsonDocument.Parse(File.ReadAllText(pkgJson));
+            var version = doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
+            var binEntry = DshWeb.Domain.DshDiscovery.ResolveBinEntry(dir, doc.RootElement);
+            if (version is null || binEntry is null) return (false, false);
+            var binFile = Path.Combine(dshDir, binEntry);
+            var binOk = File.Exists(binFile);
+            var verMatch = string.Equals(version, expectedVersion, StringComparison.OrdinalIgnoreCase);
+            return (binOk, verMatch);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"runtime inspect failed for '{dir}': {ex.Message}");
+            return (false, false);
+        }
+    }
 }
