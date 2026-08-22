@@ -598,6 +598,21 @@ public static class ShellLogic
                 return (_lastPercent, true);
             }
         }
+
+        /// <summary>
+        /// 构建终态标题栏文案（纯函数，ContractTests.UpdateProgressContractTests.TerminalText_* 锁定）。
+        /// [2026-08 用户回归] 此前 Ready/Failed 终态从未被标题栏渲染且部分失败路径静默返回，
+        /// 用户只看到进度条消失、无成功/失败结论。契约：文案自含结论 + 版本号；
+        /// 失败分支必须带 [E4001] 错误码（用户可见错误铁律）。
+        /// <paramref name="willRetry"/>=false 表示 tarball 未保留（下载阶段即失败），
+        /// 文案不得承诺"下次启动自动重试"。
+        /// </summary>
+        public static string ComposeTerminalTitleText(bool success, string version, bool willRetry = true)
+            => success
+                ? $"已构建更新 100%（v{version}）· 重启启动器后自动切换"
+                : willRetry
+                    ? $"更新构建失败 [E4001]（v{version}）· 已保留下载，下次启动自动重试"
+                    : $"更新下载失败 [E4001]（v{version}）· 可重新点击更新重试";
     }
 
     /// <summary>

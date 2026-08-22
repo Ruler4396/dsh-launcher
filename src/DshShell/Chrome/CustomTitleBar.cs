@@ -19,8 +19,10 @@ internal sealed class CustomTitleBar : Panel
     private bool _hoverMin, _hoverMax, _hoverClose;
 
     // ---- 任务五：后台更新构建状态（UI 反馈） ----
-    /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。</summary>
-    internal enum BuildStatus { Idle, Building, Ready }
+    /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。
+    /// [2026-08 回归修复] 新增 Failed：此前 Ready/Failed 终态从不渲染（只画 Building），
+    /// 成功 100% 与失败结论用户均不可见。</summary>
+    internal enum BuildStatus { Idle, Building, Ready, Failed }
     /// <summary>当前构建状态（volatile 保证跨线程可见性）。</summary>
     internal volatile BuildStatus _buildStatus = BuildStatus.Idle;
     /// <summary>构建进度文本（如 "已构建更新 50%（v0.1.0-rc.7）"）。</summary>
@@ -244,6 +246,29 @@ internal sealed class CustomTitleBar : Panel
                 TextRenderer.DrawText(g, statusText, statusFont,
                     new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
                     _dark ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0),
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
+        }
+        else if (_buildStatus is BuildStatus.Ready or BuildStatus.Failed)
+        {
+            // [2026-08 回归修复] 终态驻留渲染：此前 Ready 从未绘制（只画 Building），且组合根
+            // 在 finally 里立即清回 Idle → 成功/失败结论一帧都不可见。现在终态由驻留定时器
+            // （Program.UpdateBuildStatus）保活约 12s：Ready=蓝色满宽条，Failed=红色满宽条，
+            // 文案自含结论与版本号（ShellLogic.UpdateProgress.ComposeTerminalTitleText）。
+            StopMarqueeTimer();
+            var terminalColor = _buildStatus == BuildStatus.Ready
+                ? Color.FromArgb(77, 107, 254)    // DeepSeek 蓝 #4D6BFE
+                : Color.FromArgb(229, 72, 77);    // 红 #E5484D
+            using var terminalBrush = new SolidBrush(terminalColor);
+            g.FillRectangle(terminalBrush, 0, Height - 2, Width, 2);
+            if (!string.IsNullOrEmpty(_buildProgressText))
+            {
+                using var statusFont = new Font("Microsoft YaHei UI", 8F, FontStyle.Bold);
+                var statusText = " " + _buildProgressText;
+                var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+                TextRenderer.DrawText(g, statusText, statusFont,
+                    new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                    terminalColor,
                     TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }
         }

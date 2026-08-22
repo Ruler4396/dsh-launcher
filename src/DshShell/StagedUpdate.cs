@@ -62,6 +62,25 @@ public static class StagedUpdate
         catch { /* 计数失败忽略（下次仍按旧值提示） */ }
     }
 
+    /// <summary>
+    /// 构建失败时把 tarball 从 buildDir 保留到 staging 根，供下次启动免下载重试
+    /// （HandleStagedBuildFailure 的文件系统部分；独立成方法以便 Outcome 测试真实 FS 验证）。
+    /// 返回是否成功保留（tarball 不存在/移动失败 → false，调用方据此决定 pending 与文案）。
+    /// [2026-08 用户回归：更新结束无成功/失败提示]
+    /// </summary>
+    public static bool PreserveTarballForRetry(string tarballPath, string stagingDir, string tarballName)
+    {
+        try
+        {
+            if (!File.Exists(tarballPath)) return false;
+            var fallbackTarball = Path.Combine(stagingDir, tarballName);
+            if (File.Exists(fallbackTarball)) File.Delete(fallbackTarball);
+            File.Move(tarballPath, fallbackTarball);
+            return true;
+        }
+        catch { /* 移动失败（锁/盘满）：不保留也可走在线重试 */ return false; }
+    }
+
     /// <summary>读取待应用记录（版本/失败次数/tarball/预热标志/自包含运行时目录）；
     /// 无记录/损坏返回默认值。RuntimeDir 为 null 兼容旧记录。</summary>
     public static (string? Version, int FailCount, string? Tarball, bool Prefetched, string? RuntimeDir) ReadPending()
