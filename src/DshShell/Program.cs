@@ -537,6 +537,7 @@ internal static class Program
                     // 用户选择强制关闭：取消构建（kill npm 进程）并放行
                     _buildCts?.Cancel();
                     _isBuildInProgress = false;
+                    try { CancelBuildStatusDwell(); } catch { /* 定时器未创建 */ }
                     Trace("user forced close during build; build process canceled");
                 }
                 else
@@ -2328,6 +2329,8 @@ internal static class Program
 
             // 立即显示初始进度（用户点击更新后第一时间看到反馈）
             UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
+            // [2026-08 取证锚点] 此前从点击到 pnpm detection 之间日志真空，无法定位静默失败
+            Logger.Info($"staged update flow started: v{latest}");
 
             // ---- 步骤 1：npm pack 下载 tarball（约 3 秒） ----
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
@@ -2340,6 +2343,10 @@ internal static class Program
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
                 TryDeleteDir(buildDir);
+                // [2026-08 回归修复] 失败必须有可见结论：红色终态驻留 + E4001 弹窗（此前仅弹窗，
+                // 且部分场景弹窗被吞后用户只看到进度条消失）
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Failed,
+                    ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: false, latest, willRetry: false));
                 try
                 {
                     string reason = string.IsNullOrWhiteSpace(errorTail)
@@ -2410,13 +2417,12 @@ internal static class Program
 
             if (!buildOk)
             {
-                Logger.Warn($"dsh runtime build failed; keeping pending for next launch retry",
+                Logger.Warn($"dsh runtime build failed; preserving tarball for next launch retry",
                     ErrorCodes.E4001, new { version = latest });
-                var fallbackTarball = Path.Combine(staging, tarballName);
-                try { if (File.Exists(fallbackTarball)) File.Delete(fallbackTarball); File.Move(tarballPath, fallbackTarball); } catch { }
-                StagedUpdate.MarkPending(latest, tarballName, prefetched: false);
+                HandleStagedBuildFailure(form, latest,
+                    "底层包管理器（pnpm/npm）构建运行时失败，详见日志",
+                    tarballPath, staging, tarballName);
                 TryDeleteDir(buildDir);
-                NotifyBuildFallback(form, latest);
                 return;
             }
 
@@ -2426,6 +2432,10 @@ internal static class Program
             if (!File.Exists(dshPkg))
             {
                 Logger.Error($"build succeeded but dsh package.json missing: {dshPkg}", ErrorCodes.E4001);
+                // [2026-08 回归修复] 此前静默 return：进度条消失、无任何失败提示
+                HandleStagedBuildFailure(form, latest,
+                    "构建产物不完整（缺少 @deepseek-ai/dsh 包清单）",
+                    tarballPath, staging, tarballName);
                 TryDeleteDir(buildDir);
                 return;
             }
@@ -2441,37 +2451,99 @@ internal static class Program
             if (binEntry is null)
             {
                 Logger.Error($"build succeeded but bin entry not resolvable in {dshPkg}", ErrorCodes.E4001);
+                // [2026-08 回归修复] 此前静默 return：进度条消失、无任何失败提示
+                HandleStagedBuildFailure(form, latest,
+                    "构建产物不完整（bin 入口无法解析，可能是 dsh 版本布局变更）",
+                    tarballPath, staging, tarballName);
                 TryDeleteDir(buildDir);
                 return;
             }
+            Logger.Info($"staged update validated: v{latest} bin={binEntry}");
 
             // ---- 步骤 4：写入 pending（含 runtimeDir） ----
             StagedUpdate.MarkPending(latest, tarballName, prefetched: true, runtimeDir: buildDir);
             _sessionStagedVersions.Add(latest);
 
             var balloon = $"dsh {latest} 已在后台构建完成。下次重启启动器时将自动切换（秒级）。";
-            // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）
-            SystemToast.TryShow(form, "dsh 更新已就绪", balloon, TimeSpan.FromSeconds(8), onClick: null);
+            // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）；
+            // [2026-08 回归修复] 记录 Toast 是否成功——失败时标题栏驻留是唯一可见反馈。
+            var toastShown = SystemToast.TryShow(form, "dsh 更新已就绪", balloon, TimeSpan.FromSeconds(8), onClick: null);
+            Logger.Info($"update success notification: toast={toastShown}; title bar dwell={BuildTerminalDwellMs}ms");
             Logger.Info($"dsh runtime build complete: {latest}",
                 ctx: new { tool = buildTool, bin = binEntry, buildDir });
 
-            // 任务五：构建完成 UI 反馈（100%）
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Ready, $"已构建更新 100%（v{latest}）", 1.0f);
+            // 任务五：构建完成 UI 反馈（Ready 终态驻留 ~12s，此前一帧都不可见）
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Ready,
+                ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: true, latest));
         }
         catch (Exception ex)
         {
             Logger.Error("staged dsh update build error: " + ex.Message, ErrorCodes.E4001);
             TryDeleteDir(buildDir);
+            // [2026-08 回归修复] 异常路径同样给终态（tarball 可见性未知 → 不承诺自动重试）
+            try
+            {
+                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Failed,
+                    ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: false, latest, willRetry: false));
+            }
+            catch { /* 窗体已关闭 */ }
             try { form.BeginInvoke(() => ShowError(ErrorCodes.E4001, ex.Message, log: false)); } catch { }
         }
         finally
         {
-            // 任务五：无论成功/失败/异常，都重置构建状态
+            // 任务五：重置构建占用状态。
+            // [2026-08 回归修复] 不再无条件把标题栏清回 Idle——终态（Ready/Failed）由
+            // UpdateBuildStatus 的驻留定时器保活 12s 后自行清理；每个退出路径都必须已设置终态。
             _isBuildInProgress = false;
             _buildCts?.Dispose();
             _buildCts = null;
-            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Idle, "");
         }
+    }
+
+    /// <summary>
+    /// 暂存更新构建失败的统一收口（npm 失败 / 包清单缺失 / bin 入口缺失三处共用）：
+    /// ① 保住 tarball 到 staging 根供下次启动免下载重试 + MarkPending(prefetched:false)；
+    /// ② 标题栏 Failed 红色终态驻留 ~12s（ComposeTerminalTitleText 契约文案）；
+    /// ③ Toast 尽力通知（结果记日志）；④ E4001 错误弹窗给出原因与后续动作。
+    /// [2026-08 用户回归：更新结束无成功/失败提示]
+    /// </summary>
+    private static void HandleStagedBuildFailure(Form form, string latest, string userReason,
+        string? tarballPath, string stagingDir, string? tarballName)
+    {
+        var preserved = false;
+        try
+        {
+            if (tarballPath is not null && tarballName is not null)
+                preserved = StagedUpdate.PreserveTarballForRetry(tarballPath, stagingDir, tarballName);
+            if (preserved)
+            {
+                StagedUpdate.MarkPending(latest, tarballName!, prefetched: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"staged update failure handling could not preserve retry state: {ex.Message}");
+        }
+
+        UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Failed,
+            ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: false, latest, willRetry: preserved));
+
+        try
+        {
+            var toastShown = SystemToast.TryShow(form, "dsh 更新构建失败",
+                $"dsh {latest} 后台构建失败。{(preserved ? "已保留下载，下次启动启动器时将自动重试。" : "可重新点击更新重试。")}",
+                TimeSpan.FromSeconds(8), onClick: null);
+            Logger.Info($"update failure notification: toast={toastShown}, preserved={preserved}");
+        }
+        catch { /* Toast 失败不阻断 */ }
+
+        try
+        {
+            form.BeginInvoke(() => ShowError(ErrorCodes.E4001,
+                $"dsh {latest} 更新构建失败。\n\n原因：{userReason}\n\n{(preserved ? "已保留下载内容，下次重启启动器时将自动重试。" : "可稍后重新点击更新重试。")}",
+                log: false));
+        }
+        catch { /* 窗体已关闭 */ }
     }
 
     /// <summary>任务五：更新标题栏构建状态（UI 反馈）。
@@ -2479,24 +2551,56 @@ internal static class Program
     /// <paramref name="percent"/> 进度百分比（0.0 - 1.0），0 表示未知进度。
     /// [2026-08 回归修复] UI 合流节流：pnpm ndjson 每秒数百行回调，旧实现每行都
     /// BeginInvoke+Invalidate 整个标题栏（重绘风暴=闪烁源）。现在 150ms 节流窗口内
-    /// 且视觉状态（文本+整数百分比）未变化时直接丢弃；终态（Ready/Idle）直通。</summary>
+    /// 且视觉状态（文本+整数百分比）未变化时直接丢弃。
+    /// [2026-08 回归修复 #2] 终态驻留：Ready/Failed 设置后由驻留定时器保活约 12s 再清回
+    /// Idle——此前 finally 无条件立即清态 + OnPaint 只画 Building，成功/失败结论一帧不可见，
+    /// 是"进度条出现一下就消失、无结果提示"的直接原因。每个退出路径必须设置终态。</summary>
     private static string? _lastBuildUiText;
     private static int _lastBuildUiPercent = int.MinValue;
     private static long _lastBuildUiApplyTicks;
+    private static System.Windows.Forms.Timer? _buildStatusDwellTimer;
+
+    /// <summary>终态在标题栏的驻留时长：足够阅读结论，又不至于永远占着标题栏。</summary>
+    private const int BuildTerminalDwellMs = 12000;
+
+    /// <summary>取消未到期的终态驻留定时器（UI 线程调用）。</summary>
+    private static void CancelBuildStatusDwell()
+    {
+        _buildStatusDwellTimer?.Stop();
+        _buildStatusDwellTimer?.Dispose();
+        _buildStatusDwellTimer = null;
+    }
+
+    /// <summary>驻留到期：把标题栏从终态清回 Idle（窗体已关则跳过）。</summary>
+    private static void ClearBuildStatusToIdle(DshShellForm form)
+    {
+        try
+        {
+            if (form.IsDisposed || form.TitleBar is null) return;
+            form.TitleBar._buildStatus = CustomTitleBar.BuildStatus.Idle;
+            form.TitleBar._buildProgressText = "";
+            form.TitleBar._buildProgressPercent = 0f;
+            form.TitleBar.Invalidate();
+        }
+        catch { /* 窗体已关闭 */ }
+    }
 
     private static void UpdateBuildStatus(Form form, CustomTitleBar.BuildStatus status, string text, float percent = 0f)
     {
         try
         {
             if (form.IsDisposed) return;
-            // 快路径合流（Invoke 前）：视觉状态未变且处于节流窗口 → 不排队、不重绘
             var pctInt = (int)Math.Round(percent * 100f);
-            var isTerminal = status != CustomTitleBar.BuildStatus.Building;
+            var isTerminal = status is CustomTitleBar.BuildStatus.Ready or CustomTitleBar.BuildStatus.Failed;
+            // 快路径合流（Invoke 前）：视觉状态未变且处于节流窗口 → 不排队、不重绘；终态直通
             if (!isTerminal
                 && text == _lastBuildUiText
                 && pctInt == _lastBuildUiPercent
-                && Environment.TickCount64 - _lastBuildUiApplyTicks < 150)
+                && Environment.TickCount64 - _lastBuildUiApplyTicks < 150
+                && form.InvokeRequired)
+            {
                 return;
+            }
             if (form.InvokeRequired)
             {
                 form.BeginInvoke(() => UpdateBuildStatus(form, status, text, percent));
@@ -2511,6 +2615,18 @@ internal static class Program
                 sf.TitleBar._buildProgressText = text;
                 sf.TitleBar._buildProgressPercent = percent;
                 sf.TitleBar.Invalidate();
+            }
+            // 终态驻留定时器（UI 线程）：新 Building 取消旧驻留；新终态覆盖旧驻留重新计时
+            CancelBuildStatusDwell();
+            if (isTerminal)
+            {
+                _buildStatusDwellTimer = new System.Windows.Forms.Timer { Interval = BuildTerminalDwellMs };
+                _buildStatusDwellTimer.Tick += (_, _) =>
+                {
+                    CancelBuildStatusDwell();
+                    if (form is DshShellForm sf2) ClearBuildStatusToIdle(sf2);
+                };
+                _buildStatusDwellTimer.Start();
             }
         }
         catch { /* UI 更新失败不影响构建 */ }
@@ -2605,13 +2721,8 @@ internal static class Program
         }
     }
 
-    private static void NotifyBuildFallback(Form form, string version)
-    {
-        // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）
-        SystemToast.TryShow(form, "dsh 更新下载完成",
-            $"dsh {version} 主程序已下载。重启后安装时可能需要较长时间（依赖未完全构建）。",
-            TimeSpan.FromSeconds(8), onClick: null);
-    }
+    // [2026-08 回归修复] NotifyBuildFallback 已删除：其职责（失败后 Toast 通知）并入
+    // HandleStagedBuildFailure 统一收口（含标题栏 Failed 终态驻留 + E4001 弹窗 + 重试保留）。
 
     private static string? FindOnPath(string fileName, string? customPath = null)
     {
@@ -3579,6 +3690,8 @@ internal static class Program
                 try { mainForm.Hide(); } catch { /* 已在关闭中 */ }
             }
             try { WindowManager.Instance.ReleaseThemeWatcher(); } catch { }
+            // [2026-08 回归修复] 关窗时终止终态驻留定时器（防 Tick 触达已释放窗体）
+            try { CancelBuildStatusDwell(); } catch { }
             BootMonitor?.Stop(); // ADR-023：壳主动收尾，监控停止（此后进程退出不再判 failed）
             var shouldStopService = ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
                 ReadLifetimeMode(), ServerManagedExternally, _serviceStartedByShell);

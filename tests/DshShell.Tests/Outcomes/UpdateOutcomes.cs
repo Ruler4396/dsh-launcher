@@ -325,6 +325,56 @@ public class UpdateOutcomes
 
     // ---- 辅助设施 ----
 
+    /// <summary>
+    /// 【Outcome 回归 2026-08】构建校验失败（如 bin 入口无法解析）不得静默：
+    /// 物理不变量——tarball 必须被保留到 staging 根 + pending 必须存在（下次启动免下载重试）。
+    /// 此前该路径仅 Logger.Error 后 return，用户只看到进度条消失、无任何失败提示
+    /// （用户报告："点击更新后会出现更新的进度条和字样，但是等一下就消失了"）。
+    /// 真实文件系统交互，零 Mock（铁律）。
+    /// </summary>
+    [Fact]
+    public void Regression_SilentValidationFailure_PreservesTarballAndPending()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var staging = System.IO.Path.Combine(tmp.Path, "staging");
+        Directory.CreateDirectory(staging);
+
+        // Given: buildDir 中有已下载的 tarball（构建已完成、校验失败的场景）
+        var buildDir = System.IO.Path.Combine(staging, "runtime-build-0.1.1-rc.2");
+        Directory.CreateDirectory(buildDir);
+        var tarballName = "deepseek-ai-dsh-0.1.1-rc.2.tgz";
+        var tarballPath = System.IO.Path.Combine(buildDir, tarballName);
+        File.WriteAllBytes(tarballPath, new byte[] { 1, 2, 3 }); // 内容无关紧要，物理存在即可
+
+        // When: 失败收口逻辑执行（与 HandleStagedBuildFailure 相同的调用序列）
+        var preserved = StagedUpdate.PreserveTarballForRetry(tarballPath, staging, tarballName);
+        if (preserved) StagedUpdate.MarkPending("0.1.1-rc.2", tarballName, prefetched: false);
+
+        // Then: tarball 已移到 staging 根（buildDir 内不再有），pending 存在且指向它
+        Assert.True(preserved, "tarball 必须被保留（否则文案'下次启动自动重试'就是谎言）");
+        Assert.True(File.Exists(System.IO.Path.Combine(staging, tarballName)));
+        Assert.False(File.Exists(tarballPath));
+        var (version, _, tarball, prefetched, _) = StagedUpdate.ReadPending();
+        Assert.Equal("0.1.1-rc.2", version);
+        Assert.Equal(tarballName, tarball);
+        Assert.False(prefetched); // 未完整构建 → 下次启动走在线安装重试路径
+    }
+
+    /// <summary>tarball 不存在时 PreserveTarballForRetry 必须返回 false（下载阶段失败的
+    /// 场景：不保留、不写 pending，标题栏文案不得承诺自动重试）。</summary>
+    [Fact]
+    public void Regression_MissingTarball_NoPreserveNoPending()
+    {
+        using var tmp = new TempDir();
+        StagedUpdate.Init(tmp.Path);
+        var preserved = StagedUpdate.PreserveTarballForRetry(
+            System.IO.Path.Combine(tmp.Path, "nope.tgz"), tmp.Path, "nope.tgz");
+        Assert.False(preserved);
+        var (version, _, _, _, _) = StagedUpdate.ReadPending();
+        Assert.Null(version);
+    }
+
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(

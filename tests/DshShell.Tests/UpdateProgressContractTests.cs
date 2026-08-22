@@ -92,4 +92,47 @@ public class UpdateProgressContractTests
         // seen={A,B}=2, done=0 → 仍为下限 10（旧实现会把 6 次事件计成 6 个"包"而虚高）
         Assert.Equal(10, agg.Snapshot().Percent);
     }
+
+    // ---------------- 终态文案契约（2026-08 用户回归：更新结束无成功/失败提示） ----------------
+    // 根因：标题栏只渲染 Building 态，Ready/Failed 终态从未可见；失败路径部分静默返回。
+    // 契约：终态文案必须自含结论（成功/失败）、带版本号、用户可见错误必须带 [E4001] 错误码。
+
+    [Fact]
+    public void TerminalText_Success_ContainsVersionAnd100_NoErrorCode()
+    {
+        var text = ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: true, "0.1.1-rc.2");
+        Assert.Contains("0.1.1-rc.2", text);
+        Assert.Contains("100%", text);
+        Assert.DoesNotContain("[E4001]", text);
+        Assert.DoesNotContain("失败", text);
+    }
+
+    [Fact]
+    public void TerminalText_Failure_ContainsVersionAndErrorCode()
+    {
+        var text = ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: false, "0.1.1-rc.2");
+        Assert.Contains("0.1.1-rc.2", text);
+        Assert.Contains("失败", text);                 // 结论必须直白可读
+        Assert.Contains("[E4001]", text);              // 用户可见错误必须带错误码（铁律）
+        Assert.DoesNotContain("100%", text);
+    }
+
+    [Fact]
+    public void TerminalText_BranchesAreMutuallyExclusive()
+    {
+        var ok = ShellLogic.UpdateProgress.ComposeTerminalTitleText(true, "vX");
+        var bad = ShellLogic.UpdateProgress.ComposeTerminalTitleText(false, "vX");
+        Assert.NotEqual(ok, bad);
+        Assert.True(ok.Length > 0 && bad.Length > 0);
+    }
+
+    [Fact]
+    public void TerminalText_FailureWithoutTarball_DoesNotPromiseAutoRetry()
+    {
+        // 下载阶段就失败（tarball 未保留）：文案不得承诺"下次启动自动重试"
+        var text = ShellLogic.UpdateProgress.ComposeTerminalTitleText(success: false, "vX", willRetry: false);
+        Assert.Contains("[E4001]", text);
+        Assert.Contains("vX", text);
+        Assert.DoesNotContain("下次启动", text);
+    }
 }
