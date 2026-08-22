@@ -1141,6 +1141,15 @@ internal static class Program
         // 旧服务仍在运行（端口开）时，强杀后执行原子切换。
         if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
         {
+            // [2026-08-22 回归·源完整性门禁] 半成品目录（构建中被新构建清场/中断）一旦
+            // 搬出即事故：坏目标 + 锁死后续应用。不完整则本次跳过强制应用，保留 pending
+            // 等构建方重写或用户重新点更新，绝不搬运。
+            if (!StagedUpdate.IsSourceRuntimeComplete(runtimeDir, pendingVersion!))
+            {
+                Logger.Warn($"[Apply] pending runtimeDir exists but INCOMPLETE ({runtimeDir}); skipping forced apply this launch", ErrorCodes.E4002);
+                progress?.Invoke($"检测到未完成的更新产物 v{pendingVersion}，已跳过自动应用；请重新点击更新。");
+                return;
+            }
             Logger.Info($"[Apply] SelfContained runtime ready: {runtimeDir}, forcing apply");
             if (PortOpen(Target.Port))
             {
@@ -2336,6 +2345,16 @@ internal static class Program
             // 根因之一（10:02/10:32 两次 4 秒假成功均因此）。每次必须全新安装。
             if (Directory.Exists(buildDir)) TryDeleteDir(buildDir);
             Directory.CreateDirectory(buildDir);
+            // [2026-08-22 回归·竞态关闭] 旧 pending 若指向本 buildDir，清场即失效——
+            // 不清除的话，下次启动"强制应用"会把半成品目录搬到 runtimes\<ver>（12:23:29
+            // 现场事故），既产生坏目标又让后续应用撞"already exists"。
+            var (_, stalePendVer, _, _, stalePendRuntime) = StagedUpdate.ReadPending();
+            if (!string.IsNullOrWhiteSpace(stalePendRuntime) &&
+                string.Equals(Path.GetFullPath(stalePendRuntime), Path.GetFullPath(buildDir), StringComparison.OrdinalIgnoreCase))
+            {
+                StagedUpdate.ClearPending();
+                Logger.Info($"cleared stale pending '{stalePendVer}' pointing at buildDir being rebuilt");
+            }
 
             // 立即显示初始进度（用户点击更新后第一时间看到反馈）
             UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
@@ -2678,7 +2697,14 @@ internal static class Program
             // diag-fix 实验的 package.json+pnpm-workspace.yaml），整个安装会被劫持到那个根：
             // 包装进用户主目录 node_modules，构建目录缺 bin 入口 → E4001 假性"产物不完整"。
             // 此参数强制以 buildDir 自身为项目根，与任何外部工作区彻底隔离（沙盒对照已验证）。
-            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --ignore-workspace --reporter=ndjson"
+            //
+            // [--config.node-linker=hoisted 铁律] pnpm 默认 linker 用【绝对路径】junction
+            // 链接顶层包——构建完成后 Apply 的 Directory.Move 会把树搬进 runtimes\<ver>，
+            // 所有 junction 立即悬空 → 服务起不来（昨晚 21:33 应用后 rc.2"无法启动"的真凶）
+            // 或发现层读不到 bin 入口。hoisted 布局全部真实文件，移动安全（沙盒已验证：
+            // 重命名后 bin.js 可达，树内 0 个 reparse point）。代价是无去重多占磁盘，可接受。
+            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --ignore-workspace"
+                + " --config.node-linker=hoisted --reporter=ndjson"
                 + (registryArgs ?? GetNpmRegistrySources()[0]);
 
             var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
@@ -2843,51 +2869,57 @@ internal static class Program
         // ---- 路径 A：SelfContained 原子切换（零 npm，秒级） ----
         if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
         {
-            var dshPkg = Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
-            if (!File.Exists(dshPkg))
+            // [2026-08-22 回归·源完整性门禁] 半成品绝不搬运（搬了既产生坏目标，
+            // 又被未退出构建进程的句柄锁死后续删除/移动）。不完整时保留现场，
+            // 明确告知重试路径，不走 npm 降级（源已坏，降级只会再失败一次）。
+            if (!StagedUpdate.IsSourceRuntimeComplete(runtimeDir, version))
             {
-                Logger.Warn($"[Apply] SelfContained build incomplete (missing {dshPkg}), falling back to npm");
-                TryDeleteDir(runtimeDir);
-                // 不 return，走 npm 路径
-            }
-            else
-            {
-                var runtimesDir = Path.Combine(DataDir, "runtimes");
-                Directory.CreateDirectory(runtimesDir);
-                var targetDir = Path.Combine(runtimesDir, version);
-
-                // [Evidence-2] 执行原子切换
-                Logger.Info($"[Apply] Executing: Directory.Move({runtimeDir}, {targetDir})");
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    if (Directory.Exists(targetDir))
-                        TryDeleteDir(targetDir);
-
-                    Directory.Move(runtimeDir, targetDir);
-                    sw.Stop();
-
-                    // [Evidence-3] 切换成功
-                    Logger.Info($"[Apply] Result: atomic swap success, Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
-
-                    StagedUpdate.ClearPending();
-                    CleanupStagingCache();
-
-                    // [Evidence-4] 清理确认
-                    var pendingAfter = StagedUpdate.ReadPending().Version;
-                    Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
-
-                    progress?.Invoke($"更新 v{version} 已应用完成（原子切换，零 npm）。");
-                }
-                catch (Exception ex)
-                {
-                    sw.Stop();
-                    Logger.Error($"[Apply] Result: atomic swap FAILED, Duration={sw.ElapsedMilliseconds}ms, Error={ex.Message}", ErrorCodes.E4002);
-                    StagedUpdate.MarkApplyFailed();
-                    NotifyUpdateApplyFailed(version, $"原子切换失败: {ex.Message}");
-                }
+                Logger.Warn($"[Apply] SelfContained source INCOMPLETE ({runtimeDir}), refusing to move", ErrorCodes.E4002);
+                StagedUpdate.MarkApplyFailed();
+                NotifyUpdateApplyFailed(version, "构建产物未就绪（可能已被新构建重置或中断）。请重新点击更新，完成构建后重启应用。");
                 return;
             }
+
+            var runtimesDir = Path.Combine(DataDir, "runtimes");
+            Directory.CreateDirectory(runtimesDir);
+            var targetDir = Path.Combine(runtimesDir, version);
+
+            // [Evidence-2] 目标幂等准备 + 原子切换。
+            // [2026-08-22 回归] 旧逻辑 Move 前静默 TryDeleteDir(targetDir)——半成品目标
+            // 被残留句柄锁住时删除失败被吞，Move 抛 "already exists" → 弹窗。
+            // 新逻辑：有效同版本目标 → AlreadyApplied 幂等短路；无效目标 → 备份挪走
+            // （失败会带真实异常信息上抛，不再静默）。
+            Logger.Info($"[Apply] Executing: Directory.Move({runtimeDir}, {targetDir})");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var prepareAction = StagedUpdate.PrepareTargetForApply(targetDir, version);
+                if (prepareAction != ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied)
+                    Directory.Move(runtimeDir, targetDir);
+                sw.Stop();
+
+                // [Evidence-3] 切换成功（AlreadyApplied 视为重复应用同版本，同样成功收尾）
+                Logger.Info($"[Apply] Result: atomic swap success (prepare={prepareAction}), Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
+
+                StagedUpdate.ClearPending();
+                CleanupStagingCache();
+
+                // [Evidence-4] 清理确认
+                var pendingAfter = StagedUpdate.ReadPending().Version;
+                Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
+
+                progress?.Invoke(prepareAction == ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied
+                    ? $"更新 v{version} 已就绪（目标已是同版本，跳过重复切换）。"
+                    : $"更新 v{version} 已应用完成（原子切换，零 npm）。");
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                Logger.Error($"[Apply] Result: atomic swap FAILED, Duration={sw.ElapsedMilliseconds}ms, Error={ex.Message}", ErrorCodes.E4002);
+                StagedUpdate.MarkApplyFailed();
+                NotifyUpdateApplyFailed(version, $"原子切换失败: {ex.Message}");
+            }
+            return;
         }
 
         // ---- 路径 B：npm install 路径（兼容旧版 pending / 构建失败降级） ----
