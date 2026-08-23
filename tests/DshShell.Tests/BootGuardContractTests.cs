@@ -127,8 +127,9 @@ public class BootGuardContractTests
         var inner = ProbeJson(false, "Plugin crash: bootstrap facade is missing", "");
         var doubleEncoded = System.Text.Json.JsonSerializer.Serialize(inner); // → "\"{\\\"good\\\"...}\""
         var r = Evaluate(doubleEncoded);
-        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
-        Assert.StartsWith("dom[bootstrap facade is missing]=", r.Detail);
+        // 2026-08 回归契约：DOM 文本坏签名降级为 Absent（不再一票 BadSignature），防 E2008 误判
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
+        Assert.StartsWith("dom-suspect[bootstrap facade is missing]=", r.Detail);
     }
 
     [Fact]
@@ -140,12 +141,21 @@ public class BootGuardContractTests
     }
 
     [Fact]
-    public void EvaluatePageProbe_BadSignatureBeatsGoodSymbol_BootFlagThenPluginCrash()
+    public void EvaluatePageProbe_GoodSymbolBeatsDomSuspect_RealUiRendered()
     {
-        // 真实时序：dsh 早期设置 __DSH_BOOT__，插件随后才崩溃——坏签名必须一票否决（S22 实测教训）
+        // 2026-08 回归契约：真实 UI 已渲染（good=true），但隐藏节点/错误边界含字面量坏签名
+        // （如 "bootstrap facade is missing"）——好符号必须胜出，判 GoodSymbol（不再误判 E2008）。
         var r = Evaluate(ProbeJson(true, "Plugin crash: window.__ModuleLoader__ bootstrap facade is missing", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.GoodSymbol, r.Kind);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_ErrBadSignatureBeatsGoodSymbol_Immediate()
+    {
+        // err 原文坏签名仍一票否决（S22"捕获原文"硬要求，抗误报仅限 DOM 文本层）。
+        var r = Evaluate(ProbeJson(true, "all good", "Uncaught: window.__ModuleLoader__ bootstrap facade is missing"));
         Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
-        Assert.StartsWith("dom[bootstrap facade is missing]=", r.Detail);
+        Assert.StartsWith("err[bootstrap facade is missing]=", r.Detail);
         Assert.Contains("__ModuleLoader__", r.Detail);
     }
 
@@ -157,12 +167,14 @@ public class BootGuardContractTests
     }
 
     [Fact]
-    public void EvaluatePageProbe_BadSignatureInDomText_ReturnsBadSignatureWithDetail()
+    public void EvaluatePageProbe_BadSignatureInDomText_DowngradedToAbsentWithSuspectDetail()
     {
+        // 2026-08 回归契约：DOM 文本坏签名降级为 Absent（需连续阈值轮数才判死），证据不丢
         var r = Evaluate(ProbeJson(false, "Error: bootstrap facade is missing — plugin crashed", ""));
-        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
         Assert.NotNull(r.Detail);
-        Assert.Contains("bootstrap facade is missing", r.Detail);
+        Assert.StartsWith("dom-suspect[bootstrap facade is missing]=", r.Detail);
+        Assert.Contains("plugin crashed", r.Detail);
     }
 
     [Fact]
