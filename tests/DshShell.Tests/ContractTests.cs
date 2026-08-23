@@ -149,7 +149,9 @@ public class ContractTests
         Assert.Contains("template=\"ToastText02\"", xml);
         Assert.Contains("<text id=\"1\">dsh 有新版本</text>", xml);
         Assert.Contains("<text id=\"2\">检测到 0.1.1-rc.1</text>", xml);
-        Assert.StartsWith("<toast>", xml);
+        // duration="long"：弹窗停留 ~25s，保证用户来得及点击触发更新
+        //（2026-08-22 用户回归：默认 short ≈5 秒来不及点）
+        Assert.StartsWith("<toast duration=\"long\">", xml);
         Assert.EndsWith("</toast>", xml);
     }
 

@@ -28,6 +28,7 @@ public static class ErrorCodes
     public const string E2011 = "E2011"; // 插件缺失，serviceLifetime 配置已忽略并抹除
     public const string E4001 = "E4001"; // dsh 更新下载（npm pack）失败
     public const string E4002 = "E4002"; // dsh 延迟更新应用失败
+    public const string E4003 = "E4003"; // 更新启动自检失败，已自动回滚数据并隔离新运行时
     public const string E5001 = "E5001"; // 诊断导出失败
     public const string E9001 = "E9001"; // 内部未分类错误
 
@@ -54,6 +55,7 @@ public static class ErrorCodes
         E2011 => "dsh-launcher-lifetime 插件已卸载，已忽略残留的常驻配置并按默认模式运行。",
         E4001 => "dsh 新版本下载失败。",
         E4002 => "dsh 延迟更新应用失败，将继续使用当前版本。",
+        E4003 => "dsh 更新启动自检失败，已自动回滚：更新前配置数据已还原、新版本运行时已隔离，服务正以旧版本重启。",
         E5001 => "诊断日志导出失败。",
         _ => "未分类错误。",
     };

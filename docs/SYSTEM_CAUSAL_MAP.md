@@ -110,7 +110,7 @@ graph TD
     K --> M{"端口状态?"}
     M -->|"Closed"| N["StartService()<br/>wscript start-dsh.vbs"]
     M -->|"Healthy"| O["跳过拉起"]
-    M -->|"Zombie"| P["KillZombieTree() → StartService()"]
+    M -->|"Zombie"| P["SweepStaleServicePid → KillServiceProcess<br/>🔧修复点2 僵尸认领闭环"]
     M -->|"Foreign"| Q["快速失败 E2004"]
     N --> R["WaitReadyAsync()<br/>TCP + HTTP 轮询"]
     O --> R
@@ -142,11 +142,11 @@ graph TD
     F -->|"是"| H["FindPidListeningOn(port) == pid?<br/>端口归属校验"]
     H --> I{"端口归属正确?"}
     I -->|"否"| J["拒绝 kill<br/>可能 PID 复用"]
-    I -->|"是"| K["TryGracefulStop(pid)<br/>CTRL_BREAK → taskkill /T → taskkill /f /T"]
-    K --> L["等待端口释放<br/>(最长 2s)"]
+    I -->|"是"| K["ShellLogic.ProcessManagement.KillServiceProcess(pid, port)<br/>🔧修复点1: 等待taskkill退出 + 强杀确认1500ms + 重试一次"]
+    K --> L["等待端口释放<br/>(最长 4s)"]
     L --> M{"端口释放?"}
     M -->|"是"| N["返回 true"]
-    M -->|"否"| O["保留 PID 文件<br/>下次启动认领"]
+    M -->|"否"| O["保留 PID 文件<br/>🔧修复点2: 下次启动 SweepStaleServicePid 认领"]
 ```
 
 ---
@@ -183,10 +183,10 @@ graph TD
     B --> E["AttachProcess(pid)<br/>Process.Exited 订阅; exit 0 忽略"]
     F["NavigationCompleted"] --> G["OnNavigationCompleted()<br/>grace 后按 interval 探针"]
     G --> H["ExecuteScriptOnMainWebAsync<br/>UI 线程 await（禁 GetResult 死锁）"]
-    H --> I["EvaluatePageProbe<br/>解一层双重编码; 坏签名 > 好符号"]
-    I -->|"BadSignature"| J["Report(Page, E2008)"]
+    H --> I["EvaluatePageProbe<br/>解一层双重编码<br/>err坏签名一票 / 好符号 > DOM坏签名(降级Absent)"]
+    I -->|"err BadSignature"| J["Report(Page, E2008)<br/>🔧修复点3"]
     I -->|"GoodSymbol"| K["MarkHealthy<br/>只停页面探针"]
-    I -->|"Absent ×threshold"| J
+    I -->|"DOM坏签名→Absent ×threshold"| J
     C -->|"命中"| L["Report(Log, E2003)"]
     D -->|"回死"| M["Report(Http, E2004)"]
     E -->|"非零退出"| N["Report(Process, E2007)"]
@@ -196,7 +196,7 @@ graph TD
     O --> R["ExportBootDiagnostics<br/>diagnostics/boot-failure-*.zip"]
     O --> S["AskEnterSafeModeOnce<br/>闸门1: TryConsumeSessionPrompt<br/>闸门2: DSH_TEST_SAFE_MODE_ANSWER / NoUiMode"]
     S -->|"yes"| T["RunSafeModeLadder<br/>Suspend() → Tier1 → Tier2 → ResumeAfterRestart"]
-    S -->|"no"| U["本会话不再询问"]
+    S -->|"no + 曾激活"| U["🔧修复点4: Deactivate + 清DSH_PROFILE<br/>恢复正常启动路径（解粘滞）"]
     T -.->|"吸收态证据追加"| Q2["VerdictUpdated → 重写融合视图"]
 ```
 
@@ -219,6 +219,21 @@ graph TD
 - `safe-mode.json`：`lastFailure.{utc,code,summary,layers[]}`（四层融合视图，VerdictUpdated 重写）
 - `diagnostics/boot-failure-*.zip`：log-warn.txt/state.txt/errors.txt
 - 沙盒验收：`sandbox/verify-bootmonitor.ps1 S20–S24`
+
+---
+
+## 5. 2026-08 三处修复点（E2008 误判 / 僵尸清扫 / 安全模式粘滞）
+
+经日志取证锁定的三处代码级根因与修复点（详见提交记录）：
+
+| 修复点 | 现象 | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点1** | 强杀后端口仍被占 / E2005 | `KillProcess` 仅发 taskkill 即轮询（未等 taskkill 退出），确认窗口仅 300ms 存在竞态 | 业务逻辑下沉为 `ShellLogic.ProcessManagement.KillServiceProcess(pid, port)`：`RunTaskKill` 封装（cmd 包装+重定向+超时 Kill 整树）等待 taskkill 退出；温和 `taskkill /T` → 800ms → 强杀 `taskkill /T /F` → 确认 1500ms → 重试一次；失败响亮上报 E2005 并保留 pid 文件 | `Regression_BootLifecycle.RealOs.RealOs_KillServiceProcess_TerminatesLiveListener_AndFreesPort`、`..._RefusesWrongPort_NoMisKill` |
+| **修复点2** | 下次启动 E2005 端口占用（僵尸进程） | `SweepStaleServicePid` 缺失「活着且监听目标端口」认领分支（真僵尸直接落空） | `SweepStaleServicePid` 补该分支 → 调 `KillServiceProcess` 认领（内部 IsLikelyDshService + 端口归属双重防误杀）；`StopShellService` 端口释放超时后反查占用者按同样校验清理 | （认领构件即修复点1 的 RealOS 测试；`KillServiceProcess` 可靠终止真实监听进程即启动清扫闭环核心） |
+| **修复点3** | E2008 误判（真实 UI 已渲染却被判死） | body.innerText 含字面量坏签名（如 "bootstrap facade is missing"）被一票判死；threshold 仅用于好符号缺席，无「实质内容已渲染」豁免 | `EvaluatePageProbe` 语义调整：err 原文坏签名仍一票 BadSignature（保留 S22 快速捕获）；`good` 符号 → GoodSymbol（渲染豁免）；仅 DOM 文本坏签名（且未确认渲染）→ 降级 Absent 携带 `dom-suspect[签名]=原文摘录`，由 `BootHealthMonitor` 按 AbsentThreshold 连续计次才判死 | `BootGuardContractTests.*DomSuspect*`、`BootHealthMonitorTests.PageLayer_DomBadSignature_*`、`PageLayer_ErrBadSignature_StillFailsImmediately` |
+| **修复点4** | 安全模式粘滞（静默降级 .dsh-safe） | 用户答 "no" 后 `safe-mode.json`（tier=1, active）未解除，后续会话全部降级启动 | `AskAndMaybeEnterSafeMode` 用户答 "no" 且 `SafeMode.IsActive` 时执行 `Deactivate()` + 清除 `DSH_PROFILE` 环境变量 + Trace 记录，恢复正常启动路径 | `SafeModeStateTests.Activate_Then_Deactivate_PersistsRoundTrip` |
+
+**关键决策权衡**：不重新引入 CTRL_BREAK（误杀用户 shell 风险 > 收益）；不改 `BootProfile` 默认 grace/threshold（只修判定语义）；不削弱 `scripts/test.ps1` 静态断言。
 
 ---
 

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
 
@@ -462,10 +464,15 @@ public static class ShellLogic
                     if (err.Length > 0 && MatchBadSignature(err, profile.BadSignatures) is { } hitErr)
                         return new PageProbeResult(PageProbeKind.BadSignature,
                             "err[" + hitErr + "]=" + Truncate(err, 300));
-                    if (MatchBadSignature(text, profile.BadSignatures) is { } hitText)
-                        return new PageProbeResult(PageProbeKind.BadSignature,
-                            "dom[" + hitText + "]=" + Truncate(text, 300));
+                    // 2026-08 修复点3：实质内容已渲染（good 符号）→ 健康，豁免 DOM 文本里的隐藏
+                    // 坏签名字面量（如 "bootstrap facade is missing"），防真实 UI 已正常却被误判死。
                     if (good) return new PageProbeResult(PageProbeKind.GoodSymbol, null);
+                    // 2026-08 回归修复：DOM 文本坏签名**降级**为 Absent（仅当未确认渲染）。不再一票判死：
+                    // 交由 BootHealthMonitor 按 AbsentThreshold 连续多轮确认后才判死，证据不丢
+                    // （detail 携带 dom-suspect[签名]=原文摘录），抗单次误报。err 原文坏签名仍走上方一票路径。
+                    if (MatchBadSignature(text, profile.BadSignatures) is { } hitText)
+                        return new PageProbeResult(PageProbeKind.Absent,
+                            "dom-suspect[" + hitText + "]=" + Truncate(text, 300));
                     return new PageProbeResult(PageProbeKind.Absent, err.Length > 0 ? "err=" + Truncate(err, 200) : null);
                 }
                 finally { innerDoc?.Dispose(); }
@@ -635,6 +642,71 @@ public static class ShellLogic
             return binResolvable && versionMatches
                 ? ExistingTargetAction.AlreadyApplied
                 : ExistingTargetAction.ReplaceStale;
+        }
+    }
+
+    /// <summary>
+    /// 更新数据守卫策略（纯函数，ContractTests.UpdateGuardPolicyContractTests 锁定）。
+    /// [2026-08-23 用户回归] dsh 新版本首次启动会把 $HOME\.dsh 共享数据文件
+    /// （实测 .credentials.yaml）单向迁移为新格式（version+refs 布局）；一旦新版起不来
+    /// 而回退旧版，旧解析器读不懂新格式 → 插件树加载失败 → 服务 exit(1)，
+    /// "更新失败=隔天必炸"。策略三件套：apply 前"版本首拍"快照；启动自检失败 →
+    /// 回滚快照 + 隔离新运行时；好符号确认健康后解除武装。
+    /// 本类只做决策与命名，全部 IO 在 UpdateDataGuard。
+    /// </summary>
+    public static class UpdateGuardPolicy
+    {
+        public enum BootFailureAction { RollbackAndRestart, ExistingRecoveryFlow }
+
+        /// <summary>启动自检失败分支：存在已武装（已应用、未确认健康）的更新版本 → 自动回滚；
+        /// 否则走既有恢复流程（安全模式询问 / 重启询问），行为与历史完全一致。</summary>
+        public static BootFailureAction DecideBootFailure(string? appliedUnconfirmedVersion)
+            => string.IsNullOrWhiteSpace(appliedUnconfirmedVersion)
+                ? BootFailureAction.ExistingRecoveryFlow
+                : BootFailureAction.RollbackAndRestart;
+
+        /// <summary>版本号 → 文件名安全 token：非法字符替换 '_'，清理收尾点/空格，空值 → "unknown"。</summary>
+        public static string SanitizeVersionToken(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return "unknown";
+            var invalid = Path.GetInvalidFileNameChars();
+            var sb = new System.Text.StringBuilder(version.Length);
+            foreach (var c in version)
+                sb.Append(invalid.Contains(c) ? '_' : c);
+            var result = sb.ToString().Trim().TrimEnd('.', ' ');
+            return result.Length == 0 ? "unknown" : result;
+        }
+
+        /// <summary>
+        /// 快照目录名：pre-&lt;token&gt;-&lt;yyyyMMdd-HHmmss&gt;（UTC）。
+        /// 定宽时间戳保证目录名字典序 == 时间序——挑选与修剪都依赖该不变量（契约测试锁定）。
+        /// </summary>
+        public static string SnapshotDirName(string version, DateTime utc)
+            => $"pre-{SanitizeVersionToken(version)}-{utc:yyyyMMdd-HHmmss}";
+
+        private static string SnapshotPrefix(string version) => "pre-" + SanitizeVersionToken(version) + "-";
+
+        /// <summary>从候选目录名中选出该版本可回滚的最近快照；无匹配返回 null。</summary>
+        public static string? PickRollbackSnapshot(IEnumerable<string> dirNames, string version)
+        {
+            var prefix = SnapshotPrefix(version);
+            string? best = null;
+            foreach (var name in dirNames)
+            {
+                if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (best is null || string.Compare(name, best, StringComparison.OrdinalIgnoreCase) > 0)
+                    best = name;
+            }
+            return best;
+        }
+
+        /// <summary>快照修剪：按名称升序保留最近 <paramref name="keep"/> 个，返回应删除的较旧者（升序）。</summary>
+        public static IReadOnlyList<string> PruneSnapshotDirs(IEnumerable<string> dirNames, int keep)
+        {
+            var sorted = dirNames.OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToArray();
+            return sorted.Length <= keep
+                ? Array.Empty<string>()
+                : sorted.Take(sorted.Length - keep).ToArray();
         }
     }
 
@@ -1245,6 +1317,102 @@ public static class ShellLogic
             finally { CloseHandle(snap); }
             return map;
         }
+
+        // ============ 进程终止链路（2026-08 僵尸清扫竞态修复） ============
+
+        /// <summary>
+        /// 可靠终止 dsh 服务进程（组合根 <c>Program.KillProcess</c> 委托到此，业务逻辑下沉）。
+        /// 全程限时且不卡调用方：温和 taskkill /PID /T → 轮询 800ms → 强杀 taskkill /PID /T /F
+        /// → 确认 1500ms → 仍活重试一次强杀。每次都等待 taskkill 自身退出（修复旧实现"发完即轮询"的
+        /// 竞态：taskkill 未退出就被判定失效）。杀前双重身份校验（IsLikelyDshService + 端口归属 == pid），
+        /// 防 PID 复用误杀无辜进程。失败（超时/仍活）返回 false 并响亮上报 E2005，调用方保留 pid 文件
+        /// 留待下次启动由 SweepStaleServicePid 认领。
+        /// </summary>
+        public static bool KillServiceProcess(int pid, int port)
+        {
+            if (pid <= 0) return false;
+            if (!IsLikelyDshService(pid))
+            {
+                Logger.Warn($"refusing to kill pid={pid}: not a dsh (node) service process");
+                return false;
+            }
+            if (port > 0)
+            {
+                var owner = GetProcessIdByPort(port);
+                if (owner != pid)
+                {
+                    Logger.Warn($"refusing to kill pid={pid}: port {port} owner={owner} != pid (possible PID reuse)");
+                    return false;
+                }
+            }
+            // 温和阶段：taskkill /PID /T（不含 /F），等待 taskkill 自身退出
+            RunTaskKill($"/PID {pid} /T", timeoutMs: 4000);
+            if (WaitForProcessExit(pid, 800)) return true;
+            // 强杀阶段：taskkill /PID /T /F，等待 taskkill 退出后确认 1500ms
+            RunTaskKill($"/PID {pid} /T /F", timeoutMs: 4000);
+            if (WaitForProcessExit(pid, 1500)) return true;
+            // 仍活 → 重试一次强杀
+            RunTaskKill($"/PID {pid} /T /F", timeoutMs: 4000);
+            if (WaitForProcessExit(pid, 1500)) return true;
+            Logger.Error($"failed to terminate dsh service pid={pid} on port {port}; pid file kept for next-start sweep",
+                ErrorCodes.E2005);
+            return false;
+        }
+
+        /// <summary>
+        /// 经 cmd.exe /c 包装运行 taskkill（AGENTS.md 三必须：cmd 包装 + 输出重定向 + 超时
+        /// Kill(entireProcessTree)）。等待 taskkill 自身退出；超时则强杀 taskkill 整树并返回 false。
+        /// 命令是否真正杀掉目标由调用方 <see cref="WaitForProcessExit"/> 判定（taskkill 退出码不可靠）。
+        /// </summary>
+        internal static bool RunTaskKill(string args, int timeoutMs)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c taskkill {args} > NUL 2>&1")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = false,
+                RedirectStandardError = false,
+            };
+            using var proc = new System.Diagnostics.Process { StartInfo = psi, EnableRaisingEvents = false };
+            try
+            {
+                if (!proc.Start())
+                {
+                    Logger.Warn($"taskkill failed to start: {args}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"taskkill start threw: {ex.Message}");
+                return false;
+            }
+            if (!proc.WaitForExit(timeoutMs))
+            {
+                // taskkill 自身超时（极罕见）→ 强杀 taskkill 整树后判定失败
+                try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                return false;
+            }
+            return true; // taskkill 已退出；目标是否真死由 WaitForProcessExit 判定
+        }
+
+        /// <summary>轮询进程是否已退出（最多 timeoutMs，每 50ms 探一次）。</summary>
+        internal static bool WaitForProcessExit(int pid, int timeoutMs)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (!IsProcessAlive(pid)) return true;
+                System.Threading.Thread.Sleep(50);
+            }
+            return !IsProcessAlive(pid);
+        }
+
+        private static bool IsProcessAlive(int pid)
+        {
+            try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
+            catch { return false; }
+        }
     }
 
     /// <summary>npm 工具函数：路径解析、错误分类、PATH 查找。</summary>
@@ -1457,11 +1625,14 @@ public static class ShellLogic
         /// <summary>
         /// 构造 ToastText02 模板 XML（标题 + 正文两行）。title/body 做 XML 转义，
         /// 防止版本号等外部输入破坏结构（npm 版本串理论可控，但防御性转义零成本）。
+        /// duration="long"：屏幕弹窗停留约 25 秒（默认 short ≈5 秒，用户来不及点击
+        /// 触发更新——2026-08-22 用户回归反馈）。注意 ExpirationTime 控制的是操作
+        /// 中心留存时长，与弹窗显示时长是两个维度。
         /// </summary>
         public static string BuildToastXml(string title, string body)
         {
             var esc = System.Security.SecurityElement.Escape;
-            return "<toast><visual><binding template=\"ToastText02\">"
+            return "<toast duration=\"long\"><visual><binding template=\"ToastText02\">"
                  + $"<text id=\"1\">{esc(title ?? "")}</text>"
                  + $"<text id=\"2\">{esc(body ?? "")}</text>"
                  + "</binding></visual></toast>";

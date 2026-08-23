@@ -163,8 +163,10 @@ public class BootHealthMonitorTests
     // ---------------- 页面层 ----------------
 
     [Fact]
-    public async Task PageLayer_BadSignatureHit_FailsWithOriginalText()
+    public async Task PageLayer_DomBadSignature_RequiresAbsentThresholdToFail_CarriesSuspectEvidence()
     {
+        // 2026-08 回归：DOM 文本坏签名降级为 Absent，需连续 AbsentThreshold(3) 轮才判死，
+        // 证据不丢（detail 携带 dom-suspect 原文），摘要改为"好符号连续 N 次缺席"。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
             _ => Task.FromResult("{\"good\":false,\"text\":\"Plugin crash: window.__ModuleLoader__ bootstrap facade is missing\",\"err\":\"\"}"));
         var failedTask = WaitFailedAsync(m);
@@ -172,8 +174,39 @@ public class BootHealthMonitorTests
         var verdict = await failedTask;
         Assert.Equal("E2008", verdict.ErrorCode);
         var page = Assert.Single(verdict.Evidence, e => e.Layer == BootLayer.Page);
-        Assert.Contains("坏签名", page.Summary);
+        Assert.Contains("缺席", page.Summary);
         Assert.NotNull(page.Detail);
+        Assert.Contains("dom-suspect[", page.Detail);
+        Assert.Contains("bootstrap facade is missing", page.Detail);
+    }
+
+    [Fact]
+    public async Task PageLayer_DomBadSignature_FirstRoundStaysPending_AntiFalsePositive()
+    {
+        // 抗误报：DOM 坏签名首轮（远不足 AbsentThreshold）必须仍 Pending，绝不误判 E2008。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => Task.FromResult("{\"good\":false,\"text\":\"only a hidden node says bootstrap facade is missing\",\"err\":\"\"}"));
+        m.Start();
+        m.OnNavigationCompleted();
+        await Task.Delay(90); // ≪ 3 轮（ProbeIntervalMs=40 → ~2 轮）
+        Assert.Equal(BootHealthState.Pending, m.State);
+    }
+
+    [Fact]
+    public async Task PageLayer_ErrBadSignature_StillFailsImmediately()
+    {
+        // err 原文坏签名仍一票否决（S22"捕获原文"硬要求，抗误报仅限 DOM 文本层）。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => Task.FromResult("{\"good\":false,\"text\":\"ok\",\"err\":\"Uncaught: bootstrap facade is missing\"}"));
+        var failedTask = WaitFailedAsync(m);
+        m.OnNavigationCompleted();
+        var verdict = await failedTask;
+        Assert.Equal("E2008", verdict.ErrorCode);
+        var page = Assert.Single(verdict.Evidence, e => e.Layer == BootLayer.Page);
+        // err 原文坏签名走 BadSignature 一票路径：摘要含 "坏签名"，错误码 E2008
+        // （BootHealthMonitor 的 BadSignature 分支不把探针 detail 透传进 Summary，故只校验摘要关键字）。
+        Assert.Contains("坏签名", page.Summary);
+        Assert.Equal("E2008", page.ErrorCode);
     }
 
     [Fact]

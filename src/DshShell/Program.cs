@@ -1097,6 +1097,7 @@ internal static class Program
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
+        UpdateDataGuard.Init(DataDir, DshHomeDir); // [update-guard] apply 前快照 / 自检失败回滚
         HandlePendingUpdateAtStartup(ct, progress); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
         CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
@@ -1109,6 +1110,15 @@ internal static class Program
 
     /// <summary>等待主窗就绪后一次性弹"立即重启应用"提示的版本（T2 规则 2，由主窗 Load 消费）。</summary>
     private static string? _applyRestartPendingVersion;
+
+    /// <summary>[update-guard] 已应用且未确认健康的更新版本（回滚武装标记；null=未武装）。
+    /// 武装来源：① 本会话 apply 成功；② 跨会话发现"当前身份版本存在未确认快照"。
+    /// 启动自检失败时一次性消费（无论成败），防"失败→重试→再失败"循环。</summary>
+    private static string? _updateRollbackArmedVersion;
+
+    /// <summary>[update-guard] apply 开始前记录的运行身份版本——npm 全局路径回滚时的降级目标
+    /// （SelfContained 路径回滚靠隔离运行时目录，不需要它）。</summary>
+    private static string? _preApplyIdentityVersion;
 
     /// <summary>更新安装进度桥接（任务一）：RunLauncherAppPipelineAsync 装配时指向 Splash 进度转发，
     /// RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志逐行上报。会话结束清空防污染。</summary>
@@ -1480,6 +1490,8 @@ internal static class Program
                 // 统一 [boot-monitor] 前缀：所有层轨迹在统一日志中可被 grep/场景断言识别
                 trace: message => Trace("[boot-monitor] " + message));
             monitor.Failed += HandleBootHealthFailed;
+            // [update-guard] 好符号确认健康 → 快照落"已确认"、解除回滚武装
+            monitor.HealthyDetected += HandleUpdateConfirmedHealthy;
             // 吸收态证据追加（如进程死后 HTTP 层补充）→ 重写 safe-mode-state 融合视图（S24 验收）
             monitor.VerdictUpdated += v =>
             {
@@ -1491,6 +1503,7 @@ internal static class Program
                 catch (Exception ex) { Logger.Warn("boot-monitor: re-persist failed: " + ex.Message); }
             };
             BootMonitor = monitor;
+            ArmUpdateRollbackGuardFromPersistedState(); // [update-guard] 跨会话观察期武装
             monitor.Start();
             if (pid > 0) monitor.AttachProcess(pid);
             Logger.Info($"[boot-monitor] started url={Target.Url} log={UnifiedLogPath} servicePid={(pid > 0 ? pid.ToString() : "n/a")}");
@@ -1543,6 +1556,18 @@ internal static class Program
     {
         try
         {
+            // 0) [update-guard/E4003] 回滚闸门：当前运行的是"已应用、未确认健康"的更新版本，
+            //    启动自检失败极可能由新版自身或其数据迁移导致 → 不进安全模式/手动重启询问，
+            //    直接自动回滚（还原共享数据 + 隔离新运行时）并用旧版重启服务。
+            //    （2026-08-23 用户回归：rc.2 迁移 .credentials.yaml 后回退 rc.8 必炸。）
+            if (_updateRollbackArmedVersion is not null &&
+                ShellLogic.UpdateGuardPolicy.DecideBootFailure(_updateRollbackArmedVersion)
+                    == ShellLogic.UpdateGuardPolicy.BootFailureAction.RollbackAndRestart)
+            {
+                HandleUpdateRollbackOnBootFailure(verdict);
+                return;
+            }
+
             // 1) 证据落盘：safe-mode-state.json 的 lastFailure 字段（原子写，崩溃/重启仍可查）
             PersistBootFailureEvidence(verdict);
 
@@ -1578,6 +1603,148 @@ internal static class Program
         catch (Exception ex)
         {
             Logger.Warn("[boot-monitor] failure handling threw: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// [update-guard] 跨会话武装：当前身份版本存在"未确认健康"的快照（上次会话应用更新后
+    /// 没走到好符号就结束了）→ 本次启动仍在回滚观察期，启动自检失败同样自动回滚。
+    /// </summary>
+    private static void ArmUpdateRollbackGuardFromPersistedState()
+    {
+        try
+        {
+            if (_updateRollbackArmedVersion is not null) return; // 本会话已武装（apply 成功），不覆盖
+            var identityVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
+            var unconfirmed = UpdateDataGuard.UnconfirmedSnapshotVersion(identityVersion);
+            if (unconfirmed is null) return;
+            _updateRollbackArmedVersion = unconfirmed;
+            Logger.Info($"[update-guard] rollback guard armed (cross-session) for v{unconfirmed}");
+        }
+        catch (Exception ex)
+        {
+            // 发现链失败属预期内操作失败：降级为不武装，走既有恢复流程
+            Logger.Warn("[update-guard] persisted-arm check failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>[update-guard] 好符号确认：新版本真实跑起来了 → 快照标记健康、解除武装。</summary>
+    private static void HandleUpdateConfirmedHealthy()
+    {
+        var version = _updateRollbackArmedVersion;
+        if (version is null) return;
+        _updateRollbackArmedVersion = null; // 先 disarm 再持久化：确认动作自身失败最多回到观察期，不会误回滚
+        try
+        {
+            UpdateDataGuard.MarkConfirmedHealthy(version);
+            Logger.Info($"[update-guard] update v{version} confirmed healthy; rollback guard disarmed");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[update-guard] healthy-confirm failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// [update-guard/E4003] 启动自检失败 × 回滚闸门已武装：停服 → 还原更新前共享数据 →
+    /// 隔离新运行时（SelfContained 路径）/ 尽力降级全局包（npm 路径）→ 以旧版重启服务并恢复监控。
+    /// 武装标记一次性消费（无论成败），绝不重复回滚。复用安全模式重启的观测语义：
+    /// Suspend（壳主动重启窗口不判死）→ 停启 → 就绪等待 → ResumeAfterRestart。
+    /// </summary>
+    private static void HandleUpdateRollbackOnBootFailure(DshWeb.Lifecycle.BootVerdict verdict)
+    {
+        var version = _updateRollbackArmedVersion!;
+        _updateRollbackArmedVersion = null; // 一次性消费（防循环）
+        try
+        {
+            // 证据先行：失败裁决与诊断包照常落盘，回滚原因可追责
+            PersistBootFailureEvidence(verdict);
+            ExportBootDiagnostics();
+            Logger.Error(
+                $"[update-rollback] update v{version} failed boot self-check [{verdict.ErrorCode}]; " +
+                "rolling back pre-update data and quarantining runtime",
+                ErrorCodes.E4003, new { version, code = verdict.ErrorCode });
+
+            BootMonitor?.Suspend();
+            Trace("[update-rollback] stopping service before rollback");
+            StopShellService();
+
+            var result = UpdateDataGuard.RollbackAfterFailedUpdate(
+                version, $"boot self-check failed [{verdict.ErrorCode}]");
+
+            // npm 全局路径：没有运行时目录可隔离 → 尽力把全局包降回 apply 前版本
+            // （--prefer-offline 离线优先；失败透明上报，不阻塞旧版重启——旧版可能本就是全局包）
+            if (result.QuarantinedRuntimeDir is null
+                && !string.IsNullOrWhiteSpace(_preApplyIdentityVersion)
+                && !string.Equals(_preApplyIdentityVersion, version, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    Logger.Info($"[update-rollback] best-effort npm downgrade to v{_preApplyIdentityVersion}");
+                    var sources = GetNpmRegistrySources();
+                    TryNpmOverRegistries(
+                        sources,
+                        srcIdx => RunNpmCommand(
+                            $"install -g \"@deepseek-ai/dsh@{_preApplyIdentityVersion}\" --prefer-offline --no-audit --no-fund"
+                            + sources[srcIdx],
+                            out _, default, null),
+                        "rollback-downgrade", out _);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"[update-rollback] npm downgrade threw (continuing): {ex.Message}");
+                }
+            }
+
+            Trace("[update-rollback] restarting service on previous version");
+            var startOk = StartDshServiceViaVbs();
+            if (!startOk)
+            {
+                BootMonitor?.Stop();
+                ShowError(ErrorCodes.E4003,
+                    $"dsh 更新 v{version} 启动自检失败，数据已自动回滚，但服务重启失败，请查看统一日志后重新打开 dsh-launcher。",
+                    log: false);
+                return;
+            }
+
+            var deadline = DateTime.UtcNow.AddSeconds(90);
+            while (DateTime.UtcNow < deadline && !HttpReady())
+                Thread.Sleep(500);
+            if (!HttpReady())
+            {
+                Logger.Error("[update-rollback] service not ready within 90s after rollback", ErrorCodes.E2004);
+                BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
+                ShowError(ErrorCodes.E4003,
+                    $"dsh 更新 v{version} 启动自检失败，数据已自动回滚，但旧版服务 90 秒内未就绪，请查看统一日志。",
+                    log: false);
+                return;
+            }
+
+            BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+            try
+            {
+                var form = GetMainFormForDialog();
+                if (form is not null && form.IsHandleCreated)
+                    form.BeginInvoke(() =>
+                    {
+                        try { WebViewManager.MainWeb?.CoreWebView2?.Reload(); } catch { /* 页面已关 */ }
+                    });
+            }
+            catch { /* 窗体已关闭 */ }
+
+            ShowError(ErrorCodes.E4003,
+                $"dsh 更新 v{version} 启动自检失败，已自动回滚。\n\n" +
+                $"· 已还原更新前的配置数据（{(result.DataRestored ? string.Join("、", result.RestoredFiles) : "无需还原/快照缺失")}）\n" +
+                $"· 新版本运行时{(result.QuarantinedRuntimeDir is null ? "无（npm 路径已尽力降级）" : "已隔离出启动发现链")}\n" +
+                "· 服务正以旧版本重新启动。\n\n" +
+                "如需排查新版问题，请携带统一日志与 update-guard\\rollback-history.jsonl 反馈。",
+                log: false);
+            Logger.Info($"[update-rollback] completed for v{version}; service restored on previous version");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("[update-rollback] threw: " + ex.Message);
+            BootMonitor?.Stop();
         }
     }
 
@@ -1670,7 +1837,19 @@ internal static class Program
     {
         try
         {
-            if (!AskEnterSafeModeOnce(form, headline, askBody)) return;
+            if (!AskEnterSafeModeOnce(form, headline, askBody))
+            {
+                // 2026-08 修复点4：用户对安全模式询问答 "no"。若此前处于粘滞激活态
+                // （上一会话进入安全模式、本会话尚未退出），则明确解粘滞——否则后续所有会话会
+                // 静默以 --profile .dsh-safe 降级启动。恢复正常启动路径。
+                if (SafeMode.IsActive)
+                {
+                    SafeMode.Deactivate();
+                    Environment.SetEnvironmentVariable("DSH_PROFILE", null);
+                    Trace("SAFEMODE: user declined; deactivated sticky safe-mode and cleared DSH_PROFILE");
+                }
+                return;
+            }
             if (form is null || form.IsDisposed)
             {
                 // 无主窗可承载安全模式重启（罕见：失败早于建窗）——响亮记录，不静默假成功
@@ -2856,6 +3035,11 @@ internal static class Program
         // [Evidence-1] Apply 开始
         Logger.Info($"[Apply] Start: pending exists, target version={version}, runtimeDir={runtimeDir ?? "null"}, port={Target.Port}");
 
+        // [update-guard] apply 前记录运行身份版本（npm 路径回滚的降级目标）+ 共享数据版本首拍
+        // （同版本只拍一次；快照失败不阻断 apply，但日志响亮留痕——E4003）。
+        _preApplyIdentityVersion ??= DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
+        UpdateDataGuard.SnapshotBeforeApply(version);
+
         // 测试钩子
         if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
         {
@@ -2900,6 +3084,9 @@ internal static class Program
 
                 // [Evidence-3] 切换成功（AlreadyApplied 视为重复应用同版本，同样成功收尾）
                 Logger.Info($"[Apply] Result: atomic swap success (prepare={prepareAction}), Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
+
+                // [update-guard] 武装回滚闸门：新版启动自检失败 → 自动还原数据 + 隔离运行时
+                _updateRollbackArmedVersion = version;
 
                 StagedUpdate.ClearPending();
                 CleanupStagingCache();
@@ -2951,6 +3138,9 @@ internal static class Program
             npmSw.Stop();
             // [Evidence-3] npm 成功
             Logger.Info($"[Apply] Result: npm success, Duration={npmSw.ElapsedMilliseconds}ms");
+
+            // [update-guard] 武装回滚闸门：新版启动自检失败 → 自动还原数据 + 尽力降级全局包
+            _updateRollbackArmedVersion = version;
 
             progress?.Invoke($"更新 v{version} 已应用完成。");
             StagedUpdate.ClearPending();
@@ -3636,11 +3826,21 @@ internal static class Program
             if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) != pid)
             {
                 // P1-3（质量治理）：记录过但未监听目标端口的 node 大概率是 PID 复用（无关进程）——
-                // 不杀（KillProcess 的端口校验也会拒绝），只清 pid 文件；进程本身不是我们管理的服务。
+                // 不杀，只清 pid 文件；进程本身不是我们管理的服务。
                 Logger.Warn($"stale service pid={pid} alive but not listening on port {Target.Port}; clearing pid file (possible PID reuse)",
                     ErrorCodes.E2005, new { port = Target.Port });
                 ClearServicePidFile();
+                return;
             }
+            // 活着且确实监听目标端口：真僵尸 → 认领并清理（启动清扫闭环，2026-08 修复点2）。
+            // KillServiceProcess 内部再做身份校验 + 端口归属双重防误杀，误杀无辜进程概率为零。
+            Trace($"SWEEP: adopting stale service pid={pid} on port {Target.Port}");
+            bool killed = ShellLogic.ProcessManagement.KillServiceProcess(pid, Target.Port);
+            if (killed && !IsProcessAlive(pid))
+                ClearServicePidFile();
+            else
+                Logger.Error($"stale dsh service pid={pid} on port {Target.Port} could not be terminated; pid file kept for next-start sweep",
+                    ErrorCodes.E2005, new { pid, port = Target.Port });
         }
         catch { /* 清扫失败不影响启动 */ }
     }
@@ -3687,68 +3887,14 @@ internal static class Program
     }
 
     /// <summary>停止指定 PID（v0.3.1 P2 优雅终止 + 质量治理 P1-2/P2-10）：
-    /// ① 杀前身份校验（防 PID 复用误杀无辜进程）：非 node 进程/进程不存在 → 不杀，返回 false；
-    /// ② 尽力而为优雅终止（CTRL_BREAK，无控制台自动降级温和 taskkill）；
-    /// ③ 短等待未退则强制 /f，强杀后短暂确认；仍活 → 返回 false
-    ///   （调用方保留 pid 文件，下次启动由 SweepStaleServicePid 认领，避免无主残留）。
-    /// 全程限时，不卡调用方。</summary>
+    /// 薄委托给 <see cref="ShellLogic.ProcessManagement.KillServiceProcess"/>（业务逻辑下沉，
+    /// 2026-08 僵尸清扫竞态修复：等待 taskkill 自身退出、强杀确认窗口 300ms→1500ms、失败重试一次、
+    /// 失败响亮上报 E2005 并保留 pid 文件）。签名不变，爆炸半径最小。</summary>
     private static bool KillProcess(int pid)
     {
         try
         {
-            Trace($"KILL: start pid={pid} targetPort={Target.Port}");
-            // 质量治理 P1-2：PID 复用防护——pid 文件/端口反查得到的 PID 可能已被系统
-            // 复用给无关进程，杀前必须确认它是 dsh 服务（node）进程。
-            if (!ShellLogic.ProcessManagement.IsLikelyDshService(pid))
-            {
-                Logger.Warn($"refusing to kill pid={pid}: not a dsh (node) process (possible PID reuse)",
-                    ErrorCodes.E2005, new { pid });
-                return false;
-            }
-            Trace($"KILL: IsLikelyDshService ok pid={pid}");
-            // P1-3（质量治理）：端口归属校验——记录过的 PID 必须正在监听目标端口。
-            // "node 进程但不在监听"几乎必然是 PID 复用给了无关 node（我们的服务就绪时才写
-            // pid 文件，就绪即监听；进程活着却丢监听不符合 dsh 运行特征），拒绝误杀。
-            var listeningPid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
-            Trace($"KILL: FindPidListeningOn(port)={listeningPid}");
-            if (listeningPid != pid)
-            {
-                Logger.Warn($"refusing to kill pid={pid}: not listening on port {Target.Port} (possible PID reuse)",
-                    ErrorCodes.E2005, new { pid, port = Target.Port });
-                return false;
-            }
-            Trace($"KILL: calling TryGracefulStop pid={pid}");
-            if (!TryGracefulStop(pid))
-            {
-                Trace($"KILL: TryGracefulStop failed, fallback taskkill /T pid={pid}");
-                Process.Start(new ProcessStartInfo("taskkill", "/pid " + pid + " /T")
-                { UseShellExecute = false, CreateNoWindow = true });
-            }
-            else
-            {
-                Trace($"KILL: TryGracefulStop (CTRL_BREAK) sent to pid={pid}");
-            }
-            // v0.4.0：等待从 1.5s 缩短至 800ms——taskkill /T 已发出即任务完成，OS 回收进程
-            // 需要的时间短于此；缩短同步等待消除"关窗卡两秒"（用户反馈，曾修过同类问题）。
-            var deadline = DateTime.UtcNow.AddMilliseconds(800);
-            while (DateTime.UtcNow < deadline && IsProcessAlive(pid))
-                Thread.Sleep(100);
-            if (IsProcessAlive(pid))
-            {
-                Process.Start(new ProcessStartInfo("taskkill", "/f /pid " + pid + " /T")
-                { UseShellExecute = false, CreateNoWindow = true });
-                // 质量治理 P2-10：强杀后确认；仍活则不删 pid 文件，留待下次启动认领
-                var hardDeadline = DateTime.UtcNow.AddMilliseconds(300);
-                while (DateTime.UtcNow < hardDeadline && IsProcessAlive(pid))
-                    Thread.Sleep(100);
-                if (IsProcessAlive(pid))
-                {
-                    Logger.Warn($"process pid={pid} still alive after force kill; pid file kept for next-start sweep",
-                        ErrorCodes.E2005, new { pid });
-                    return false;
-                }
-            }
-            return true;
+            return ShellLogic.ProcessManagement.KillServiceProcess(pid, Target.Port);
         }
         catch { return false; }
     }
@@ -3854,8 +4000,19 @@ internal static class Program
                 while (DateTime.UtcNow < deadline && ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
                     Thread.Sleep(80);
                 if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
+                {
+                    // 2026-08 修复点2 兜底：端口释放超时 → 反查占用者，确属 dsh 服务则认领清理
+                    // （防端口被系统回收给无关进程卡住关窗）。KillServiceProcess 内部再做身份 +
+                    // 端口归属双重校验，非我们管理的进程绝不被误杀。
+                    int occupant = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
+                    if (occupant > 0 && occupant != pid)
+                    {
+                        Trace($"STOP: port {Target.Port} still occupied by pid={occupant}; attempting reclaim");
+                        ShellLogic.ProcessManagement.KillServiceProcess(occupant, Target.Port);
+                    }
                     Logger.Warn($"service pid={pid} killed but port {Target.Port} still occupied",
                         ErrorCodes.E2005, new { pid, port = Target.Port });
+                }
                 else
                     ClearServicePidFile();
             }
