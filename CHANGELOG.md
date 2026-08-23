@@ -2,18 +2,77 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-08-19
+
+> ## ⚠️ 预览版（Preview）—— 请先阅读
+>
+> 本版本为 **预览发布（Preview）**，可能包含未知 Bug、行为变更或不稳定表现，**仅供体验与测试，请勿视为正式稳定版本**。
+> 若在使用中发现问题，欢迎提交 [Issue](https://github.com/Ruler4396/dsh-launcher/issues)（请附上 `dsh.log` 与简要复现步骤），我们会尽快跟进处理。
+
+> 本版本是一次**大规模架构重构**：将 3000 行的 God Object `Program.cs` 拆分为职责单一的 Manager + 显式状态机，引入极速启动模型，并完成多显示器 DPI 修复。行为应尽量与前版一致，但因改动面广，属预览性质。
+
+### 新增
+
+- **极速启动模型**：启动状态窗（Splash）双缓冲渲染 + `IProgress<T>` 后台流水线回填进度，双击后 <500ms 出现启动窗；取消按钮只撤销后台流程、不放弃已在后台进行中的服务下载/启动；`DSH_TEST_SPLASH_DELAY_MS` 测试钩子可模拟后台耗时。
+- **多显示器 DPI 最大化修复（0px 间隙）**：物理像素工作区 + frame 补偿决策下沉 `WindowGeometry.ComputeMaximizedMinMaxInfo`；新增 `Win32/DisplayMetricsProvider.cs`、`Win32/MonitorDpiMetrics.cs`（`IDisplayMetricsProvider` 可注入，Headless 单测覆盖负坐标副屏/异构 DPI 边界）。
+- **UI TestHook（NamedPipe，ADR-009）**：`DSH_TEST_MODE=1` 时激活的 `Win32/UiTestHook.cs` 内部通信通道，供自动化发 `ToggleMaximize`/`GetWindowRect`/`GetWorkArea`/`Shutdown` 精确验证窗口几何，生产路径零接触。
+- **无头 UI 几何自测 `--ui-selftest`**：建窗→最大化→断言"窗口==工作区 0px"，退出码 0/1/2，结果落盘 `ui-selftest-result.txt`；配套 `.github/workflows/ui-test.yml` 在 windows-latest 跑几何回归。
+- **跨屏最大化 E2E（无物理硬件）**：`scripts/install-virtual-display.ps1`/`Set-VirtualDisplay.ps1` 注入 IDD 虚拟副屏 + 异构 DPI（150%），`MaximizeAcrossVirtualDisplayTests` 断言最大化后窗口 ⊆ 副屏工作区（≤2px）。
+- **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION / WM_NCCALCSIZE / WM_NCACTIVATE / F11 钩子 / 校验和源 / 日志轮转 / 原子写 / 生命周期）。
+
+### 重构（架构，核心）
+
+- **显式生命周期状态机（ADR-008）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast）；新增 `WebViewCrashed` 触发器（Running 自转移：崩溃被拦截并触发重载，不终结应用）。
+- **Manager 层（ADR-008）**：新增 `Managers/` 五个职责接口 + `RuntimeManager`（委托 RuntimeResolver，`confirmDownload` 注入保持"先确认后下载"契约）、`ServiceManager`（就绪探测，探针可注入）、`WebViewManager`（WebView2 事件接线迁入）、`WindowManager`、`TrayManager`、`F11LowLevelHook`。
+- **组合根统一启动编排（ADR-010）**：`LauncherApp` 装配各 Manager 并把 `LauncherLifecycle` 的"状态→副作用"接线，**彻底替换 `Program.Main` 的旧 SplashForm 流水线**；解析 `DSH_WEB_URL`/`DSH_WEB_PORT`（修复硬编码 3080）；副作用（维护 IO/拉起服务/就绪探针/僵尸清理）经委托注入，自身不引用 Program。
+- **`Program.cs` 瘦身 + 分步纯移动拆分**：窗体类迁出至 `Windows/`（`DshShellForm`/`SplashForm`/`TrayMenuForm`）、`CustomTitleBar` 迁出至 `Chrome/`、WebView2 事件接线迁入 `WebViewManager`（InitWebViewAsync/崩溃自愈/下载/弹窗策略）、托盘生命周期与主题监听迁入 `WindowManager`（依赖委托注入 + `VerifyDependencies` 接线自检）。
+- **解除隐式循环依赖（ADR-011）**：`WindowManager` 对 `Program` 的 5 处静态引用（`CreatePopup`/`ApplyShadow`/`ShowWindowNative`/`ResolveDarkMode`/`Trace`）全部改为组合根注入的委托（`PopupFactory`/`ApplyShadowAction`/`ShowWindowAction`/`ResolveDarkModeProvider`/`TraceAction`），切断 Program↔WindowManager 环。
+- **异常边界治理**：`WebViewManager` 全部静默 `catch{}`（8 处）改为捕获特定异常 + `Logger.Warn` 留痕；`RuntimeResult.Failed()` 保留错误码（E1002-E1005 诊断语义完整）。
+
+### 修复
+
+- **多显示器最大化 `ptMaxTrackSize` 修正**：Normal 态拖拽贴边时窗口不再比工作区小一圈（业界惯例：maxTrack 直接用物理工作区尺寸，maxSize 仍扣 frame 补偿 DWM 外扩）。
+- **启动白屏 / 组件延迟绘制（回归根因）**：`LauncherApp.RunStartupAsync` 首个 await 前的同步阻塞（`TcpClient.Connect` 本机可达 2s、数据迁移 IO）曾卡死 UI 线程导致 Splash 先全白、控件后绘制——全部同步副作用已包 `Task.Run`，首个 await 即让出 UI 线程。
+- **"正在检查 dsh 服务…"阶段卡顿（ADR-013）**：`ShellLogic.PortOpenAsync`（`ConnectAsync` + 3s 超时）、`ServiceManager` 探测异步化、HTTP 探测移入后台线程，检查期间窗体可拖动/重绘、取消按钮立即响应。
+- **Splash 启动窗 UI 紧凑化**：窗体 440×232 → 380×196 → 380×180，边距统一 16px，消除"字少窗空"视觉失衡。
+- **`RuntimeResult` 错误码保留**：修复 `Failed()` 工厂丢弃错误码问题，E1002/E1003/E1004/E1005 诊断语义完整。
+- **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → 改为 `Start-Process -Wait -PassThru` + 结果落盘。
+- **更新链路修复（rc6→rc7 检测不到 + 点击下载 E4001 + 应用卡死/取消无效）**：
+  - `CompareVersions` 改完整 SemVer 比较，支持 `0.1.0-rc.x` prerelease（旧 `Version.TryParse` 对 `-rc` 解析失败恒判"无更新"）；
+  - `ResolveLocalDshVersion` / `RunNpmCommand` 改经 `cmd.exe /c` 执行（CreateProcess 不解析 npm/dsh 的 `.cmd`/`.ps1` shim → 版本检测取不到、`npm pack` 下载恒 E4001）；
+  - **更新应用可取消**：`RunNpmCommand` 增 `CancellationToken`，`ct.Register` 立即 `Kill` npm 进程树；`ApplyPendingDshUpdate`/`RunBackgroundMaintenance` 链式传 ct，取消保留 pending 下次启动再应用、不误计 E4002——修复"重启卡在启动服务、点取消几十秒才关"（阶段 0 npm install 30-60s 不可取消所致）；
+  - `ApplyPendingDshUpdate` 上移到阶段 0 后台维护（不再伪装成"正在启动 dsh 服务…"），阶段 0 新增"正在准备启动环境…"文案；
+  - 更新确认 `MessageBox` 带 owner + 调用前 `Activate()`，避免弹窗被遮挡不置前。
+- **最大化 0px 间隙（e2e-geo 8px 缝隙回归）**：去除去 WS_CAPTION 窗口的无效 DWM frame 补偿——该类窗口最大化不外扩，补偿反而把窗口缩一圈（`DshShellForm` 改回无补偿重载 + `WindowGeometry` 文档修正）。
+- **僵尸端口三重验证（"卡在等待服务就绪"根因修复）**：仅凭 TCP `PortOpen` 决定"跳过拉起"会误判僵尸服务（端口开但 HTTP 死）为健康，导致对半死服务傻等 180s 超时 E2002。新增 `ShellLogic.GetProcessIdByPort`（P/Invoke `GetExtendedTcpTable` + netstat 回退）+ `IsLikelyDshService` 进程身份校验 + 快速 HTTP 探测三重验证：`Healthy`（跳过拉起）/`Zombie`（`taskkill /T /F` 强杀 node + cmd/npx 祖先外壳后重启）/`Foreign`（非 dsh 进程占用，快速失败 E2004 提示端口冲突）。
+- **Logger 防锁死 + fallback（诊断盲区修复）**：`File.AppendAllText`（内部 `FileShare.Read`）被残留 `cmd >> dsh.log` 重定向句柄阻塞时静默失败，导致启动诊断日志全丢。改为显式 `FileStream` + `FileShare.ReadWrite`；仍被独占锁死时写入 `%TEMP%\dsh-launcher-fallback-{pid}.log` 并向 `Console.Error` 输出 `[FATAL LOGGER]` 告警，Splash 黄色提示"日志文件被占用"；`WaitServiceReady` 错误标志检查回退读 fallback。
+- **更新安装 UI 联动**：`ApplyPendingDshUpdate` 执行 npm install 期间 Splash 实时显示"正在应用更新 (vX)…"+ npm 逐行安装日志（`BeginOutputReadLine` 滚动转发，"added 50 packages"），并禁用取消按钮（防 npm install 中途强杀损坏 node_modules）；更新失败（非网络类）弹模态"自动应用更新失败，将继续使用旧版本启动，原因：…"，网络/超时类保留 pending 下次重试、权限/包损坏类清 pending 防死循环。
+- **更新文案预期管理**：下载完成弹窗/托盘气泡/询问弹窗统一改为"下次重启启动器时将自动安装（预计需要 1-2 分钟，期间请耐心等待）"，消除"重启即生效"的误导。
+- **更新链路改进（后台静默下载 + 本地直装）**：① 下载成功**不再弹 Modal**（不打断用户当前使用 harness），仅托盘气泡轻提示；② 应用更新**优先用下载时落地的本地 tarball**（`npm install -g <tarball>`，不 npx 现场拉主包），`pending-update.json` 记录 tarball 文件名（`StagedUpdate.LocateTarball` 三级定位：pending 名→命名规则→staging 模糊匹配）；③ tarball 缺失（缓存被清/旧记录）才回退线上拉取，Splash 如实显示"需要在线下载 dsh 组件，预计 1-2 分钟"。
+- **修复主窗崩溃（0xc0000005，ImmSetOpenStatus）**：更新应用完成、主窗初始化 WebView2 时，WinForms 对宿主控件的 IME 状态管理在输入法活跃时偶发无效 HIMC 句柄 → 访问违规崩溃、窗口消失（用户反馈"重启后窗口消失"真凶）。修复：Form 与 WebView2 控件均置 `ImeMode.Disable`（页面输入法由 WebView2/Chromium 内部处理，WinForms 无需介入）。
+- **更新文案诚实化**：`npm pack` 只下载主包 tarball（约 30KB，秒级正常），dsh 有 50+ 个 `@deepseek-ai/*` 依赖子包，重启安装时 npm 仍需在线解析——气泡/弹窗统一改为"主程序已下载，重启后自动安装（需联网解析依赖，预计 1-2 分钟）"，不再误导"已全部下载完、无需再次下载"。
+- **后台依赖预热（重启秒装）**：后台 `npm pack` 后，在 `staging\prefetch_temp` 中执行一次完整 `npm install --prefix deps --no-audit --no-fund`，把全部 `@deepseek-ai/*` 依赖子包拉入全局 npm cache——重启时 `npm install -g <tarball>` 完全命中本地缓存，从"分钟级"降到"秒级"；预热与安装共用同一 `DSH_NPM_MIRROR` registry（防 cache miss）；预热失败仅 Warn 降级（不中断，保留 tarball 回退在线安装）；预热超时 180s 强制 kill；应用成功后清理 prefetch_temp 释放磁盘。
+- **npm 执行机制加固（cmd shim + 路径解析 + 错误暴露）**：① `RunNpmCommand` 经 `cmd.exe /c` 执行（`CreateProcess` 不解析 `.cmd` shim 的基线，历史 E4001 根因）；② 新增 `ResolveNpmCmdPath`——优先从 `RuntimeResolver` 解析的 Node 根目录拼 `npm.cmd` 绝对路径（GUI 进程 PATH 缺 Node 目录时的隔离方案），失败回退 `where npm.cmd`，再失败回退 `cmd /c npm`；③ 下载失败弹窗暴露真实 `errorTail`（不再硬编码"下载失败"把原因藏进日志），并区分"未检测到 npm 环境（请安装 Node.js 18+）"与"网络/registry 问题（保留重试建议）"（`ShellLogic.IsNpmNotFoundError` 纯函数）；④ 预热/下载/安装三路径共享同一 `RunNpmCommand`，统一受益。
+- **修复更新下载 E4001"文件名、目录名或卷标语法不正确"**：`DownloadDshUpdateStaged` 此前只 `CreateDirectory(staging)` 从未创建 `prefetch_temp`，`npm pack --pack-destination` 指向不存在的目录 → Windows 中文系统底层 fs 返回 ERROR_INVALID_NAME。修复：pack 前创建 `prefetchDir`。
+- **修复 E4001 真正根因（cmd /c 引号剥离）**：`ResolveNpmCmdPath` 曾返回带引号的 npm 路径，`cmd /c "D:\node\npm.cmd" pack ...` 时 cmd 剥离首尾引号后引号计数错乱 → ERROR_INVALID_NAME（"文件名、目录名或卷标语法不正确"）。实测锁定正确形式：整行双层引号包裹 `/c ""D:\node\npm.cmd" pack ..."`（含空格路径亦安全）。修复：`ResolveNpmCmdPath` 改返回裸路径，`RunNpmCommand` 按 cmd 标准形式包裹；同时移除 `StandardErrorEncoding=UTF8`（显式 UTF-8 解码中文系统 GBK 输出反致 U+FFFD 乱码，.NET 默认 ANSI 即可正确解码）。
+- **npm 执行引擎彻底重写（node.exe 直接执行 npm-cli.js）**：抛弃 `npm.cmd`/`cmd.exe /c`/`chcp 65001` 全部 Hack——`RuntimeResolver` 解析 node.exe 绝对路径 → `FindNpmCliJs` 两优先级探测 `npm-cli.js` → `node.exe "npm-cli.js" args`（UseShellExecute=false + 双编码 UTF-8）。实测验证：node 直接执行 `--version`/`pack` 均 EXIT=0，彻底根除 .cmd 编码冲突与 cmd /c 引号陷阱。保留 ct/progress/timeoutMs/workingDirectory 增强参数。
+- **真实环境冒烟测试（打破测试幻觉）**：新增 `RealWorldNpmExecutionTests`——**零 Mock** 直接调 `RunNpmCommand("--version")` 验证真实 Node/npm 链路；`test.ps1` 设 `DSH_FORCE_NPM_SMOKE=1` 本地强制运行（无 Node 即失败阻断），CI 无 Node 时自动跳过。
+- **SDET 测试体系重构（四大支柱 + Bug 驱动复现铁律）**：① 提取底层进程执行器 `RunProcessCaptured`（UTF-8 双编码捕获 + 超时 kill 僵尸树），`RunNpmCommand` 复用并供零 Mock 测试调用；② 新增 `RealOsProcessTests`（Category=RealOS）：`Regression_NpmCmd_Execution_And_Encoding` 真实 .cmd 输出中文断言无乱码不秒退、`RealOs_ZombieTree_Killed_On_Timeout` 真实进程树超时杀净、GBK 字节无乱码等；③ `LauncherAppScenarioTests` 补阶段 0 真实文件副作用断言（pending-update.json 真实落盘）；④ 新增 `realos-test.yml`（CI Stage 2：真实安装 Node.js 绝不 Skip，跑 Real-OS 测试）；⑤ 新增 `docs/TESTING-GUARDRAILS.md` 测试铁律 + AGENTS.md 强制引用（P0/P1 环境 Bug 必须写零 Mock 复现测试才合并）。
+- **修复更新应用"依赖已预热5-10秒"虚假承诺（诚实承诺铁律）**：用户实测 cache 未预热时 `npm install -g` 现场下载 530 包需 450s（>120s 超时 E4002），文案却硬编码"预计 5-10 秒"误导。修复：① `pending-update.json` 新增 `prefetched` 标志——预热**真实成功**才为 true；② `ApplyPendingDshUpdate` 文案基于真实状态：prefetched=true → "依赖已就绪"（不写死秒数）、false/线上 → "可能需要几分钟"（如实管理预期）；③ 下载气泡同步诚实化；④ 契约测试锁定 prefetched 语义（不传/旧记录 → false，绝不得谎报）。
+
+### 测试
+
+- Headless 状态机/组合根场景测试（`LauncherAppScenarioTests` + `LauncherLifecycleTests`）：Happy Path（状态轨迹 + UIInitialized 事件）、Runtime Failure（E1004）、Readiness Timeout（E2002 + 僵尸清理回调）、WebView2 崩溃恢复（自转移 + 广播）、异常边界（Manager 抛异常不悬停状态机）、非法转移 Fail-fast。
+- TestHook E2E（`UiTestHookE2ETests`）：`ToggleMaximize` + `GetWindowRect`/`GetWorkArea` 断言最大化 0px 间隙（≤2px）、`Shutdown` 优雅退出。
+- 启动耗时基准（`StartupLatencyTests`，Splash 窗口 <500ms）与 UI 响应性/渲染完整性（`UiResponsivenessTests`，后台 10s 阻塞期 UI 健康 + 无空白）。
+- 跨屏最大化 E2E（虚拟副屏，见上）。
+- 纯逻辑测试补齐：`SuggestDownloadName`（RFC5987）、`ShellLogic.AtomicWrite`、`F11HookDecisionTests`、`WindowStateStore` 最大化状态。
+- **多显示器 Headless 化（v0.4.0，替代 CI 内核虚拟显示驱动）**：`IScreenProvider` + `FakeScreenProvider`（注入任意数量/分辨率/DPI 假屏拓扑）+ `MultiMonitorContractTests`（副屏正常/拔掉越界容灾/高 DPI 逻辑物理混用）+ `ScreenProviderIntegrationTests`（4K+1080p 拓扑接线）；`Set-VirtualDisplay.ps1` 修 CS8632（`#nullable enable`）保留本地调试；`MaximizeAcrossVirtualDisplayTests` 加无副屏守卫 + 还原路径用例（issue#17 副屏最大化/还原丢窗）。
+- **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
+- **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
+- 单测 **407 个全部通过**（含真实环境冒烟 + 真实 OS 交互测试）。
+
 ## [Unreleased]
-
-> 内部：为 `Program.cs` 拆分做准备——显式生命周期状态机 + Headless 测试、纯逻辑测试补齐、架构决策索引。
-
-- **显式生命周期状态机（ADR-008 骨架）**：新增 `Lifecycle/LauncherLifecycle.cs` 纯内存状态机（Idle→…→Running / ShuttingDown / Failed，显式转移表，非法转移 Fail-fast），暂不接线 Main，配 Headless 测试作回归护栏。
-- **Manager 层骨架（ADR-008）**：新增 `Managers/` 五个职责接口 + `RuntimeManager`（委托 RuntimeResolver）、`ServiceManager`（就绪探测，探针可注入）+ `LauncherApp` 组合根（手写装配，不引外部 DI）。全部纯增量未接线 Main；Headless 测试覆盖就绪/超时/运行失败路径。
-- **WebView/Window/Tray Manager 委托实现 + 五 Manager 组合完成**：`IWebViewManager`/`IWindowManager`/`ITrayManager` 补齐方法契约，`WebViewManager`/`WindowManager`/`TrayManager` 作为真实类委托现有 Program 内部方法（零行为变更）；`LauncherApp` 组合根装配全部五个 Manager（可注入替换）。DshShellForm/InitWebViewAsync 本体物理迁移属高风险（Win32/焦点），留待 `DSH_USE_NEW_LIFECYCLE` 运行时对比后分步迁入。测试：组合完整性、WindowManager 委托表面。
-- **纯逻辑测试补齐**：`SuggestDownloadName`（RFC5987 `UTF-8''`、引号内分号截断）、`ShellLogic.AtomicWrite`（内容/覆盖/无残留临时文件）。
-- **架构决策索引**：`docs/DETAILS.md` 并入 ADR-001~008（WS_CAPTION、WM_NCCALCSIZE、WM_NCACTIVATE、F11 钩子、校验和源、日志轮转、原子写、生命周期）；源码最长历史注释精简并指向 ADR。
-- **无头 UI 几何自测 + CI（ADR-001 回归网）**：新增 `--ui-selftest` 模式（建窗→最大化→断言窗口==工作区 0px，退出码 0/1/2，写日志+stdout）；新增 `.github/workflows/ui-test.yml` 在 `windows-latest` 跑几何回归（不依赖 Node/dsh/WebView2 内容，CI 无需本地安装）。特征开关 `DSH_USE_NEW_LIFECYCLE` 读取并记录启动路径日志。
-- **CI 自测结果取回修复**：GUI 子系统应用经 `& exe` 时 `$LASTEXITCODE`/stdout 在 pwsh7 下不可靠回传 → CI 误报；改为 `Start-Process -Wait -PassThru` 读退出码 + 结果落盘 `ui-selftest-result.txt`，规避。
-- **自绘标题栏迁出（Chrome 层第一步）**：`CustomTitleBar` 从 Program 物理迁出至新的 `Chrome/CustomTitleBar.cs`（`internal sealed class`，`_owner`=DshShellForm，共享图标/user32 经 `Program.` 内部成员）；`DshShellForm` 提为 internal。`--ui-selftest`（0px）与正常窗口/自绘标题栏渲染均验证不变。
 
 ## [0.3.5] - 2026-08-18
 

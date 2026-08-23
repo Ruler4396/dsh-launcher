@@ -100,4 +100,28 @@ public class LauncherLifecycleTests
         Assert.Throws<InvalidOperationException>(() => fs.Fire(LifecycleTrigger.ServiceReady));
         Assert.Equal(LifecycleState.Idle, fs.State); // 转移失败不改变状态
     }
+
+    // ---- 维度二场景 4：WebView2 崩溃恢复（状态机层）----
+
+    [Fact]
+    public void WebViewCrash_WhileRunning_StaysRunning_WithEvent()
+    {
+        var fs = new LauncherLifecycle();
+        DriveToRunning(fs);
+
+        var saw = 0;
+        fs.StateChanged += (_, s) => { if (s == LifecycleState.Running) saw++; };
+        fs.Fire(LifecycleTrigger.WebViewCrashed); // Running + WebViewCrashed → Running（自转移）
+
+        Assert.Equal(LifecycleState.Running, fs.State); // 崩溃被拦截，不终结应用
+        Assert.Equal(1, saw);                           // 广播一次（副作用挂载点）
+    }
+
+    [Fact]
+    public void WebViewCrash_FromNonRunning_Throws()
+    {
+        var fs = new LauncherLifecycle();
+        // 崩溃事件只在 Running 态合法（其他态触发是编程错误 → Fail-fast）
+        Assert.Throws<InvalidOperationException>(() => fs.Fire(LifecycleTrigger.WebViewCrashed));
+    }
 }

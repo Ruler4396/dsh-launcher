@@ -30,10 +30,14 @@ function Assert-True([bool]$Cond, [string]$Msg) {
 }
 
 Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
+# 任务二硬门禁：DSH_FORCE_NPM_SMOKE=1 强制 RealWorldNpmExecutionTests 真实执行
+#（无 Mock 直接跑 node.exe + npm-cli.js）。本机若无 Node 环境该测试将**失败**并阻断，
+# 打破"测试幻觉"——本地验证真实 npm 链路必须可用（CI 无 Node 时该变量未设，测试自动跳过）。
+$env:DSH_FORCE_NPM_SMOKE = "1"
 $testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
 $testCode = $LASTEXITCODE
 $testOut | Select-Object -Last 12
-Assert-True ($testCode -eq 0) "dotnet test 通过"
+Assert-True ($testCode -eq 0) "dotnet test 通过（含真实环境冒烟测试）"
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
 $webCmd = Get-Content (Join-Path $root "scripts\dsh-web.cmd") -Raw
@@ -95,16 +99,182 @@ Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-w
 #   Assert-True ($shellSrc -notmatch ': Form')        "Program.cs 不含 Form 子类"
 #   Assert-True ($shellSrc -notmatch 'WndProc')       "Program.cs 不含 WndProc"
 #   Assert-True ($shellSrc -notmatch 'PermissionRequested') "WebView2 事件接线已迁出 Program"
-Assert-True ($shellSrc -match 'class DshShellForm : Form') "【基线】Program.cs 当前仍含 DshShellForm:Form（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'protected override void WndProc') "【基线】Program.cs 当前仍含 WndProc（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'protected override CreateParams') "【基线】Program.cs 当前仍含 CreateParams（重构前锁定；收尾反转）"
-Assert-True ($shellSrc -match 'PermissionRequested') "【基线】Program.cs 当前仍含 WebView2 事件接线（重构前锁定；收尾反转）"
+# Step 6 完成：窗体类（DshShellForm/TrayMenuForm）已迁出至 Windows/，以下完成态断言启用。
+# 匹配类声明 `: Form`（精确类继承，避免误匹配 FormWindowState/FormBorderStyle 等标识符）
+Assert-True ($shellSrc -notmatch '(class|record|struct)\s+\w+\s*:\s*Form\b') "【Step6完成】Program.cs 不含 Form 子类（已迁出 Windows/）"
+Assert-True ($shellSrc -notmatch 'WndProc') "【Step6完成】Program.cs 不含 WndProc（已迁出 Windows/）"
+Assert-True ($shellSrc -notmatch 'CreateParams') "【Step6完成】Program.cs 不含 CreateParams（已迁出 Windows/）"
+# Step 4 完成：WebView2 事件接线已迁入 WebViewManager → 此断言提前反转（完成态）。
+Assert-True ($shellSrc -notmatch 'web\.CoreWebView2\.(PermissionRequested|NewWindowRequested|DownloadStarting|NavigationStarting|ProcessFailed)') "【Step4完成】Program.cs 不含 WebView2 事件接线（已迁入 WebViewManager）"
+# ADR-021：严禁使用 cmd.exe 包装 Node.js 脚本，必须使用 node.exe 直接执行 .js 入口
+# 扫描 src/ 下所有 .cs 文件，排除注释行（以 // 开头），检查实际代码中是否出现 cmd.exe 调用
+$srcCsFiles = Get-ChildItem (Join-Path $root "src") -Recurse -Filter "*.cs"
+$cmdExeViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        # 跳过注释行
+        if ($line.StartsWith('//')) { continue }
+        if ($line.StartsWith('///')) { continue }
+        # 检查实际代码中的 cmd.exe 调用（排除字符串字面量中的描述性文本）
+        if ($line -match 'ProcessStartInfo.*cmd\.exe|"cmd\.exe"|cmd\.exe.*/c') {
+            $cmdExeViolations += "$($f.Name):$($i+1): $line"
+        }
+    }
+}
+Assert-True ($cmdExeViolations.Count -eq 0) "【ADR-021】src/ 中严禁出现 cmd.exe 调用（$(if($cmdExeViolations.Count -gt 0){$cmdExeViolations[0]}else{'clean'})"
+# 技术债门禁：扫描常见反模式
+foreach ($f in $srcCsFiles) {
+    $content = Get-Content $f.FullName -Raw
+    # DoEvents 重入风险（CI 自测路径除外）
+    if ($f.Name -ne "Program.cs") {
+        Assert-True ($content -notmatch 'DoEvents\(\)') "【技术债】$($f.Name) 不含 DoEvents"
+    }
+    # Assembly.Location 在 SingleFile 下返回空字符串
+    Assert-True ($content -notmatch 'Assembly\.Location') "【技术债】$($f.Name) 不含 Assembly.Location（SingleFile 不兼容）"
+}
+# Kill() 必须带 entireProcessTree（扫描所有 .cs 文件）
+$killViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        if ($line.StartsWith('//') -or $line.StartsWith('///')) { continue }
+        if ($line -match '\.Kill\(\)' -and $line -notmatch 'entireProcessTree|Kill\(true\)') {
+            $killViolations += "$($f.Name):$($i+1): $line"
+        }
+    }
+}
+Assert-True ($killViolations.Count -eq 0) "【技术债】Kill() 必须带 entireProcessTree（$(if($killViolations.Count -gt 0){$killViolations[0]}else{'clean'})"
 # 卸载清理 CA：RemoveAutoRun 识别 DshWeb.exe 与 start-dsh.vbs 两种历史格式
 $caSrc = Get-Content (Join-Path $root "installer\FolderPickerCa\FolderPickerCa.cs") -Raw
 Assert-True ($caSrc -match 'DshWeb\.exe') "卸载 CA 清理 DshWeb.exe 自启值"
 Assert-True ($caSrc -match 'start-dsh\.vbs') "卸载 CA 兼容清理旧版 start-dsh.vbs 自启值"
 Assert-True ($caSrc -match 'CleanUserData') "卸载 CA 提供用户数据清理（仅自有数据）"
 Assert-True ($caSrc -notmatch 'profiles.*Directory\.Delete') "卸载 CA 不删除 dsh profiles/插件目录"
+
+# ---- v0.4.0 生产修复契约（僵尸端口/日志锁/更新进度）静态断言：
+# 即使单测被跳过，CI 也能锁定关键代码路径的存在性与抗回退基线。----
+$logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
+Assert-True ($logicSrc -match 'GetProcessIdByPort') "壳含端口→PID 反查（GetExtendedTcpTable/netstat，僵尸端口归属验证）"
+Assert-True ($logicSrc -match 'GetExtendedTcpTable') "壳含 P/Invoke GetExtendedTcpTable（精确端口归属）"
+Assert-True ($logicSrc -match 'KillProcessTree') "壳含进程树强杀（taskkill /T /F 语义）"
+Assert-True ($logicSrc -match 'GetAncestorPids') "壳含祖先进程链（清理 cmd/npx 外壳）"
+Assert-True ($shellSrc -match 'IsRetryableNpmError') "壳含 npm 失败可重试判定（pending 保留/清理策略）"
+Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗 + pending 策略）"
+Assert-True ($shellSrc -match '正在应用更新 \(v') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'）"
+Assert-True ($shellSrc -match 'BeginOutputReadLine') "壳以逐行异步方式读取 npm 实时日志（非一次性 ReadToEnd）"
+
+$loggerSrc = Get-Content (Join-Path $root "src\DshShell\Logger.cs") -Raw
+Assert-True ($loggerSrc -match 'FileShare\.ReadWrite') "Logger 用 FileShare.ReadWrite 防日志锁死（兼容 cmd >> 句柄）"
+Assert-True ($loggerSrc -match 'dsh-launcher-fallback') "Logger 含 %TEMP% fallback 路径（主日志被锁时落盘）"
+Assert-True ($loggerSrc -match 'FATAL LOGGER') "Logger fallback 时输出 Console.Error 醒目告警"
+
+$serviceMgr = Get-Content (Join-Path $root "src\DshShell\Managers\ServiceManager.cs") -Raw
+Assert-True ($serviceMgr -match 'ProbePort') "ServiceManager 含端口三重验证（TCP+进程身份+HTTP）"
+Assert-True ($serviceMgr -match 'KillZombieTree') "ServiceManager 含僵尸进程树清理"
+Assert-True ($serviceMgr -match 'ServicePortState\.(Healthy|Zombie|Foreign)') "ServiceManager 区分 Healthy/Zombie/Foreign 三态"
+
+$splashSrc = Get-Content (Join-Path $root "src\DshShell\Windows\SplashForm.cs") -Raw
+Assert-True ($splashSrc -match 'IsApplyingUpdate') "Splash 支持更新安装阶段标志（取消按钮禁用/安装中…）"
+
+# v0.4.0 更新文案预期管理：tarball 缺失回退现场下载时，Splash 如实显示"预计 1-2 分钟"耗时
+Assert-True ($shellSrc -match '预计 1-2 分钟') "更新应用 Splash 文案明示现场下载耗时（预计 1-2 分钟），诚实管理预期"
+
+# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装 + 依赖预热）静态断言 ----
+Assert-True ($shellSrc -match 'LocateTarball') "壳含本地 tarball 定位（应用优先本地安装包，不现场拉取）"
+Assert-True ($shellSrc -match 'local-tarball') "壳含安装来源标记（local-tarball vs registry，日志可诊断）"
+Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载'（不打断当前使用）"
+Assert-True ($shellSrc -match '需联网解析依赖') "更新气泡/弹窗文案如实'需联网解析依赖，预计 1-2 分钟'（不误导'已全部下载完'）"
+Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程序已下载'与'依赖在线解析'（诚实管理预期）"
+# ---- 任务一/二：后台依赖预热（Cache Prefetch）静态断言 ----
+Assert-True ($shellSrc -match 'prefetch_temp') "下载管线使用 prefetch_temp 临时目录（预热工作域）"
+Assert-True ($shellSrc -match '--prefix') "预热执行 npm install --prefix 到临时 deps（借安装解析依赖拉入 npm cache）"
+Assert-True ($shellSrc -match '--no-audit --no-fund') "安装/预热统一 --no-audit --no-fund（跳过审计/fund，加速秒级安装）"
+Assert-True ($shellSrc -match 'GetNpmRegistryArgs') "预热与安装共用镜像 registry（防不同 registry 导致 cache miss）"
+Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn 降级（不中断更新流程，重启回退在线安装）"
+Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
+# ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
+Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
+Assert-True ($shellSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
+Assert-True ($shellSrc -match 'internal static bool RunProcessCaptured') "底层进程执行器 RunProcessCaptured 存在（供 Real-OS 测试零 Mock 调用）"
+Assert-True ($shellSrc -notmatch '(?m)^\s*chcp\s+65001') "已彻底删除 chcp 65001 Hack 代码（编码冲突根除，注释保留说明无害）"
+Assert-True ($shellSrc -notmatch '/c \\"" \+ npmCmd') "已删除 cmd /c 双层引号 Hack（node 引擎替代）"
+Assert-True ($shellSrc -match '未检测到可用的 Node\.js 环境') "node.exe 缺失时给出明确 UI 错误（不继续执行）"
+Assert-True ($shellSrc -match '未找到 npm-cli\.js') "npm-cli.js 缺失时给出明确错误（提示重装 Node）"
+Assert-True ($shellSrc -match 'StandardErrorEncoding = System\.Text\.Encoding\.UTF8') "stderr 显式 UTF-8（npm≥7 内部即 UTF-8，任何代码页可读）"
+Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露真实 errorTail（不再硬编码'下载失败'藏原因）"
+Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
+$logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
+Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
+# ---- 预热工作目录修复（用户 21:19/21:40 下载秒败 ENOENT 根因）静态断言 ----
+Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
+Assert-True ($shellSrc -match 'workingDirectory: prefetchDir') "预热传入 prefetch_temp 为工作目录（ENOENT 根因修复：此前默认 DshWeb.exe 目录）"
+# ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复静态断言 ----
+Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(prefetchDir\)') "pack 前先创建 prefetch_temp 目录（历史 ERROR_INVALID_NAME 场景 1 的修复）"
+$stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
+Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
+Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
+Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 暴露 prefetch_temp 目录（应用成功后整体清理释放磁盘）"
+# ---- v0.4.0 诚实承诺铁律（用户反馈：cache 未预热时文案却写"预计 5-10 秒"→ 120s 超时）静态断言 ----
+Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 记录 prefetched 预热标志（预热真实成功才为 true）"
+Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于 prefetched 真实状态，不得写死秒数）"
+Assert-True ($shellSrc -match '依赖已就绪') "prefetched=true 时文案如实'依赖已就绪'（不承诺具体秒数）"
+Assert-True ($shellSrc -match '可能需要几分钟') "prefetched=false/线上时如实'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
+
+# ---- Sandbox (DSH_SANDBOX) 静态断言：门控 + 环境覆盖 ----
+Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan
+# DSH_SANDBOX 门控：四个机器级副作用调用点必须被 DSH_SANDBOX 门控
+Assert-True ($shellSrc -match 'IsSandboxMode') "Program.cs 暴露 IsSandboxMode 属性（DSH_SANDBOX=1 判定）"
+# 门控检查：IsSandboxMode 必须出现在每个副作用方法的调用路径中
+Assert-True ($shellSrc -match 'CleanupProgramDataResidue' -and $shellSrc -match 'IsSandboxMode') "CleanupProgramDataResidue 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'EnsureAutoStartRequested' -and $shellSrc -match 'IsSandboxMode') "EnsureAutoStartRequested 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'TryPromptOldVersionCleanup' -and $shellSrc -match 'IsSandboxMode') "TryPromptOldVersionCleanup 存在且 IsSandboxMode 存在（门控）"
+Assert-True ($shellSrc -match 'CleanupOrphanShortcuts' -and $shellSrc -match 'IsSandboxMode') "CleanupOrphanShortcuts 存在且 IsSandboxMode 存在（门控）"
+# 验证门控在正确位置：EnsureSingleInstanceAndAutostart 中有 !IsSandboxMode 保护
+Assert-True ($shellSrc -match '!IsSandboxMode') "EnsureSingleInstanceAndAutostart 用 !IsSandboxMode 门控副作用"
+# 验证 CleanupProgramDataResidue 方法体内有 early return
+$lines = $shellSrc -split "`n"
+$inCleanup = $false; $foundGate = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match 'private static void CleanupProgramDataResidue') { $inCleanup = $true }
+    if ($inCleanup -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate = $true; break }
+    if ($inCleanup -and $lines[$i] -match '^\s*\}') { break }
+}
+Assert-True $foundGate "CleanupProgramDataResidue 方法体内有 IsSandboxMode 早期返回"
+$inEnsure = $false; $foundGate2 = $false
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match 'private static void EnsureAutoStartRequested') { $inEnsure = $true }
+    if ($inEnsure -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate2 = $true; break }
+    if ($inEnsure -and $lines[$i] -match '^\s*try\s*\{') { break }
+}
+Assert-True $foundGate2 "EnsureAutoStartRequested 方法体内有 IsSandboxMode 早期返回"
+
+# DSH_PORTABLE_NODE_DIR 环境覆盖
+$runtimeSrc = Get-Content (Join-Path $root "src\DshShell\RuntimeResolver.cs") -Raw
+Assert-True ($runtimeSrc -match 'DSH_PORTABLE_NODE_DIR') "RuntimeResolver 支持 DSH_PORTABLE_NODE_DIR 环境覆盖"
+Assert-True ($runtimeSrc -match 'DSH_HOME') "RuntimeResolver.RuntimeStatePath 尊重 DSH_HOME 环境变量"
+
+# DSH_NPM_REGISTRY 环境覆盖
+$updateSrc = Get-Content (Join-Path $root "src\DshShell\UpdateChecker.cs") -Raw
+Assert-True ($updateSrc -match 'DSH_NPM_REGISTRY') "UpdateChecker 支持 DSH_NPM_REGISTRY 环境覆盖"
+Assert-True ($updateSrc -match 'NpmRegistryBase') "UpdateChecker 通过 NpmRegistryBase 属性统一 registry 基址"
+
+# 硬编码绝对路径/URL 扫描（新增断言：直接 CI 标红）
+$hardcodedViolations = @()
+foreach ($f in $srcCsFiles) {
+    $lines = Get-Content $f.FullName
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i].Trim()
+        if ($line.StartsWith('//') -or $line.StartsWith('///')) { continue }
+        # 检查 registry.npmjs.org 硬编码（排除注释和字符串描述）
+        if ($line -match 'registry\.npmjs\.org' -and $f.Name -ne "UpdateChecker.cs") {
+            $hardcodedViolations += "$($f.Name):$($i+1): hardcoded registry.npmjs.org: $line"
+        }
+    }
+}
+Assert-True ($hardcodedViolations.Count -eq 0) "无 registry.npmjs.org 硬编码（$(if($hardcodedViolations.Count -gt 0){$hardcodedViolations[0]}else{'clean'})"
 
 Write-Host "`n== 3. uninstall-autostart.cmd 行为测试 ==" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ("dsh-test-" + [guid]::NewGuid().ToString("N"))

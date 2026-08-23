@@ -37,6 +37,9 @@ public class LoggerTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("DSH_LOG_LEVEL", _savedLevel);
+        // 任务二：重置 fallback 会话状态 + 清理 fallback 文件（串行集合内，防跨测试污染）
+        try { if (File.Exists(Logger.FallbackPath)) File.Delete(Logger.FallbackPath); } catch { }
+        Logger.ResetForTest();
         try { Directory.Delete(_tmp, recursive: true); } catch { }
     }
 
@@ -121,14 +124,41 @@ public class LoggerTests : IDisposable
     }
 
     [Fact]
-    public void WriteWhenPathBlocked_SilentlyIgnored()
+    public void WriteWhenPathBlocked_FallsBackToTemp_NotSilentlyLost()
     {
-        // 日志路径不可写（DSH_HOME 被文件占位）→ 静默不抛（与 N4 负向语义一致）
+        // 任务二：日志路径不可写（DSH_HOME 被文件占位）→ 不再静默丢弃，落盘到 fallback
         var blocker = Path.Combine(_tmp, "blocker-file");
         File.WriteAllText(blocker, "i am a file");
         Logger.Init(Path.Combine(blocker, "sub", "dsh.log"));
-        var ex = Record.Exception(() => Logger.Error("should not throw"));
-        Assert.Null(ex);
+        var ex = Record.Exception(() => Logger.Error("path-blocked-message", "E2004"));
+        Assert.Null(ex); // 仍不抛（日志失败绝不能影响启动）
+        // 但诊断不丢失：fallback 文件应包含该条日志
+        Assert.True(Logger.FallbackUsed);
+        Assert.True(File.Exists(Logger.FallbackPath));
+        Assert.Contains("path-blocked-message", File.ReadAllText(Logger.FallbackPath));
+    }
+
+    [Fact]
+    public void Logger_Lock_Fallback_MainLockedByFileShareNone()
+    {
+        // 任务二回归：dsh.log 被另一个进程以 FileShare.None 独占打开（模拟 cmd >> 锁死，
+        // 或极端 FileShare.None 独占）→ Logger 不得静默吞掉，必须写 fallback 且含完整内容
+        using (new FileStream(_logPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            Logger.Init(_logPath);
+            Logger.Error("main-log-locked", "E2002");
+            Logger.Warn("locked-warn", ctx: new { port = 3080 });
+
+            Assert.True(Logger.FallbackUsed);
+            Assert.True(File.Exists(Logger.FallbackPath));
+            var fb = File.ReadAllText(Logger.FallbackPath);
+            Assert.Contains("main-log-locked", fb);
+            Assert.Contains("E2002", fb);
+            Assert.Contains("locked-warn", fb);
+            Assert.Contains("\"port\":3080", fb);
+        }
+        // 主日志在锁释放前不应有内容（独占锁的写被拒）
+        Assert.Equal(0, new FileInfo(_logPath).Length);
     }
 
     [Theory]

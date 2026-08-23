@@ -12,12 +12,19 @@ public interface IRuntimeManager
     void PrependToPath(string nodeRoot);
 }
 
-/// <summary>RuntimeResult.Root 含便携目录时调用 PrependToPath。</summary>
-public sealed record RuntimeResult(bool Ok, bool Ready, string? NodeExe, bool IsPortable, string? RootDir)
+/// <summary>
+/// RuntimeResult.Root 含便携目录时调用 PrependToPath。
+/// ErrorCode/ErrorDetail 承载失败语义（E1002-E1005 等）：此前 Failed() 工厂丢弃 code/detail，
+/// 组合根只能记"运行时解析失败"而无法区分"校验和不匹配(E1004)/下载失败(E1003)"——修复见
+/// LauncherAppScenarioTests.RuntimeFailure_E1004_LogsErrorCode。
+/// </summary>
+public sealed record RuntimeResult(
+    bool Ok, bool Ready, string? NodeExe, bool IsPortable, string? RootDir,
+    string? ErrorCode = null, string? ErrorDetail = null)
 {
     public static RuntimeResult ReadyNow(string nodeExe) => new(true, true, nodeExe, false, null);
     public static RuntimeResult Portable(RuntimeResolver.NodeEnvironment env) => new(true, false, env.NodeExe, env.IsPortable, env.RootDir);
-    public static RuntimeResult Failed(string? code, string? detail) => new(false, false, null, false, null);
+    public static RuntimeResult Failed(string? code, string? detail) => new(false, false, null, false, null, code, detail);
 }
 
 /// <summary>dsh 服务管理：端口/HTTP 就绪探测与启动决策（进程/僵尸/HTTP 探测）。</summary>
@@ -28,6 +35,14 @@ public interface IServiceManager
 
     /// <summary>就绪前轮询（端口+HTTP），超时返回 false。探针可注入以便测试。</summary>
     Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default);
+
+    /// <summary>端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）：返回端口占用状态，
+    /// 区分"健康运行/僵尸服务/端口被其他程序占用"，供启动决策（跳过/清理重启/快速失败）。</summary>
+    ShellLogic.ServicePortState ProbePort(int port, string url);
+
+    /// <summary>强杀僵尸进程树并等待端口释放（任务一：taskkill /T /F，含 cmd/npx 外壳）。
+    /// 返回是否清理成功（端口最终释放）。</summary>
+    bool KillZombieTree(int port);
 }
 
 /// <summary>WebView2 初始化/崩溃恢复/权限，并管理与主窗的绑定。</summary>

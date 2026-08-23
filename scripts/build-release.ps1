@@ -101,10 +101,14 @@ if ($LASTEXITCODE -ne 0) { throw "failed to install WixToolset.UI.wixext" }
     -d "ProductVersion=$Version" -d "SourceDir=$distDir" -o $msiPath
 if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
 
-# 5. zip
+# 5. zip —— 顶层带版本文件夹（解压得到 dsh-launcher-windows-<version>/，不把文件打散，
+# v0.4.0 用户反馈）。
+$zipRoot = Join-Path $root "$OutputDir\dsh-launcher-windows-$Version"
+if (Test-Path $zipRoot) { Remove-Item $zipRoot -Recurse -Force }
+Rename-Item $distDir (Split-Path $zipRoot -Leaf)
 Write-Host ">> packaging zip..."
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path (Join-Path $distDir "*") -DestinationPath $zipPath -Force
+Compress-Archive -Path $zipRoot -DestinationPath $zipPath -Force
 
 # 6. checksums (integrity verification for downloads)
 Write-Host ">> writing checksums..."
@@ -112,7 +116,7 @@ Get-FileHash $zipPath, $msiPath -Algorithm SHA256 | ForEach-Object {
     "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf)
 } | Set-Content $sumsPath -Encoding ascii
 
-Remove-Item $distDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $zipRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ">> done:"

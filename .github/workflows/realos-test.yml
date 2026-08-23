@@ -1,0 +1,66 @@
+name: realos-test
+
+# 支柱四（SDET）：Stage 2 Real-OS 集成测试专用 workflow。
+# 目的：在真实 Windows 上运行"零 Mock 的真实 OS 交互"测试（RealOsProcessTests + RealWorldNpmExecutionTests），
+# 拦截进程调用、编码冲突、僵尸树清理等 OS 级 Bug（单元测试 Mock Process 无法发现——CI 全绿、一发布就崩的教训）。
+#
+# 分层设计：
+#   - build.yml（Fast）跑 test.ps1（unit + contract + 脚本静态断言），< 10s 快速反馈；
+#   - 本 workflow（Real-OS）先**真实安装 Node.js**（绝不 Skip），再运行 Category=RealOS 测试，
+#     模拟"真实用户机器"（npm.cmd 秒退/乱码/僵尸树）场景。
+#
+# Node 安装：若 runner 无 Node，用 winget 真实安装（铁律：绝不 Skip Real-OS 测试）。
+
+on:
+  push:
+    # 开发分支（master/v0.x 等）与正式 tag 都触发 Real-OS 深度验证
+    branches: ["master", "v[0-9]*.*[0-9]*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  real-os:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Stage 2a：确保真实 Node.js 环境（Real-OS 测试硬前提，绝不 Skip）
+      - name: Ensure Node.js (real environment, never skip)
+        shell: pwsh
+        run: |
+          $node = Get-Command node -ErrorAction SilentlyContinue
+          if (-not $node) {
+            Write-Host "node 未预装，通过 winget 真实安装 Node.js LTS..."
+            winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          }
+          node --version
+          $env:DSH_FORCE_NPM_SMOKE = "1"  # 强制冒烟（无 Node 则失败，不静默跳过）
+          "DSH_FORCE_NPM_SMOKE=$env:DSH_FORCE_NPM_SMOKE"
+
+      # Stage 2b：运行 Real-OS 集成测试（零 Mock 真实 OS 交互）
+      - name: Run Real-OS integration tests
+        shell: pwsh
+        run: |
+          $env:DSH_FORCE_NPM_SMOKE = "1"
+          dotnet test "tests\DshShell.Tests" -c Release --nologo -v q `
+            --filter "Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests" 2>&1 | Tee-Object -FilePath realos.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Select-String -Path realos.log -Pattern '\[FAIL\]|失败!' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
+            exit $code
+          }
+
+      - name: Upload Real-OS log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: realos-test-output
+          path: realos.log

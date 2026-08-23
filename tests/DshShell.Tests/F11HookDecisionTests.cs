@@ -1,5 +1,5 @@
 using System;
-using DshWeb;
+using DshWeb.Managers;
 using Xunit;
 
 namespace DshShell.Tests;
@@ -19,7 +19,7 @@ public class F11HookDecisionTests
     [InlineData(0, 0x0104, 0x7A, true)]   // SysKeyDown, 前台
     public void F11InForeground_ShouldHandle(int nCode, int wParam, uint vk, bool fg)
     {
-        Assert.True(Program.ShouldHandleF11Hook(nCode, (IntPtr)wParam, vk, fg));
+        Assert.True(F11LowLevelHook.ShouldHandleF11Hook(nCode, (IntPtr)wParam, vk, fg));
     }
 
     [Theory]
@@ -29,6 +29,6 @@ public class F11HookDecisionTests
     [InlineData(-1, 0x0100, 0x7A, true)]  // nCode<0 → 必放行
     public void OtherCases_ShouldNotHandle(int nCode, int wParam, uint vk, bool fg)
     {
-        Assert.False(Program.ShouldHandleF11Hook(nCode, (IntPtr)wParam, vk, fg));
+        Assert.False(F11LowLevelHook.ShouldHandleF11Hook(nCode, (IntPtr)wParam, vk, fg));
     }
 }

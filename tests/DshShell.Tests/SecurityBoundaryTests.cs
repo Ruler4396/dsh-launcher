@@ -41,7 +41,7 @@ public class SecurityBoundaryTests
     [InlineData(null)]
     public void IsSafeToOpen_ExecutableSurface_NeverOpens(string? path)
     {
-        Assert.False(ShellLogic.IsSafeToOpen(path), $"应拒绝自动打开: {path}");
+        Assert.False(ShellLogic.WebViewPolicy.IsSafeToOpen(path), $"应拒绝自动打开: {path}");
     }
 
     [Theory]
@@ -57,15 +57,15 @@ public class SecurityBoundaryTests
     [InlineData("C:\\Users\\x\\Downloads\\CASE.PNG")]         // 扩展名大小写不敏感
     public void IsSafeToOpen_HarmlessExtensions_Opens(string path)
     {
-        Assert.True(ShellLogic.IsSafeToOpen(path), $"应允许自动打开: {path}");
+        Assert.True(ShellLogic.WebViewPolicy.IsSafeToOpen(path), $"应允许自动打开: {path}");
     }
 
     [Fact]
     public void IsSafeToOpen_PathWithQueryOrFragment_TreatedByExtension()
     {
         // 落盘路径是本地文件路径，不携带 URL 查询串；此处验证带点的奇怪本地路径不误放行
-        Assert.False(ShellLogic.IsSafeToOpen("C:\\Users\\x\\Downloads\\..\\..\\Windows\\System32\\cmd.exe"));
-        Assert.False(ShellLogic.IsSafeToOpen("C:\\Users\\x\\Downloads\\photo.png.exe"));
+        Assert.False(ShellLogic.WebViewPolicy.IsSafeToOpen("C:\\Users\\x\\Downloads\\..\\..\\Windows\\System32\\cmd.exe"));
+        Assert.False(ShellLogic.WebViewPolicy.IsSafeToOpen("C:\\Users\\x\\Downloads\\photo.png.exe"));
     }
 
     // ---------- 目标地址解析（DSH_WEB_URL 覆盖，见 ShellLogicTests.ResolveTarget_Works） ----------
@@ -82,7 +82,7 @@ public class SecurityBoundaryTests
     [InlineData("attachment; filename=", "https://example.com/real.bin", "real.bin")] // 空 filename → 用 URI
     public void SuggestDownloadName_EdgeCases(string? disposition, string? uri, string? expected)
     {
-        var name = ShellLogic.SuggestDownloadName(disposition, uri, null);
+        var name = ShellLogic.FileSystemPolicy.SuggestDownloadName(disposition, uri, null);
         if (expected is null)
             Assert.StartsWith("dsh-", name);
         else
