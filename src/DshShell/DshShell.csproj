@@ -2,6 +2,11 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- [v0.4.2] 通知互操作改造：弃用 windows10.0.19041 TFM。该 TFM 会把 24MB 的
+         Microsoft.Windows.SDK.NET.dll 打进单文件（体积 1M→26M），并把最低系统静默
+         强制为 Win10 2004。SystemToast.cs 改为经 combase 手写的最小 WinRT 互操作
+         （仅 XmlDocument/ToastNotification 三两个接口，~200 行），本工程不再引用
+         任何投影程序集，体积与最低系统双双还原。功能面保持原生 Toast 全能力。 -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
@@ -33,12 +38,10 @@
   <!-- 源码构建/发布后自动把部署脚本复制到输出目录：让 dotnet build/publish 出来的
        DshWeb.exe 可直接使用（启动时需要同目录的 start-dsh.vbs 等），不必再手动复制。 -->
   <Target Name="CopyDeployScripts" AfterTargets="Build">
-    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd"
-          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="CopyDeployScriptsPublish" AfterTargets="Publish">
-    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd"
-          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="..\..\scripts\start-dsh.vbs;..\..\scripts\start-dsh.cmd;..\..\scripts\dsh-web.cmd;..\..\scripts\uninstall-autostart.cmd" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

@@ -1,0 +1,63 @@
+name: e2e-geo
+
+# 真实 GUI 端到端回归（Task 0 新增 geo 探针：几何/F11/标题栏/白屏）。
+# windows-latest runner 有交互桌面会话，可跑 DshWeb.exe 真实窗口；
+# 需要 node + dsh 全局包（E3+ 的隔离服务）与发布产物（probe 编译 + 启动壳）。
+# 仅 workflact_dispatch / PR / master push 触发，避免每次 push 都重装全局 dsh。
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['src/**', 'scripts/e2e-test.ps1', '.github/workflows/e2e-test.yml']
+  push:
+    branches: [v0.4.0]
+    paths: ['src/**', 'scripts/e2e-test.ps1', '.github/workflows/e2e-test.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-geo:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: "20"
+
+      - name: Install dsh service package (global)
+        shell: pwsh
+        run: |
+          npm install -g @deepseek-ai/dsh
+          npm root -g
+
+      - name: Publish shell (win-x64, single-file)
+        shell: pwsh
+        run: |
+          dotnet publish src/DshShell -c Release -r win-x64 `
+            --self-contained false -p:PublishSingleFile=true -p:Version=0.4.0-ci -o .publish-ci
+
+      - name: Run e2e (real GUI incl. geo probe)
+        shell: pwsh
+        continue-on-error: false
+        env:
+          # F1 分层门禁（Q1）：CI 无头 runner 前台注入可能受桌面环境干扰，soft 允许失败→SKIP。
+          # G1/G3/G7/W6 仍必须全绿；本地/真机跑 geo 用默认 hard（必过）。
+          GEO_F11_MODE: soft
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-test.ps1 -PublishDir .publish-ci 2>&1 | Tee-Object -FilePath e2e.log
+          $code = $LASTEXITCODE
+          Select-String -Path e2e.log -Pattern '\[FAIL\]|项 E2E 断言失败' | ForEach-Object { Write-Output ("::error file=scripts::" + $_.Line.Trim()) }
+          exit $code
+
+      - name: Upload e2e log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-log
+          path: e2e.log

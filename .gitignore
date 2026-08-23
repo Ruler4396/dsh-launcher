@@ -10,6 +10,8 @@ dist/
 ui-selftest-result.txt
 out.txt
 err.txt
+# e2e 本地运行临时日志
+e2e-*.log
 # WiX v5 temp files generated next to the build source
 .tmp-wix/
 # WiX tool cache (defensive)
@@ -30,3 +32,13 @@ archive/
 Thumbs.db
 .DS_Store
 installer/*/out/
+
+# pnpm artifacts (test-generated, must not be committed)
+pnpm-lock.yaml
+package.json
+/node_modules/
+pnpm-workspace.yaml
+
+# 测试沙箱残留（SafeModeSandboxOutcomes / 真实 OS 测试在仓库内搭建的假 home，
+# 含整棵 node_modules，绝不可入库——2026-08-22 git add -A 误扫事件后加入）
+sandbox/

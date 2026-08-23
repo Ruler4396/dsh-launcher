@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- 本测试必须在交互式 Windows 桌面会话内运行（GitHub Actions windows-latest 满足），
+         且需要先执行 scripts/install-virtual-display.ps1 创建虚拟副屏。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="FlaUI.Core" Version="4.0.0" />
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
+  </ItemGroup>
+
+  <!-- 引生产程序集，直接定位/移动/最大化真实窗口，而非仅测 Win32 结构 -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DshShell\DshShell.csproj" />
+  </ItemGroup>
+
+</Project>

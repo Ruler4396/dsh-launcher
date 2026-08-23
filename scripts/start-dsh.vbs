@@ -47,17 +47,35 @@ If Not (f Is Nothing) Then
     f.Close
 End If
 
+' --no-open: dsh-launcher 壳自行管理 WebView2 窗口，不需要 dsh 本体打开系统浏览器。
+' 冷启动时系统浏览器自动打开的根因：dsh web 默认调用 ShellExecute 打开浏览器，
+' 由 start-dsh.vbs 作为子进程继承后触发。添加 --no-open 抑制该行为。
+' ADR-022 安全模式：壳注入 DSH_PROFILE=.dsh-safe 时，用根级 `--profile <name>` 启动
+' （隔离 profile，剥离第三方插件）；否则默认 `web` 子命令。
+bootMode = "web"
+If env("DSH_PROFILE") <> "" Then bootMode = "--profile " & env("DSH_PROFILE")
 If sh.Run("cmd /c where dsh >nul 2>&1", 0, True) = 0 Then
-    cmdline = "dsh web --host 127.0.0.1 --port " & port
+    cmdline = "dsh " & bootMode & " --host 127.0.0.1 --port " & port & " --no-open"
     note = "using global dsh"
 Else
-    ' dsh 本体经 npx 从 npm registry 下载，国内/弱网访问默认 npmjs 慢易超时。
-    ' 镜像回退：DSH_NPM_MIRROR 显式指定则用（封装 npm 私有 registry 场景）；
-    ' 未指定时默认 npmmirror（公共 npm 镜像，国内可直连、全球亦快，@deepseek-ai/dsh 为公共包）。
-    npmRegistry = env("DSH_NPM_MIRROR")
-    If npmRegistry = "" Then npmRegistry = "https://registry.npmmirror.com"
-    cmdline = "npx -y --registry=" & npmRegistry & " @deepseek-ai/dsh web --host 127.0.0.1 --port " & port
-    note = "dsh not on PATH - npx via " & npmRegistry
+    ' where dsh 失败未必是"没装"——%APPDATA%\npm 可能不在当前 PATH（新装的 npm 全局包，
+    ' 或启动器由旧环境变量启动），但 dsh.cmd 实际存在。先探测 npm 全局 shim 用全路径调用，
+    ' 避免直接落 npx 网络下载导致"卡在等待服务就绪"（2026-08 用户复现：dsh not on PATH -
+    ' npx via npmmirror，npx 解析/下载包极慢甚至挂起）。
+    q2 = Chr(34)
+    npmShim = sh.ExpandEnvironmentStrings("%APPDATA%") & "\npm\dsh.cmd"
+    If fso.FileExists(npmShim) Then
+        cmdline = q2 & npmShim & q2 & " " & bootMode & " --host 127.0.0.1 --port " & port & " --no-open"
+        note = "using npm shim " & npmShim
+    Else
+        ' 真没装：dsh 本体经 npx 从 npm registry 下载，国内/弱网访问默认 npmjs 慢易超时。
+        ' 镜像回退：DSH_NPM_MIRROR 显式指定则用（封装 npm 私有 registry 场景）；
+        ' 未指定时默认 npmmirror（公共 npm 镜像，国内可直连、全球亦快，@deepseek-ai/dsh 为公共包）。
+        npmRegistry = env("DSH_NPM_MIRROR")
+        If npmRegistry = "" Then npmRegistry = "https://registry.npmmirror.com"
+        cmdline = "npx -y --registry=" & npmRegistry & " " & bootMode & " --host 127.0.0.1 --port " & port & " --no-open"
+        note = "dsh not installed - npx via " & npmRegistry
+    End If
 End If
 ' 日志重定向目标必须加引号：USERPROFILE 含空格（如 C:\Users\John Smith）时，
 ' 不带引号会把路径截断成命令参数/碎片文件名（实测复现）；含 & 等 cmd 元字符时可注入命令。

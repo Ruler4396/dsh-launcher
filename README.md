@@ -58,6 +58,8 @@ dsh plugin --profile web add dsh-launcher-lifetime
 
 技术实现 / 安全 / 构建：[docs/DETAILS.md](docs/DETAILS.md) · 更新日志：[CHANGELOG.md](CHANGELOG.md)
 
+**面向开发者 / AI Agent（必读）**：修改代码前，请先阅读架构与工程维护铁律（Hard Constraints）→ [docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md](docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md)，并遵守 [AGENTS.md](AGENTS.md) 中的合规清单。违反铁律的提交会被 Code Review 驳回或 CI 拦截。
+
 ## 免责声明
 
 独立的第三方工具，与 DeepSeek / DeepSeek AI 官方无关。窗口图标使用 DeepSeek 品牌标识，版权归 DeepSeek 所有。

@@ -1,0 +1,53 @@
+name: e2e-multimon
+
+# v0.4.0 重构：放弃 CI 内核虚拟显示驱动方案（受限沙箱无法稳定加载第三方 IDD 驱动，
+# pnputil 超时/驱动签名校验在 Server runner 上不稳定）。
+# 多屏边界回归全部迁移为 **Headless 纯函数/Mock 测试**（不依赖真实硬件）：
+#   - tests/DshShell.Tests/Managers/MultiMonitorContractTests.cs
+#       RestoreWindowPosition 极端矩阵：副屏正常 / 拔掉越界容灾 / 高 DPI 逻辑物理混用
+#   - tests/DshShell.Tests/Managers/ScreenProviderIntegrationTests.cs
+#       FakeScreenProvider 注入任意拓扑（4K+1080p 等）验证窗口位置恢复接线
+#   - 真实 UI 跨屏测试 MaximizeAcrossVirtualDisplayTests 保留为本地调试工具（无副屏自动空跑）
+# 原 install-virtual-display.ps1 / Set-VirtualDisplay.ps1 仅作本地开发者调试脚本。
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
+  push:
+    branches: [v0.4.0]
+    paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  headless-multimon:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # 1) Headless 多屏纯函数/Mock 矩阵（含全部单测，CI 不再装虚拟显示驱动）
+      - name: Headless multi-monitor contract + integration tests
+        shell: pwsh
+        run: |
+          dotnet test tests/DshShell.Tests/DshShell.Tests.csproj -c Debug --nologo
+
+      # 2) E2E：排除 RequiresVirtualDisplay（本地虚拟屏专用），其余 headless 全跑
+      - name: Headless E2E (exclude virtual-display-only)
+        shell: pwsh
+        run: |
+          dotnet test tests/DshShell.E2E/DshShell.E2E.csproj -c Debug --nologo --filter "Category!=RequiresVirtualDisplay"
+
+      # 3) 收集日志（含失败时）
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-multimon
+          path: |
+            tests/DshShell.Tests/TestResults/**/*.trx
+            tests/DshShell.E2E/TestResults/**/*.trx

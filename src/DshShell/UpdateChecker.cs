@@ -71,13 +71,24 @@ public static class UpdateChecker
         }
     }
 
+    /// <summary>npm registry 基址：优先 DSH_NPM_REGISTRY 环境变量（沙盒/测试覆盖），
+    /// 未设置时回退 https://registry.npmjs.org（生产路径）。</summary>
+    internal static string NpmRegistryBase
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("DSH_NPM_REGISTRY");
+            return !string.IsNullOrWhiteSpace(env) ? env.TrimEnd('/') : "https://registry.npmjs.org";
+        }
+    }
+
     /// <summary>拉取 dsh（@deepseek-ai/dsh）npm 最新版本；失败返回 null。</summary>
     public static async Task<string?> FetchLatestDshVersionAsync(HttpClient http)
     {
         try
         {
             using var resp = await http.GetAsync(
-                $"https://registry.npmjs.org/{Uri.EscapeDataString(DshNpmPackage)}/latest");
+                $"{NpmRegistryBase}/{Uri.EscapeDataString(DshNpmPackage)}/latest");
             if (!resp.IsSuccessStatusCode) return null;
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() : null;
@@ -89,38 +100,79 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 语义化版本比较：a &gt; b → 1，a == b → 0，a &lt; b → -1。
+    /// 语义化版本比较（完整 SemVer，含 prerelease）：a &gt; b → 1，a == b → 0，a &lt; b → -1。
     /// 非法/空版本按 0.0.0 处理（缺失信息不产生"有新版本"的误报）。
+    ///
+    /// v0.4.0 修复：dsh 实际以 SemVer prerelease 发布（如 0.1.0-rc.7），旧实现用 Version.TryParse
+    /// 对含 '-' 的版本解析失败 → 双方都落成 0.0.0 → 永远检测不到 rc7 更新（rc6→rc7 无提示的根因）。
+    /// 现按 SemVer 2.0.0 规则比较：MAJOR.MINOR.PATCH 数值比较，相等时再比较 prerelease（无
+    /// prerelease &gt; 有 prerelease；分段比较：纯数字段按数值、字母数字段按字典序、数字段 &lt; 字母段）。
     /// </summary>
     public static int CompareVersions(string? a, string? b)
     {
-        if (!Version.TryParse(a, out var va)) va = new Version(0, 0);
-        if (!Version.TryParse(b, out var vb)) vb = new Version(0, 0);
-        return va.CompareTo(vb);
+        var va = ParseSemVer(a);
+        var vb = ParseSemVer(b);
+        for (var i = 0; i < 3; i++)
+        {
+            var c = va.Num[i].CompareTo(vb.Num[i]);
+            if (c != 0) return c;
+        }
+        // 主版本相等 → 比较 prerelease：无 prerelease > 有 prerelease
+        if (va.Pre.Length == 0 && vb.Pre.Length == 0) return 0;
+        if (va.Pre.Length == 0) return 1;
+        if (vb.Pre.Length == 0) return -1;
+        var n = Math.Min(va.Pre.Length, vb.Pre.Length);
+        for (var i = 0; i < n; i++)
+        {
+            var c = ComparePrePart(va.Pre[i], vb.Pre[i]);
+            if (c != 0) return c;
+        }
+        return va.Pre.Length.CompareTo(vb.Pre.Length); // 段多者更大（1.0.0-rc.1 < 1.0.0-rc.1.1）
     }
 
-    /// <summary>本地 dsh 版本：优先环境变量 DSH_VERSION，否则尝试 `dsh --version`（找不到返回 null）。</summary>
-    public static string? ResolveLocalDshVersion()
+    private static int ComparePrePart(string a, string b)
     {
-        try
-        {
-            var env = Environment.GetEnvironmentVariable("DSH_VERSION");
-            if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
-            var psi = new System.Diagnostics.ProcessStartInfo("dsh", "--version")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return null;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(3000);
-            return output.Trim();
-        }
-        catch
-        {
-            return null;
-        }
+        var aNum = int.TryParse(a, out var ai);
+        var bNum = int.TryParse(b, out var bi);
+        if (aNum && bNum) return ai.CompareTo(bi);          // 纯数字段 → 数值比较
+        if (aNum) return -1;                                 // 数字段 < 字母数字段（SemVer 规则）
+        if (bNum) return 1;
+        return string.CompareOrdinal(a, b);                  // 字母数字段 → 字典序
     }
+
+    private readonly record struct SemVer(int[] Num, string[] Pre);
+
+    private static SemVer ParseSemVer(string? raw)
+    {
+        var s = (raw ?? "").Trim().TrimStart('v', 'V');
+        var dash = s.IndexOf('-');
+        var core = dash >= 0 ? s[..dash] : s;
+        var pre = dash >= 0 ? s[(dash + 1)..] : "";
+
+        var parts = core.Split('.');
+        var nums = new int[3];
+        var valid = false;
+        for (var i = 0; i < Math.Min(parts.Length, 3); i++)
+        {
+            if (int.TryParse(parts[i], out var n)) { nums[i] = n; valid = true; }
+        }
+        if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>()); // 非法 → 0.0.0
+        if (parts.Length == 1 && parts[0].Length == 0) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
+        var preParts = pre.Length == 0
+            ? Array.Empty<string>()
+            : pre.Split('.').Where(p => p.Length > 0).ToArray();
+        return new SemVer(nums, preParts);
+    }
+
+    /// <summary>
+    /// 本地 dsh 版本：委托 DshDiscovery 统一发现（与 start-dsh.vbs 同源）。
+    /// 返回 InstalledVersion（GlobalNpm/NpmShim 时为实际版本，NpxCache 时可能为 null）。
+    ///
+    /// 【身份统一】此前本方法独立执行 cmd /c dsh —version，仅检测全局 npm 安装，
+    /// 与 start-dsh.vbs 的三级回退链（where → npm shim → npx）脱节 →
+    /// "更新了全局 npm 包，但实际运行的是 npx 缓存"的幽灵 Bug。
+    /// 现统一委托 DshDiscovery.DiscoverCurrentRuntime()，确保检查与启动同源。
+    /// </summary>
+    public static string? ResolveLocalDshVersion()
+        => DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
 }

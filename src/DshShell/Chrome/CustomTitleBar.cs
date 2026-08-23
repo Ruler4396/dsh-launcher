@@ -1,4 +1,5 @@
 using DshWeb;
+using DshWeb.Windows;
 
 namespace DshWeb.Chrome;
 
@@ -11,11 +12,27 @@ namespace DshWeb.Chrome;
 /// </summary>
 internal sealed class CustomTitleBar : Panel
 {
-    private readonly Program.DshShellForm _owner;
+    private readonly DshShellForm _owner;
     private float _scale;
     private int _btnWidth;
     private bool _dark;
     private bool _hoverMin, _hoverMax, _hoverClose;
+
+    // ---- 任务五：后台更新构建状态（UI 反馈） ----
+    /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。
+    /// [2026-08 回归修复] 新增 Failed：此前 Ready/Failed 终态从不渲染（只画 Building），
+    /// 成功 100% 与失败结论用户均不可见。</summary>
+    internal enum BuildStatus { Idle, Building, Ready, Failed }
+    /// <summary>当前构建状态（volatile 保证跨线程可见性）。</summary>
+    internal volatile BuildStatus _buildStatus = BuildStatus.Idle;
+    /// <summary>构建进度文本（如 "已构建更新 50%（v0.1.0-rc.7）"）。</summary>
+    internal volatile string _buildProgressText = "";
+    /// <summary>窗口标题（安全模式时为 "DeepSeek Harness（安全模式）"，ADR-022 Task 4 横幅）。</summary>
+    internal volatile string _titleText = "DeepSeek Harness";
+    /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
+    internal volatile float _buildProgressPercent = 0f;
+    /// <summary>脉冲动画定时器（替代 BeginInvoke(Invalidate) 避免无限闪烁）。</summary>
+    private System.Windows.Forms.Timer? _marqueeTimer;
 
     private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
     private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
@@ -26,10 +43,15 @@ internal sealed class CustomTitleBar : Panel
     private static readonly Color LightHover = Color.FromArgb(229, 229, 229);
     private static readonly Color CloseHover = Color.FromArgb(232, 17, 35);
 
-    public CustomTitleBar(Program.DshShellForm owner, bool dark)
+    public CustomTitleBar(DshShellForm owner, bool dark)
     {
         _owner = owner;
         _dark = dark;
+        // [2026-08 回归修复] 双缓冲：构建进度高频 Invalidate 时旧实现每帧先擦背景再绘制
+        // （WM_ERASEBKGND + OnPaint 两段），产生可见闪烁。三样式联用把绘制合并到内存位图。
+        SetStyle(ControlStyles.UserPaint
+            | ControlStyles.AllPaintingInWmPaint
+            | ControlStyles.OptimizedDoubleBuffer, true);
         // DPI 缩放：150% 缩放下 32px 物理高度会显得又矮又挤（按钮/图标/间距全按逻辑缩放）
         _scale = owner.DeviceDpi / 96f;
         _btnWidth = (int)Math.Round(46 * _scale);
@@ -153,7 +175,7 @@ internal sealed class CustomTitleBar : Panel
 
         // 标题
         var titleLeft = (int)Math.Round(34 * _scale);
-        TextRenderer.DrawText(g, "DeepSeek Harness", TitleFont,
+        TextRenderer.DrawText(g, _titleText, TitleFont,
             new Rectangle(titleLeft, 0, Math.Max(0, Width - _btnWidth * 3 - titleLeft - 8), Height),
             textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
 
@@ -184,5 +206,94 @@ internal sealed class CustomTitleBar : Panel
         // 底部细分隔线
         using var line = new Pen(_dark ? Color.FromArgb(48, 48, 48) : Color.FromArgb(225, 225, 225));
         g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+
+        // ---- 任务五：构建进度指示 ----
+        // 当后台正在构建更新时，在标题栏底部绘制 2px 高的蓝色进度条。
+        // pnpm 模式：真实百分比进度条 + "已构建更新 x%（版本号）"
+        // npm 模式：脉冲动画 + "正在构建更新（版本号）..."
+        if (_buildStatus == BuildStatus.Building)
+        {
+            var progressColor = Color.FromArgb(77, 107, 254); // DeepSeek 蓝 #4D6BFE
+            using var progressBrush = new SolidBrush(progressColor);
+
+            if (_buildProgressPercent > 0)
+            {
+                // pnpm 真实进度：实心进度条
+                var progressWidth = (int)(Width * Math.Min(1f, _buildProgressPercent));
+                g.FillRectangle(progressBrush, 0, Height - 2, progressWidth, 2);
+                // 停止脉冲定时器（如果有的话）
+                StopMarqueeTimer();
+            }
+            else
+            {
+                // npm 脉冲模式：循环滚动的 15% 宽度光条
+                var pulseOffset = (int)((Environment.TickCount64 / 33) % Width);
+                var pulseWidth = (int)(Width * 0.15f);
+                var x = pulseOffset - pulseWidth;
+                g.FillRectangle(progressBrush, Math.Max(0, x), Height - 2, pulseWidth, 2);
+                if (x + pulseWidth > Width)
+                    g.FillRectangle(progressBrush, 0, Height - 2, (x + pulseWidth) - Width, 2);
+                // 启动脉冲定时器（33ms 间隔，~30fps）
+                StartMarqueeTimer();
+            }
+
+            // 文本显示
+            if (!string.IsNullOrEmpty(_buildProgressText))
+            {
+                var statusFont = new Font("Microsoft YaHei UI", 8F);
+                var statusText = " " + _buildProgressText;
+                var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+                TextRenderer.DrawText(g, statusText, statusFont,
+                    new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                    _dark ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0),
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
+        }
+        else if (_buildStatus is BuildStatus.Ready or BuildStatus.Failed)
+        {
+            // [2026-08 回归修复] 终态驻留渲染：此前 Ready 从未绘制（只画 Building），且组合根
+            // 在 finally 里立即清回 Idle → 成功/失败结论一帧都不可见。现在终态由驻留定时器
+            // （Program.UpdateBuildStatus）保活约 12s：Ready=蓝色满宽条，Failed=红色满宽条，
+            // 文案自含结论与版本号（ShellLogic.UpdateProgress.ComposeTerminalTitleText）。
+            StopMarqueeTimer();
+            var terminalColor = _buildStatus == BuildStatus.Ready
+                ? Color.FromArgb(77, 107, 254)    // DeepSeek 蓝 #4D6BFE
+                : Color.FromArgb(229, 72, 77);    // 红 #E5484D
+            using var terminalBrush = new SolidBrush(terminalColor);
+            g.FillRectangle(terminalBrush, 0, Height - 2, Width, 2);
+            if (!string.IsNullOrEmpty(_buildProgressText))
+            {
+                using var statusFont = new Font("Microsoft YaHei UI", 8F, FontStyle.Bold);
+                var statusText = " " + _buildProgressText;
+                var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+                TextRenderer.DrawText(g, statusText, statusFont,
+                    new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                    terminalColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
+        }
+        else
+        {
+            // 非构建状态：停止脉冲定时器
+            StopMarqueeTimer();
+        }
+    }
+
+    /// <summary>启动脉冲定时器（仅在 npm 模式下使用）。</summary>
+    private void StartMarqueeTimer()
+    {
+        if (_marqueeTimer is not null) return; // 已经在运行
+        _marqueeTimer = new System.Windows.Forms.Timer { Interval = 33 }; // ~30fps
+        _marqueeTimer.Tick += (_, _) => Invalidate();
+        _marqueeTimer.Start();
+    }
+
+    /// <summary>停止脉冲定时器。</summary>
+    private void StopMarqueeTimer()
+    {
+        if (_marqueeTimer is null) return;
+        _marqueeTimer.Stop();
+        _marqueeTimer.Dispose();
+        _marqueeTimer = null;
     }
 }
