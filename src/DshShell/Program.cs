@@ -2007,9 +2007,15 @@ internal static class Program
     /// </summary>
     private static bool TryProvisionFirstRunRuntime()
     {
-        // 测试/自动化/沙盒环境不触发真实网络下载预装
-        if (E2EMode || NoUiMode || IsSandboxMode
+        // 测试/自动化/沙盒环境不触发真实网络下载预装。
+        // 沙盒默认同样跳过；DSH_TEST_ALLOW_PROVISION=1 显式放行冷启动演练——
+        // 流量仍受 DSH_NPM_MIRROR/REGISTRY 与 npm_config_* 环境约束，可全闭环在沙盒内。
+        if (E2EMode || NoUiMode
             || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_SERVICE_CMD")))
+            return false;
+        if (IsSandboxMode
+            && !string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_ALLOW_PROVISION"), "1",
+                StringComparison.OrdinalIgnoreCase))
             return false;
 
         try
@@ -2907,6 +2913,9 @@ internal static class Program
             // 聚合器：按 packageId 自归一化（已见/已完成两集合），真实完成占比平滑推进。
             var aggregator = new ShellLogic.UpdateProgress.PnpmAggregator();
             var errorOutput = "";
+            // stdout 全文留存：ERR_PNPM_IGNORED_BUILDS 标记在 pnpm v11 走 stdout
+            // ndjson error 事件（stderr 为空），分类必须双流参与（见 UpdateProgress 契约）。
+            var stdoutBuilder = new System.Text.StringBuilder();
 
             // 后台读取 stderr
             var stderrTask = System.Threading.Tasks.Task.Run(() =>
@@ -2921,6 +2930,7 @@ internal static class Program
                 {
                     var line = p.StandardOutput.ReadLine();
                     if (string.IsNullOrWhiteSpace(line)) continue;
+                    stdoutBuilder.AppendLine(line);
                     aggregator.OnLine(line);
                     if (progressCallback is not null)
                     {
@@ -2935,8 +2945,7 @@ internal static class Program
             p.WaitForExit(600000); // 10 分钟超时兜底
 
             // ERR_PNPM_IGNORED_BUILDS（exit=1）：包已安装，只是 build scripts 被安全策略阻止
-            var combinedOutput = errorOutput;
-            if (p.ExitCode != 0 && combinedOutput.Contains("ERR_PNPM_IGNORED_BUILDS"))
+            if (ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(p.ExitCode, stdoutBuilder.ToString(), errorOutput))
             {
                 Logger.Info($"pnpm install: packages installed but build scripts ignored (exit=1)");
                 return true; // 视为成功
