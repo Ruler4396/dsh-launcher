@@ -93,6 +93,30 @@ public class UpdateProgressContractTests
         Assert.Equal(10, agg.Snapshot().Percent);
     }
 
+    // ---------------- pnpm 退出分类契约（2026-08-23 冷启动演练回归） ----------------
+    // 根因：pnpm v11 把 ERR_PNPM_IGNORED_BUILDS 发在 stdout ndjson error 事件（stderr
+    // 为空），旧实现只查 stderr → 新机器首次 provision 必把成功误判为失败。
+
+    [Theory]
+    [InlineData(1, "{\"level\":\"error\",\"code\":\"ERR_PNPM_IGNORED_BUILDS\"}", "", true)]
+    [InlineData(1, "", "ERR_PNPM_IGNORED_BUILDS: ...", true)]   // stderr 携带标记仍兼容
+    [InlineData(1, "{\"code\":\"ERR_PNPM_INVALID_DEPENDENCY_NAME\"}", "", false)]
+    [InlineData(0, "", "", false)]                              // exit=0 本来就是成功，不走特判
+    public void IsPnpmIgnoredBuildsExit_ClassifiesByBothStreams(
+        int exitCode, string stdoutTail, string stderrTail, bool expected)
+    {
+        Assert.Equal(expected,
+            ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(exitCode, stdoutTail, stderrTail));
+    }
+
+    [Fact]
+    public void IsPnpmIgnoredBuildsExit_NullStreams_DoNotThrow()
+    {
+        Assert.True(ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(1,
+            "{\"code\":\"ERR_PNPM_IGNORED_BUILDS\"}", null!));
+        Assert.False(ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(1, null!, null!));
+    }
+
     // ---------------- 终态文案契约（2026-08 用户回归：更新结束无成功/失败提示） ----------------
     // 根因：标题栏只渲染 Building 态，Ready/Failed 终态从未可见；失败路径部分静默返回。
     // 契约：终态文案必须自含结论（成功/失败）、带版本号、用户可见错误必须带 [E4001] 错误码。

@@ -558,6 +558,18 @@ public static class ShellLogic
     public static class UpdateProgress
     {
         /// <summary>
+        /// pnpm 安装退出分类：ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已装好、仅 build
+        /// scripts 被安全策略阻止，视为成功。标记可能出现在 stdout 的 ndjson error 事件
+        /// （pnpm v11 默认）或 stderr 文本里——两个流都必须参与判定。
+        /// [2026-08-23 冷启动演练回归] 旧实现只查 stderr，pnpm v11 把标记发在 stdout，
+        /// 新机器首次 provision 必误判为失败（pnpm 三连败后白白落 npm 兜底）。
+        /// </summary>
+        public static bool IsPnpmIgnoredBuildsExit(int exitCode, string stdoutTail, string stderrTail)
+            => exitCode != 0
+               && ((stdoutTail ?? "").Contains("ERR_PNPM_IGNORED_BUILDS", StringComparison.Ordinal)
+                   || (stderrTail ?? "").Contains("ERR_PNPM_IGNORED_BUILDS", StringComparison.Ordinal));
+
+        /// <summary>
         /// pnpm --reporter=ndjson 安装事件聚合器。旧实现把所有 pnpm:progress 事件
         /// （resolving/fetching/extracting…）混计为一个计数再除以硬编码 600，很快封顶
         /// → 进度条卡在 50% 直到结尾。新实现按 packageId 维护「已见/已完成」两集合：
