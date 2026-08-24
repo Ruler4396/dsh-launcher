@@ -28,8 +28,10 @@ public class DshUpdatePipelineRealTests
 
     private static void RequireNodeOrSkip()
     {
-        if (!ForceSmoke && RuntimeResolver.ResolveExisting().NodeExe is null)
-            return; // 无 Node 且未强制：静默跳过（CI 默认路径）
+        // 唯一触发条件 = DSH_FORCE_NPM_SMOKE=1（本地 scripts/test.ps1 强制实跑）。
+        // 不能以"有无 Node"作为跳过依据——CI runner 普遍预装 Node，会让发布流水线被
+        // 真实镜像网络的波动劫持（40 分钟级超时）。RealNet 类别在 realos 工作流中亦被排除。
+        if (!ForceSmoke) return;
         Assert.True(RuntimeResolver.ResolveExisting().NodeExe is not null,
             "本测试由 DSH_FORCE_NPM_SMOKE=1 强制运行，请先安装 Node.js 18+。");
     }
@@ -39,7 +41,7 @@ public class DshUpdatePipelineRealTests
     public async Task FullPipeline_FetchDownloadBuildApply_RuntimeExecutableAndVersionMatches()
     {
         var nodeExe = RuntimeResolver.ResolveExisting().NodeExe;
-        if (nodeExe is null && !ForceSmoke) return; // 跳过
+        if (!ForceSmoke) return; // 未强制：跳过（CI/日常构建默认路径；本地 test.ps1 设 FORCE=1 实跑）
 
         var savedHome = Environment.GetEnvironmentVariable("DSH_HOME");
         var savedNoUi = Environment.GetEnvironmentVariable("DSH_NO_UI");
