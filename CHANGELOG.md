@@ -2,7 +2,9 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.4.1] - 2026-08-24
+
+> **重要稳定性更新**（常规可选更新：现有用户不收强制提示，建议尽快升级）。本版集中修复 v0.4.0 用户回归的三个问题——首装静默失败、Release 更新日志为空、点击后很久才开窗，并把首装链路改为 npm 全局安装。
 
 ### 修复
 
