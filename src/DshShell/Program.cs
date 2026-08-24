@@ -2564,16 +2564,10 @@ internal static class Program
             }
             Logger.Info($"dsh tarball downloaded: {tarballName}");
 
-            // ---- 步骤 2：完整构建（pnpm ~10s / npm ~60s，10%→90%） ----
-            var buildOk = false;
+            // ---- 步骤 2：完整构建（pnpm ~10s / npm ~60s，10%→90%）----
+            // 内核抽至 DshUpdateManager（RealOS 可测）；UI 时序经回调原样保留：
+            // 初始脉冲态 → pnpm 真实百分比 →（pnpm 失败边界刷新脉冲）npm 降级。
             var buildTool = "npm";
-
-            // 检测 pnpm 可用性（绝不安装）
-            var nodeEnv = RuntimeResolver.ResolveExisting();
-            var nodeExe = nodeEnv?.NodeExe;
-            var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
-            Logger.Info($"pnpm detection: nodeExe={nodeExe ?? "null"}, pnpmEntry={pnpmEntryJs ?? "not found"}");
-            var isPnpm = pnpmEntryJs is not null && nodeExe is not null;
 
             // 初始态：不确定进度（脉冲动画由 CustomTitleBar 的 marquee 定时器驱动，
             // 无需轮询线程反复 Invalidate——旧实现 100/500ms 线程是闪烁源之一）。
@@ -2585,46 +2579,11 @@ internal static class Program
                 UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building,
                     $"已构建更新 {percent}%（v{latest}）", percent / 100f);
 
-            if (isPnpm)
-            {
-                try
-                {
-                    Logger.Info($"building dsh runtime with pnpm (ndjson progress): {latest}");
-                    // 粘住 pack 成功的源（依赖解析/缓存与下载同源），失败再沿其余源降级
-                    var pnpmSources = packSourceIdx > 0
-                        ? regSources.Skip(packSourceIdx).Concat(regSources.Take(packSourceIdx)).ToArray()
-                        : regSources;
-                    buildOk = TryNpmOverRegistries(pnpmSources, srcIdx => RunPnpmInstall(
-                        nodeExe!, pnpmEntryJs!, tarballPath, buildDir, progressCallback,
-                        pnpmSources[srcIdx]), "pnpm-build", out _);
-                    buildTool = "pnpm";
-                    Logger.Info($"pnpm build result: {buildOk}");
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn($"pnpm build failed, falling back to npm: {ex.Message}");
-                }
-            }
-
-            if (!buildOk)
-            {
-                Logger.Info($"building dsh runtime with npm: {latest}");
-                // npm 模式无真实进度：保持初始脉冲态（不显示时间伪造的百分比），marquee 动画照常。
-                UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f);
-                string buildTail = "";
-                var npmSources = packSourceIdx > 0
-                    ? regSources.Skip(packSourceIdx).Concat(regSources.Take(packSourceIdx)).ToArray()
-                    : regSources;
-                buildOk = TryNpmOverRegistries(npmSources, srcIdx => RunNpmCommand(
-                    $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
-                        + npmSources[srcIdx],
-                    out buildTail, timeoutMs: 1200000, workingDirectory: buildDir), "npm-build", out _);
-                if (!buildOk)
-                {
-                    Logger.Warn($"npm build failed: {buildTail}");
-                    TryDeleteDir(buildDir);
-                }
-            }
+            var (buildOk, _) = DshUpdateManager.BuildRuntimeFromTarball(
+                tarballPath, tarballName, buildDir, regSources, packSourceIdx,
+                percentProgress: progressCallback,
+                beforeNpmFallback: () => UpdateBuildStatus(
+                    form, CustomTitleBar.BuildStatus.Building, $"正在构建更新（v{latest}）...", 0f));
 
             if (!buildOk)
             {
@@ -2651,13 +2610,7 @@ internal static class Program
                 return;
             }
 
-            var binEntry = (string?)null;
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(dshPkg));
-                binEntry = DshWeb.Domain.DshDiscovery.ResolveBinEntry(buildDir, doc.RootElement);
-            }
-            catch { }
+            var binEntry = DshUpdateManager.ResolveBuiltBinEntry(buildDir);
 
             if (binEntry is null)
             {
@@ -2848,7 +2801,7 @@ internal static class Program
     /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（按 packageId 自归一化，见 UpdateProgress）。
     /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
     /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。</summary>
-    private static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
+    internal static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
         Action<int>? progressCallback = null, string? registryArgs = null)
     {
         try
@@ -3005,7 +2958,7 @@ internal static class Program
     }
 
     /// <summary>递归删除目录（幂等）；失败静默（清理临时目录不阻塞主流程）。</summary>
-    private static void TryDeleteDir(string path)
+    internal static void TryDeleteDir(string path)
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { /* 清理失败忽略 */ }
     }
@@ -3020,7 +2973,8 @@ internal static class Program
     /// 此处仅做原子目录移动（同盘 rename，秒级）+ 清理 pending。
     /// 失败不阻塞启动（继续用旧版本）。
     /// </summary>
-    private static void ApplyPendingDshUpdate(CancellationToken ct = default, Action<string>? progress = null)
+    // internal（2026-09）：RealOS 全链路测试经 InternalsVisibleTo 驱动生产应用路径（临时 DSH_HOME 隔离）。
+    internal static void ApplyPendingDshUpdate(CancellationToken ct = default, Action<string>? progress = null)
     {
         var (version, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(version)) return;
@@ -3240,7 +3194,7 @@ internal static class Program
     /// 预热与安装都用同一镜像，保证 cache 命中（任务一/二：不同 registry 会 miss 缓存）。</summary>
     /// <summary>npm 源序列（快源优先）：DSH_NPM_MIRROR（若设）→ npmmirror → 官方默认。
     /// 策略见 ShellLogic.NpmRegistryPolicy（契约测试锁定）。</summary>
-    private static string[] GetNpmRegistrySources()
+    internal static string[] GetNpmRegistrySources()
         => ShellLogic.NpmRegistryPolicy.RegistrySources(
             Environment.GetEnvironmentVariable("DSH_NPM_MIRROR"));
 
@@ -3251,7 +3205,7 @@ internal static class Program
     /// 后续步骤粘住同一源（pack 与 build 同源，保证依赖解析与缓存命中一致）。
     /// [2026-08 用户回归：npmjs 直连不稳且慢 → npmmirror 优先]
     /// </summary>
-    private static bool TryNpmOverRegistries(string[] sources, Func<int, bool> run, string opName, out int winningIndex)
+    internal static bool TryNpmOverRegistries(string[] sources, Func<int, bool> run, string opName, out int winningIndex)
     {
         for (var i = 0; i < sources.Length; i++)
         {

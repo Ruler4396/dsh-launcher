@@ -98,6 +98,8 @@ Assert-True ($crCount -eq $lfCount -and $crCount -gt 0) "check-prereq.cmd 使用
 # 自启=拉壳（Run 项直接指向 DshWeb.exe，壳自行拉起服务）：
 # 壳源码 EnsureAutoStartRequested 写 DshWeb.exe（不再 wscript+vbs）
 $shellSrc = Get-Content (Join-Path $root "src\DshShell\Program.cs") -Raw
+# 更新引擎内核已抽至 DshUpdateManager（2026-09 RealOS 可测性抽离）——相关断言扫描"Program+Manager 拼接源"，语义等价
+$updateCoreSrc = $shellSrc + (Get-Content (Join-Path $root "src\DshShell\Managers\DshUpdateManager.cs") -Raw)
 Assert-True ($shellSrc -match 'Path\.Combine\(AppContext\.BaseDirectory, "DshWeb\.exe"\)') "壳自启写 DshWeb.exe（拉壳方案）"
 Assert-True ($shellSrc -notmatch 'wscript\.exe.*start-dsh\.vbs.*HKCU') "壳自启不再用 wscript+start-dsh.vbs"
 # v0.3.0 静态回归：统一日志 / 诊断导出 / 配置降级 / 延迟更新 / 错误码
@@ -214,11 +216,11 @@ Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程�
 Assert-True ($shellSrc -match 'runtime-build-') "下载管线在隔离 staging buildDir 构建运行时（不污染生产 runtimes）"
 Assert-True ($shellSrc -match 'TryDeleteDir\(buildDir\)') "每次构建前强制清场 buildDir（防残留 lockfile 导致 pnpm 假成功）"
 Assert-True ($shellSrc -match 'pointing at buildDir being rebuilt') "重建前清掉指向本 buildDir 的 stale pending（防半成品被强制应用）"
-Assert-True ($shellSrc -match '--prefix') "npm 回退安装走 --prefix 局部树（不触碰全局环境）"
+Assert-True ($updateCoreSrc -match '--prefix') "npm 回退安装走 --prefix 局部树（不触碰全局环境）"
 Assert-True ($shellSrc -match '--no-audit --no-fund') "安装统一 --no-audit --no-fund（跳过审计/fund，加速安装）"
 Assert-True ($shellSrc -match 'GetNpmRegistrySources') "pack/build/apply 共用同一源序列 GetNpmRegistrySources（防跨 registry cache miss）"
 Assert-True ($shellSrc -match 'preserving tarball for next launch retry') "构建失败保留 tarball 待下次重试（降级不断链路）"
-Assert-True ($shellSrc -match 'timeoutMs: 1200000') "npm 构建路径有超时上限（强制 kill，不留僵尸树）"
+Assert-True ($updateCoreSrc -match 'timeoutMs: 1200000') "npm 构建路径有超时上限（强制 kill，不留僵尸树；内核现居 DshUpdateManager）"
 # ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
 Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
 Assert-True ($shellSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
@@ -235,7 +237,7 @@ Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺�
 # ---- 预热工作目录修复断言随架构升级改锁新形态：npm 回退构建必须显式传 buildDir 工作目录
 #      （相对路径 ./<tarball> 依赖该目录；ENOENT 根因同类，工作域从 prefetch_temp 迁移到 buildDir）----
 Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
-Assert-True ($shellSrc -match 'workingDirectory: buildDir') "npm 构建传入 staging buildDir 为工作目录（相对路径 ./<tarball> 依赖该目录）"
+Assert-True ($updateCoreSrc -match 'workingDirectory: buildDir') "npm 构建传入 staging buildDir 为工作目录（相对路径 ./<tarball> 依赖该目录；内核现居 DshUpdateManager）"
 # ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复断言随架构升级改锁新形态：
 #      pack 目标目录先创建（buildDir 由 Directory.CreateDirectory 保证存在）----
 Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(buildDir\)') "pack 前先创建目标构建目录（历史 ERROR_INVALID_NAME 场景的等价修复）"
