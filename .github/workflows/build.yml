@@ -122,5 +122,6 @@ jobs:
           files: |
             dist/dsh-launcher-windows-*.zip
             dist/*.msi
+            dist/SHA256SUMS.txt
           body_path: body.md
           fail_on_unmatched_files: true
