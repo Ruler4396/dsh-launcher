@@ -706,4 +706,16 @@ Safe-mode ask happens at most once per session, shared by all detection paths.
 
 ---
 
+## 附录 A：被拒 / 降级方案档案
+
+> 自 `docs/v0.3.0-plan.md`（已归档删除）第六章归并。记录评审中被拒绝或降级的方案与原因，避免重复论证。
+
+- **主题 accent 增强** → **拒绝**。dsh 只有 dark/light/system 三档、无法读取自定义主题色做动态 accent，保持现状不动。
+- **"镜像延迟测速选最快"** → **拒绝**。改为**静态回退链**（自定义 → 上次成功 → nodejs.org → npmmirror），不做网络测速的复杂度。
+- **"运行时静默装 .NET"** → **拒绝（壳内）**。技术不可能：壳本身需要 .NET 才能运行，无法自我引导。改由 **MSI 链路 winget 引导**（v0.3.1 已实现）。
+- **SIGINT 优雅终止** → **原降级为 P2 尽力而为**；v0.3.1 已实现。
+- **自制下载管线** → **拒绝**。npm 当下载器（`npm pack` / `npx`），不自建带仓库逻辑的下载管线。
+
+---
+
 *本文档随架构决策变更持续更新。每条 ADR 的源码位置以 `[INVARIANT]` 注释标注。*

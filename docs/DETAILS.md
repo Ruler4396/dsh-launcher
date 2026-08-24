@@ -202,6 +202,9 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 3. 页面必须保持打开（可后台）；连接中断期间完成的回合不会补发
 4. 仍不生效：F12 → Console 过滤 `dsh-notification`，看 `show=false` 时括号里的原因（`permission=` / `backgroundOnly=` / `hidden=` / `focus=`）
 
+**Q：日志里出现 [E2001]"未找到 start-dsh.vbs"，但文件明明在？**
+single-file 发布（`PublishSingleFile=true`）下若宿主被 `wscript` 间接调用、或运行时把原生资源解压到临时目录，`AppContext.BaseDirectory` 可能指向临时解压目录而非 exe 所在目录，导致相对定位 vbs 失败。排查：用统一日志确认壳的实际工作目录与 vbs 探测路径；安装版/便携版请从正式发布包启动，不要从临时解压目录直接双击中间产物。
+
 **Q：MSI 和 ZIP 有什么区别？**
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
 
