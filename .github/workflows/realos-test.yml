@@ -50,8 +50,10 @@ jobs:
         shell: pwsh
         run: |
           $env:DSH_FORCE_NPM_SMOKE = "1"
+          # RealNet 类别排除：依赖真实镜像网络下载构建（40 分钟级、境外 runner 不可达境内源），
+          # 属于本地强制硬门禁而非 CI 门禁——CI 环境差异不应劫持发布流水线
           dotnet test "tests\DshShell.Tests" -c Release --nologo -v q `
-            --filter "Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests" 2>&1 | Tee-Object -FilePath realos.log
+            --filter "(Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests)&Category!=RealNet" 2>&1 | Tee-Object -FilePath realos.log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             Select-String -Path realos.log -Pattern '\[FAIL\]|失败!' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }

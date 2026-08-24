@@ -35,6 +35,7 @@ public class DshUpdatePipelineRealTests
     }
 
     [Fact]
+    [Trait("Category", "RealNet")]
     public async Task FullPipeline_FetchDownloadBuildApply_RuntimeExecutableAndVersionMatches()
     {
         var nodeExe = RuntimeResolver.ResolveExisting().NodeExe;
@@ -54,15 +55,23 @@ public class DshUpdatePipelineRealTests
             Environment.SetEnvironmentVariable("DSH_TEST_FAKE_APPLY", null);
             StagedUpdate.Init(dataDir);
 
-            // ---- ① 真实拉取最新版本号（套件内前序真实 npm 用例可能触发镜像限流 → 重试退避） ----
+            // ---- ① 真实拉取最新版本号（重试 + 官方源兜底：境内镜像限流时切 registry.npmjs.org） ----
             string? version = null;
-            for (var attempt = 1; attempt <= 3 && version is null; attempt++)
+            var savedReg = Environment.GetEnvironmentVariable("DSH_NPM_REGISTRY");
+            try
             {
-                if (attempt > 1) await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
-                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-                version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
+                for (var attempt = 1; attempt <= 4 && version is null; attempt++)
+                {
+                    // 第 3 次起切官方源（境外 runner / 镜像限流场景的兜底链）
+                    Environment.SetEnvironmentVariable("DSH_NPM_REGISTRY",
+                        attempt >= 3 ? "https://registry.npmjs.org/" : savedReg);
+                    if (attempt > 1) await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                    version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
+                }
             }
-            Assert.True(!string.IsNullOrWhiteSpace(version), "registry 版本拉取失败（3 次重试后仍为空——镜像限流或不可达）");
+            finally { Environment.SetEnvironmentVariable("DSH_NPM_REGISTRY", savedReg); }
+            Assert.True(!string.IsNullOrWhiteSpace(version), "registry 版本拉取失败（4 次重试含官方源兜底仍为空）");
             Logger.Info($"[RealOS] latest dsh version = {version}");
 
             // ---- ② npm pack 真实下载 tarball（镜像源序列与生产一致） ----
