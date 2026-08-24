@@ -9,8 +9,8 @@ namespace DshShell.Tests.RealOs;
 /// 真实拉取最新版本 → npm pack 下载 tarball → 双路径构建完整运行时 → bin 入口校验
 /// → MarkPending → 生产 <see cref="Program.ApplyPendingDshUpdate"/>（SelfContained 原子切换路径 A）
 /// → 应用后运行时以 node 真实执行并校验版本号。
-/// 门禁约定与 RealWorldNpmExecutionTests 一致：DSH_FORCE_NPM_SMOKE=1 时无 Node 即硬失败
-/// （本地 scripts/test.ps1 强制实跑）；CI 无该标志且无 Node 时静默跳过。
+/// 门禁约定：DSH_FORCE_REALNET=1（scripts/test.ps1 -RealNet）时无 Node 即硬失败；
+/// 未设置则跳过——CI（build 与 realos 工作流）默认均不触发，防发布流水线被镜像网络劫持。
 /// 隔离铁律：全程 %TEMP% 隔离 DSH_HOME；绝不触碰用户真实 .dsh、全局 npm 或固定端口。
 /// </summary>
 public class DshUpdatePipelineRealTests
@@ -28,12 +28,13 @@ public class DshUpdatePipelineRealTests
 
     private static void RequireNodeOrSkip()
     {
-        // 唯一触发条件 = DSH_FORCE_NPM_SMOKE=1（本地 scripts/test.ps1 强制实跑）。
-        // 不能以"有无 Node"作为跳过依据——CI runner 普遍预装 Node，会让发布流水线被
-        // 真实镜像网络的波动劫持（40 分钟级超时）。RealNet 类别在 realos 工作流中亦被排除。
-        if (!ForceSmoke) return;
+        // 唯一触发条件 = DSH_FORCE_REALNET=1（本地 scripts/test.ps1 -RealNet 显式开启）。
+        // 不并入 DSH_FORCE_NPM_SMOKE：后者被 test.ps1 无条件设置（v0.4.0 硬门禁契约），
+        // 而 CI build 流水线总是调用 test.ps1——若共用标志，发布流水线会被真实镜像网络
+        // 的波动劫持（境外 runner 40 分钟级超时）。Category=RealNet 于 realos 工作流亦排除。
+        if (Environment.GetEnvironmentVariable("DSH_FORCE_REALNET") != "1") return;
         Assert.True(RuntimeResolver.ResolveExisting().NodeExe is not null,
-            "本测试由 DSH_FORCE_NPM_SMOKE=1 强制运行，请先安装 Node.js 18+。");
+            "本测试由 DSH_FORCE_REALNET=1 强制运行，请先安装 Node.js 18+。");
     }
 
     [Fact]
@@ -41,7 +42,7 @@ public class DshUpdatePipelineRealTests
     public async Task FullPipeline_FetchDownloadBuildApply_RuntimeExecutableAndVersionMatches()
     {
         var nodeExe = RuntimeResolver.ResolveExisting().NodeExe;
-        if (!ForceSmoke) return; // 未强制：跳过（CI/日常构建默认路径；本地 test.ps1 设 FORCE=1 实跑）
+        if (Environment.GetEnvironmentVariable("DSH_FORCE_REALNET") != "1") return; // 未显式开启：跳过
 
         var savedHome = Environment.GetEnvironmentVariable("DSH_HOME");
         var savedNoUi = Environment.GetEnvironmentVariable("DSH_NO_UI");

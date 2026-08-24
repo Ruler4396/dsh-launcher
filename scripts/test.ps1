@@ -17,7 +17,8 @@ dsh-launcher 测试入口：单元测试 + 脚本/打包集成检查 + 可选冒
 ./scripts/test.ps1 -Smoke
 #>
 param(
-    [switch]$Smoke
+    [switch]$Smoke,
+    [switch]$RealNet
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +49,9 @@ Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
 #（无 Mock 直接跑 node.exe + npm-cli.js）。本机若无 Node 环境该测试将**失败**并阻断，
 # 打破"测试幻觉"——本地验证真实 npm 链路必须可用（CI 无 Node 时该变量未设，测试自动跳过）。
 $env:DSH_FORCE_NPM_SMOKE = "1"
+# -RealNet：显式开启重型真实网络全链路用例（DshUpdatePipelineRealTests，分钟级、依赖镜像可达性）。
+# 默认关闭——CI build 流水线总是调用本脚本，若默认开启会把发布门禁劫持给外部网络状况。
+if ($RealNet) { $env:DSH_FORCE_REALNET = "1" } else { Remove-Item Env:DSH_FORCE_REALNET -ErrorAction SilentlyContinue }
 $testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
 $testCode = $LASTEXITCODE
 $testOut | Select-Object -Last 12
