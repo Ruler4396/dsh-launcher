@@ -59,25 +59,26 @@ while (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue) {
 $srcPkg = Join-Path $env:APPDATA 'npm\node_modules\@deepseek-ai\dsh'
 Assert-Cmd (Test-Path $srcPkg) "全局 dsh 包存在（只读复制源）" "$srcPkg 不存在——本机未全局安装 dsh"
 $oldVer = '0.0.0-drill-old'
+$newVer = '0.0.0-drill-new'   # pending 目标版本；副本 package.json 须改写成同版本（完整性门禁比对）
 $seedRuntime = Join-Path $runtimes $oldVer
 $pkgDest = Join-Path $seedRuntime 'node_modules\@deepseek-ai\dsh'
 New-Item -ItemType Directory -Force -Path $pkgDest | Out-Null
 Copy-Item (Join-Path $srcPkg '*') $pkgDest -Recurse -Force
-# 改写副本版本号（仅副本！），使"应用目标版本"自洽
+# 改写副本版本号为"新版本"（仅副本！）：把副本伪装成 drill-new 的已完成构建产物，
+# 使 IsSourceRuntimeComplete 的版本一致性门禁通过——apply 会把它整体搬到 runtimes\<newVer>
 $pkgJson = Join-Path $pkgDest 'package.json'
 $pkg = Get-Content $pkgJson -Raw | ConvertFrom-Json
-$pkg.version = $oldVer
+$pkg.version = $newVer
 $pkg | ConvertTo-Json -Depth 20 | Set-Content $pkgJson -Encoding utf8
 Write-Host ("种子运行时(副本): " + $seedRuntime)
 
-# ---- 3) 写入合法 pending（指向种子运行时 → 走路径 A 原子切换） ----
-$newVer = '0.0.0-drill-new'   # pending 目标版本；apply 会把种子目录整体搬到 runtimes\<newVer>
+# ---- 3) 写入合法 pending（指向种子运行时构建根 → 走路径 A 原子切换） ----
 $pending = [ordered]@{
     version     = $newVer
     failCount   = 0
     tarball     = $null
     prefetched  = $true
-    runtimeDir  = $pkgDest          # 直接指向"完整构建产物"，命中路径 A
+    runtimeDir  = $seedRuntime        # 构建根（含 node_modules\@deepseek-ai\dsh），命中路径 A 完整性门禁
 }
 $pending | ConvertTo-Json | Set-Content (Join-Path $dataDir 'pending-update.json') -Encoding utf8
 
@@ -95,7 +96,7 @@ if (-not $raw.bin) {
 }
 
 # ---- 4) 冷启动被测 exe（隔离 env；不设 DSH_SANDBOX！） ----
-$logPath = Join-Path $dataDir 'dsh-launcher\dsh.log'
+$logPath = Join-Path $dataDir 'dsh.log'
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $ExePath
 $psi.UseShellExecute = $false
@@ -103,7 +104,11 @@ $psi.EnvironmentVariables['DSH_HOME'] = $home_
 $psi.EnvironmentVariables['DSH_WEB_PORT'] = "$port"
 $psi.EnvironmentVariables['DSH_WEB_URL'] = $null
 $psi.EnvironmentVariables['DSH_VERSION'] = $null
-foreach ($k in @('DSH_SERVICE_CMD','DSH_PROFILE')) { $psi.EnvironmentVariables[$k] = $null }
+$psi.EnvironmentVariables['DSH_SERVICE_CMD'] = $null
+# 门控变量必须显式清空：宿主 shell 可能已注入 DSH_SANDBOX 等（继承会使阶段 0 维护被跳过，演练失真）
+foreach ($k in @('DSH_SANDBOX','DSH_NO_UI','DSH_E2E','DSH_TEST_FORCE_MANAGED','DSH_TEST_FAKE_APPLY','DSH_TEST_INSTANCE','DSH_PROFILE')) {
+    $psi.EnvironmentVariables[$k] = $null
+}
 $proc = [System.Diagnostics.Process]::Start($psi)
 Write-Host ("已启动 PID=" + $proc.Id + " port=$port")
 
