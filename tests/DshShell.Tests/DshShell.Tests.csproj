@@ -13,6 +13,13 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
 
+  <!-- 测试确定性（2026-09）：禁用集合间并行——StagedUpdate/UpdateDataGuard/Logger 等静态
+       状态在并行类间互踩曾致 pending-update.json 断言随机红（CI 同因）。runner 配置必须
+       随程序集复制到输出目录才会生效。 -->
+  <ItemGroup>
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\DshShell\DshShell.csproj" />
   </ItemGroup>

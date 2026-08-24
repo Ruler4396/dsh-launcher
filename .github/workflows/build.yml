@@ -15,6 +15,9 @@ permissions:
 
 jobs:
   build:
+    # 预发布 tag（含 '-'，如 -rc.N/-preview）：只由手动 gh release create --prerelease 发布，
+    # 自动流水线整体跳过（避免工作流把预发布又当成正式 Release 抢发/覆盖手动产物）。
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -64,8 +67,8 @@ jobs:
             dist/SHA256SUMS.txt
 
   release:
-    # 仅 tag 推送才发布 Release；独立 job 单独声明 contents: write（构建 job 保持只读）
-    if: startsWith(github.ref, 'refs/tags/')
+    # 仅正式 tag（不含 '-'）推送才发布 Release；独立 job 单独声明 contents: write（构建 job 保持只读）
+    if: startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
     needs: build
     runs-on: windows-latest
     permissions:
@@ -86,12 +89,15 @@ jobs:
           $tag = $env:REF_NAME
           $ver = $tag.TrimStart('v')
           $changelog = Get-Content CHANGELOG.md -Raw
+          # 发布闸门：tag 指向的提交必须在 CHANGELOG.md 含 "## [x.y.z]" 条目——缺失直接 FAIL，
+          # 严禁以 "_No changelog entry_" 占位文案静默发布（v0.4.0 事故根因：tag 首推指向的
+          # 提交没有该版本小节，fallback 占位文案被原样发上 Release 页且事后 tag 强移也未能刷新）。
           $m = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($ver))\] - .*?(?=^## |\z)")
-          $body = if ($m.Success) {
-            "## $tag`n`n" + $m.Value.TrimEnd()
-          } else {
-            "## $tag`n`n_No changelog entry for this version yet._"
+          if (-not $m.Success) {
+            Write-Host "::error title=missing-changelog::CHANGELOG.md has no '## [$ver]' entry on this tag commit; add it before releasing."
+            exit 1
           }
+          $body = "## $tag`n`n" + $m.Value.TrimEnd()
           if (Test-Path "dist\SHA256SUMS.txt") {
             $body += "`n`n## 校验和 (SHA256)`n``````text`n" + (Get-Content "dist\SHA256SUMS.txt" -Raw).TrimEnd() + "`n``````"
           }
@@ -103,7 +109,7 @@ jobs:
 
           **MSI 安装包（推荐新手）**：双击安装，向导里可勾选是否开机自启；自动创建桌面与开始菜单快捷方式（含"卸载 dsh-launcher"）。卸载：设置 → 应用 → dsh-launcher → 卸载。
 
-          **便携版 ZIP**：解压即用，双击 ``DshWeb.exe``；删文件夹即卸载（自启/快捷方式用 ``uninstall-autostart.cmd`` 清理）。
+          **便携版 ZIP**：解压即用，双击 ``DshWeb.exe``；删文件夹即卸载（自启/快捷方式用 ``uninstall-autostart.cmd`` 清理）。ZIP 为框架依赖发布，**解压后建议先运行同目录 ``check-prereq.cmd`` 确认已安装 .NET Desktop Runtime 10 与 Node.js 18+**（MSI 安装包自带前置检查，无需手动）。
 
           > MSI 与 ZIP 内容完全相同；区别只在安装方式：MSI 有标准安装/卸载流程，适合新手；ZIP 免安装，适合便携党。
           > The MSI and ZIP contain the same files; the MSI adds a standard install/uninstall flow for new users, the ZIP is portable and install-free.

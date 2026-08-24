@@ -17,6 +17,20 @@ public static class DshDiscovery
     /// <summary>标准 npm 包名。</summary>
     public const string PackageName = "@deepseek-ai/dsh";
 
+    // ---------------- 昂贵探测的记忆化 ----------------
+    // DiscoverCurrentRuntime 的各步骤里唯一昂贵的是全局/shim 身份的版本探测
+    // （spawn node --version，数百 ms～3s，且旧实现可无限阻塞）；其余（PATH 扫描、
+    // npm shim 存在性、runtimes 目录扫描）都是廉价文件系统/注册表读取。
+    // 因此只对版本探测做会话级记忆：DSH_VERSION 等环境钩子保持即时生效（每次重读），
+    // 已有测试语义不变。InvalidateCache() 同时清除探测记忆与调用侧缓存。
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> ProbeMemo = new();
+
+    /// <summary>失效发现层记忆（写侧动作后调用：首装安装成功、更新应用/回滚等）。</summary>
+    public static void InvalidateCache()
+    {
+        ProbeMemo.Clear();
+    }
+
     /// <summary>
     /// 发现当前 dsh 运行时身份。返回确定的 DshRuntimeIdentity。
     /// 优先级：SelfContained → DSH_VERSION → DSH_WEB_URL → where dsh → npm shim → npx。
@@ -218,7 +232,8 @@ public static class DshDiscovery
 
     /// <summary>
     /// 读取 dsh 版本号。[ADR-021] 使用 node.exe 直接执行 dsh 的 JS 入口，彻底绕过 cmd.exe。
-    /// 失败返回 null（不抛异常）。
+    /// 失败返回 null（不抛异常）。探测进程遵循三必须：输出异步排空 + 限时等待 +
+    /// 超时 Kill(entireProcessTree)（修复旧实现同步 ReadToEnd 可无限阻塞、超时不杀树）。
     /// </summary>
     private static string? ReadVersionFromExecutable(string exePath)
     {
@@ -244,6 +259,22 @@ public static class DshDiscovery
                 arguments = "--version";
             }
 
+            return ProbeVersionOutput(fileName, arguments, timeoutMs: 3000);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 有界版本探测（内部可测）：启动子进程采集 stdout 首个非空行为版本号。
+    /// 三必须合规：stdout/stderr 异步排空（防管道缓冲满死锁）、WaitForExit(timeout)、
+    /// 超时 Kill(entireProcessTree) 并回收。超时/启动失败返回 null。
+    /// </summary>
+    internal static string? ProbeVersionOutput(string fileName, string arguments, int timeoutMs)
+    {
+        var memoKey = fileName + "|" + arguments;
+        if (ProbeMemo.TryGetValue(memoKey, out var memoed)) return memoed;
+        try
+        {
             var psi = new ProcessStartInfo(fileName, arguments)
             {
                 UseShellExecute = false,
@@ -255,14 +286,26 @@ public static class DshDiscovery
             };
             using var p = Process.Start(psi);
             if (p is null) return null;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(3000);
+            // 异步排空两个管道（旧实现在 UI 线程同步 ReadToEnd：子进程若不关 stdout 则无限阻塞）
+            var outputTask = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(2000); } catch { /* 尽力回收 */ }
+                Logger.Warn($"version probe timed out ({timeoutMs}ms); process tree killed: {fileName}");
+                return ProbeMemo[memoKey] = null; // 失败同样记忆：防会话内反复 3s 空转
+            }
+            var output = outputTask.Result; // 进程已退出（WaitForExit=true）→ 管道已关闭，任务必已完成
             var version = string.IsNullOrWhiteSpace(output) ? null : output.Trim();
             if (version is not null && version.Contains('.') && version.Any(char.IsDigit))
-                return version;
-            return null;
+                return ProbeMemo[memoKey] = version;
+            return ProbeMemo[memoKey] = null;
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            Logger.Warn($"version probe failed for {fileName}: {ex.Message}");
+            return ProbeMemo[memoKey] = null;
+        }
     }
 
     /// <summary>查找 node.exe 绝对路径。</summary>

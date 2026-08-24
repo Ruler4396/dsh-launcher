@@ -5,6 +5,55 @@
 
 ---
 
+## 0. v0.4.x 用户回归修复批注（2026-09：静默失败 / 开窗慢 / Release 空日志）
+
+> 本次修复在因果链中的落点与身份一致性检查记录（铁律第 3 步要求）。
+
+### 落点 1：启动编排链（"点击很久才有窗口"）
+```
+双击 → [Stage4 单实例] → Splash(OnShown 后台流水线)
+     → EnsureRuntime → 探测端口 → 拉起(vbs) → WaitServiceReady
+     → 【修复①】LauncherApp 就绪预算判定不再于 UI 续体同步 DiscoverCurrentRuntime()
+       （全局安装场景 spawn node --version 数百 ms～3s 曾冻结 Splash）
+     → Splash 关闭 → 【修复②】EnsureServiceAndRuntime 尾部：
+       · 回滚武装 ArmUpdateRollbackGuardFromPersistedState 移入 Task.Run（内含身份发现）
+       · 删除重复 PortOpen 同步终检（就绪真相源 = 流水线 outcome.Ready 的 TCP+HTTP 双探针）
+     → 建主窗（目标 ≤300ms）
+```
+**身份传递检查**：WaitServiceReady 的预算判定仍读 `DiscoverCurrentRuntime().Source`；
+发现层只记忆化**昂贵版本探测**（ProbeVersionOutput），`DSH_VERSION` 钩子保持每次即时生效，
+UpdateChecker/ReadGlobalDshVersion/vbs 三级回退链语义零变化。
+
+### 落点 2：首装链（无 dsh → "静默失败"）
+```
+Source==NpxCache →【改道】TryEnsureGlobalDshInstalled：
+  npm install -g @deepseek-ai/dsh@<ver|latest>
+  · 共享预算 ShellLogic.ProvisionPolicy（600s 总额/420s 单源/剩余<60s 放弃）
+  · 换源边界 → Splash 黄色告警文案（降级可见化）
+  · 成功 → DshDiscovery.InvalidateCache() → StartDshServiceViaVbs（发现链立见新 shim）
+  · 失败 → 返回 false（不落 npx 冷路径）→ HandleStartupFailure 经
+    StartupFailurePolicy 映射为 [E1012] 展示真实根因
+```
+**身份一致性**：安装成功必调 InvalidateCache——否则 WaitServiceReady 会按 NpxCache 误用
+360s 预算、UpdateChecker 读到旧版本。旧 SelfContained staging 双份构建代码已删除；
+更新引擎（DownloadDshUpdateStaged→staging 构建→原子应用）不受影响。
+
+### 落点 3：单实例与崩溃出口（"双击没反应/无声消失"）
+```
+第二实例：等待主窗 20s→5s；超时弹 [E1009] Info（不再静默 return false）
+AppDomain.UnhandledException：写 E9001 日志后 TryShowFatalDialog 可见化（非无头模式）
+```
+
+### 落点 4：发布链（Release 正文为占位符）
+```
+tag v0.4.0 首推指向无 changelog 小节的提交 → fallback 文案被发布；
+事后强移 tag 触发的 CI 因测试红未能刷新 Release。
+根治：build.yml 发布 job 对缺失条目 exit 1（fail-fast 闸门）；CI 测试红修复；
+流程纪律见 .github/CONTRIBUTING.md「发布流程与 tag 纪律」。
+```
+
+---
+
 ## 1. 自动更新因果链
 
 用户打开壳 → 检测新版 → 下载 → 下次启动自动安装 → **验证 Identity 真的变了**。
