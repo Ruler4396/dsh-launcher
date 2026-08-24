@@ -2,6 +2,18 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- **首装静默失败收口**：第二实例等待主窗从 20s 收紧到 5s，超时不再无声退出而是弹 `[E1009]` 说明；终态崩溃（AppDomain.UnhandledException）在非无头模式弹 `[E9001]` 对话框留线索；首装安装失败以真实根因 `[E1012]` 展示（不再被"缺少 start-dsh.vbs"通用文案掩盖）。
+- **启动时延（"点击很久才有窗口"）**：移除 UI 线程上的同步 dsh 身份发现与 Splash 关闭后的重复端口终检/回滚武装阻塞（改为后台线程）；版本探测改异步排空 + 超时杀整树（进程三必须合规），并做会话级记忆化——同一探测不再反复 spawn node。
+- **发布链路（Release 更新日志为空）**：tag 提交缺少对应 `## [x.y.z]` CHANGELOG 条目时发布 job 直接 FAIL，禁止占位文案静默上 Release 页（v0.4.0 事故根治）；单测禁用集合间并行，根治 StagedUpdate 静态状态互踩导致的随机红。
+
+### 变更
+
+- **首装（本机无任何 dsh）改为 npm 全局安装** `@deepseek-ai/dsh`：单次安装、复用 npm 缓存，替代 SelfContained staging 双份构建与 npx 冷解析（更快、更省 CPU/内存）；跨镜像源共享总预算（600s，单源上限 420s），每个降级边界向 Splash 发黄色告警；失败响亮停止、绝不静默落 npx。更新引擎的 staging 原子应用链路保持不变。
+
 ## [0.4.0] - 2026-08-19
 
 > ## ⚠️ 预览版（Preview）—— 请先阅读

@@ -47,6 +47,16 @@ docs(readme): 补充版本兼容性说明
 - 脚本（VBS / CMD / PowerShell）**不要硬编码用户路径**，一律使用 `%USERPROFILE%`、`%~dp0` 等环境变量或相对路径
 - 涉及端口 / 启动参数变更时，必须同步修改 `start-dsh.vbs`、`dsh-web.cmd`、`Program.cs` 三处并更新 README
 
+## 发布流程与 tag 纪律（v0.4.0 事故教训）
+
+1. **Changelog 先行**：打正式版 tag 前，`CHANGELOG.md` 必须已包含 `## [x.y.z] - 日期` 小节。
+   CI 发布 job 对缺失条目 **fail-fast**（不再以占位文案静默发布——v0.4.0 的 Release 曾因此显示
+   "_No changelog entry for this version yet._"）。
+2. **tag 一经发布即视为不可变**：严禁移动已触发 Release 的 tag。若必须重指：
+   先 `gh release delete` + 删除 tag，修正后重建 tag，让工作流重新完整走一遍构建与发布。
+3. **master 必须绿**：测试步红时禁止发版；修复后再推 tag。
+4. 发布后用 `gh release view vX.Y.Z` 核对正文与资产完整性（zip/msi/SHA256SUMS.txt 齐全）。
+
 ## 行为准则
 
 请遵守 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。违反者将被移除贡献资格。

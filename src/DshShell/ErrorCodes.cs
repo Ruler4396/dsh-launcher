@@ -15,8 +15,10 @@ public static class ErrorCodes
     public const string E1006 = "E1006"; // WebView2 Runtime 缺失
     public const string E1007 = "E1007"; // 渲染进程反复崩溃，自动重载已停止（保留手动恢复）
     public const string E1008 = "E1008"; // 插件不兼容导致前端崩溃（安全模式可恢复）
+    public const string E1009 = "E1009"; // 第二实例：已有实例在启动但其主窗迟迟未出现
     public const string E1010 = "E1010"; // 安全模式：隔离 profile 构建失败
     public const string E1011 = "E1011"; // 安全模式：启动后验证失败（服务未就绪/崩溃签名仍在）
+    public const string E1012 = "E1012"; // 首装：dsh 组件自动全局安装失败（npm 全源失败/预算耗尽）
     public const string E2001 = "E2001"; // start-dsh.vbs 缺失
     public const string E2002 = "E2002"; // dsh 服务启动超时
     public const string E2003 = "E2003"; // dsh 服务启动日志报错
@@ -42,8 +44,10 @@ public static class ErrorCodes
         E1006 => "缺少 WebView2 Runtime（Edge WebView2），无法渲染窗口。",
         E1007 => "渲染进程反复崩溃，已停止自动重载（可通过托盘唤窗或重新打开恢复）。",
         E1008 => "插件不兼容导致前端崩溃（可通过安全模式禁用插件恢复）。",
+        E1009 => "检测到另一个 dsh-launcher 实例正在启动，但其窗口未及时出现；请稍候再试。",
         E1010 => "安全模式失败：无法构建隔离 profile（未修改任何用户文件）。",
         E1011 => "安全模式启动失败：服务未就绪或插件崩溃签名仍在，已拒绝宣称成功。",
+        E1012 => "首次运行自动安装 dsh 组件失败（npm 全局安装所有镜像源均失败或预算耗尽）。",
         E2001 => "缺少 start-dsh.vbs，无法自动拉起 dsh 服务。",
         E2002 => "dsh 服务启动超时（下载较慢或网络/代理问题）。",
         E2003 => "dsh 服务启动日志出现错误（npm/权限/依赖问题）。",

@@ -29,6 +29,20 @@ function Assert-True([bool]$Cond, [string]$Msg) {
     else { Write-Host "[FAIL] $Msg" -ForegroundColor Red; $script:failed++ }
 }
 
+# ---- 环境卫生（本地开发防污染，非削弱断言）：本脚本常被 dsh 壳派生的终端拉起，进程级
+# 注入的 DSH_WEB_URL 会让 LauncherApp 误判"外部托管"从而短路端口三重验证（Zombie/Foreign
+# 场景测试全红），DSH_VERSION/DSH_SERVICE_CMD 等也会劫持启动决策分支。单测必须从零环境
+# 出发；CI 本就没有这些变量，本块零副作用。
+Write-Host "== 0. 环境卫生（清除壳注入的 DSH_* 进程变量）==" -ForegroundColor Cyan
+foreach ($hygieneVar in 'DSH_WEB_URL','DSH_WEB_PORT','DSH_VERSION','DSH_TEST_SPLASH_DELAY_MS',
+                        'DSH_SERVICE_CMD','DSH_SANDBOX','DSH_NO_UI','DSH_E2E','DSH_TEST_FORCE_MANAGED',
+                        'DSH_TEST_FAKE_APPLY','DSH_TEST_INSTANCE','DSH_PROFILE') {
+    if (Test-Path "Env:$hygieneVar") {
+        Write-Host ("  [clean] " + $hygieneVar)
+        Remove-Item "Env:$hygieneVar" -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
 # 任务二硬门禁：DSH_FORCE_NPM_SMOKE=1 强制 RealWorldNpmExecutionTests 真实执行
 #（无 Mock 直接跑 node.exe + npm-cli.js）。本机若无 Node 环境该测试将**失败**并阻断，
@@ -56,7 +70,13 @@ Assert-True ($uninstall -match '!DSH_HOME_P!') "uninstall -CleanData 使用延�
 Assert-True ($uninstall -match 'EnableDelayedExpansion') "uninstall 启用延迟扩展"
 
 $vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
-Assert-True ($vbs -match 'dsh web --host 127\.0\.0\.1 --port " & port') "start-dsh.vbs 启动 dsh web (127.0.0.1:3080)"
+# ---- v0.4.x 安全模式/浏览器自启修复后的启动形态：三分支统一经 bootMode 变量拼装
+#      （web 子命令 / ADR-022 安全模式 --profile），并强制 --no-open（壳自管 WebView2 窗口，
+#       防 dsh web 默认 ShellExecute 拉起系统浏览器弹同窗）----
+Assert-True ($vbs -match '& bootMode & " --host 127\.0\.0\.1 --port " & port & " --no-open"') "start-dsh.vbs 三分支统一以 bootMode 启动 web（host/port/--no-open 一致）"
+Assert-True ($vbs -match 'bootMode = "web"') "start-dsh.vbs 默认 bootMode 为 dsh web 子命令"
+Assert-True ($vbs -match '--profile ') "start-dsh.vbs 支持安全模式 --profile 注入（ADR-022）"
+Assert-True ($vbs -match '--no-open') "start-dsh.vbs 全分支携带 --no-open（防系统浏览器弹同窗）"
 Assert-True ($vbs -match 'DSH_LOG') "start-dsh.vbs 使用壳传入的统一日志路径（DSH_LOG）"
 Assert-True ($vbs -match 'dsh-launcher\\dsh\.log') "start-dsh.vbs 回退路径也是统一 dsh.log"
 Assert-True ($vbs -match 'OpenTextFile\(logfile, 8') "start-dsh.vbs 改为追加模式（8），不再截断"
@@ -182,19 +202,23 @@ Assert-True ($splashSrc -match 'IsApplyingUpdate') "Splash 支持更新安装阶
 # v0.4.0 更新文案预期管理：tarball 缺失回退现场下载时，Splash 如实显示"预计 1-2 分钟"耗时
 Assert-True ($shellSrc -match '预计 1-2 分钟') "更新应用 Splash 文案明示现场下载耗时（预计 1-2 分钟），诚实管理预期"
 
-# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装 + 依赖预热）静态断言 ----
+# ---- v0.4.0 更新链路改进（后台静默下载 + 本地 tarball 直装）静态断言 ----
 Assert-True ($shellSrc -match 'LocateTarball') "壳含本地 tarball 定位（应用优先本地安装包，不现场拉取）"
-Assert-True ($shellSrc -match 'local-tarball') "壳含安装来源标记（local-tarball vs registry，日志可诊断）"
+Assert-True ($shellSrc -match 'var installSpec = localTarball \?\?') "壳含安装来源选择：本地 tarball 优先、缺失回退 registry spec（来源可诊断）"
 Assert-True ($shellSrc -match '后台静默下载') "更新询问弹窗明示'后台静默下载'（不打断当前使用）"
 Assert-True ($shellSrc -match '需联网解析依赖') "更新气泡/弹窗文案如实'需联网解析依赖，预计 1-2 分钟'（不误导'已全部下载完'）"
 Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程序已下载'与'依赖在线解析'（诚实管理预期）"
-# ---- 任务一/二：后台依赖预热（Cache Prefetch）静态断言 ----
-Assert-True ($shellSrc -match 'prefetch_temp') "下载管线使用 prefetch_temp 临时目录（预热工作域）"
-Assert-True ($shellSrc -match '--prefix') "预热执行 npm install --prefix 到临时 deps（借安装解析依赖拉入 npm cache）"
-Assert-True ($shellSrc -match '--no-audit --no-fund') "安装/预热统一 --no-audit --no-fund（跳过审计/fund，加速秒级安装）"
-Assert-True ($shellSrc -match 'GetNpmRegistryArgs') "预热与安装共用镜像 registry（防不同 registry 导致 cache miss）"
-Assert-True ($shellSrc -match 'Dependency prefetch failed') "预热失败 Warn 降级（不中断更新流程，重启回退在线安装）"
-Assert-True ($shellSrc -match 'timeoutMs: 180000') "预热超时控制 180s（强制 kill 保留已下载 tarball）"
+# ---- v0.4.x 更新引擎（staging 隔离构建 + 原子切换；替代旧 prefetch_temp 预热管线）静态断言 ----
+# （2026-09 现代化：v0.4.0 已用"npm pack → staging/runtime-build 完整构建 → runtimes 原子搬移"
+#   取代 npm-pack+预热临时目录方案，以下断言随架构升级改锁新不变式，语义等价不削弱。）
+Assert-True ($shellSrc -match 'runtime-build-') "下载管线在隔离 staging buildDir 构建运行时（不污染生产 runtimes）"
+Assert-True ($shellSrc -match 'TryDeleteDir\(buildDir\)') "每次构建前强制清场 buildDir（防残留 lockfile 导致 pnpm 假成功）"
+Assert-True ($shellSrc -match 'pointing at buildDir being rebuilt') "重建前清掉指向本 buildDir 的 stale pending（防半成品被强制应用）"
+Assert-True ($shellSrc -match '--prefix') "npm 回退安装走 --prefix 局部树（不触碰全局环境）"
+Assert-True ($shellSrc -match '--no-audit --no-fund') "安装统一 --no-audit --no-fund（跳过审计/fund，加速安装）"
+Assert-True ($shellSrc -match 'GetNpmRegistrySources') "pack/build/apply 共用同一源序列 GetNpmRegistrySources（防跨 registry cache miss）"
+Assert-True ($shellSrc -match 'preserving tarball for next launch retry') "构建失败保留 tarball 待下次重试（降级不断链路）"
+Assert-True ($shellSrc -match 'timeoutMs: 1200000') "npm 构建路径有超时上限（强制 kill，不留僵尸树）"
 # ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
 Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
 Assert-True ($shellSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
@@ -208,20 +232,36 @@ Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露�
 Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
 $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
-# ---- 预热工作目录修复（用户 21:19/21:40 下载秒败 ENOENT 根因）静态断言 ----
+# ---- 预热工作目录修复断言随架构升级改锁新形态：npm 回退构建必须显式传 buildDir 工作目录
+#      （相对路径 ./<tarball> 依赖该目录；ENOENT 根因同类，工作域从 prefetch_temp 迁移到 buildDir）----
 Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
-Assert-True ($shellSrc -match 'workingDirectory: prefetchDir') "预热传入 prefetch_temp 为工作目录（ENOENT 根因修复：此前默认 DshWeb.exe 目录）"
-# ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复静态断言 ----
-Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(prefetchDir\)') "pack 前先创建 prefetch_temp 目录（历史 ERROR_INVALID_NAME 场景 1 的修复）"
+Assert-True ($shellSrc -match 'workingDirectory: buildDir') "npm 构建传入 staging buildDir 为工作目录（相对路径 ./<tarball> 依赖该目录）"
+# ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复断言随架构升级改锁新形态：
+#      pack 目标目录先创建（buildDir 由 Directory.CreateDirectory 保证存在）----
+Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(buildDir\)') "pack 前先创建目标构建目录（历史 ERROR_INVALID_NAME 场景的等价修复）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
-Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 暴露 prefetch_temp 目录（应用成功后整体清理释放磁盘）"
+Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 保留 prefetch_temp 目录定义（旧 pending 记录兼容清理）"
 # ---- v0.4.0 诚实承诺铁律（用户反馈：cache 未预热时文案却写"预计 5-10 秒"→ 120s 超时）静态断言 ----
-Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 记录 prefetched 预热标志（预热真实成功才为 true）"
-Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于 prefetched 真实状态，不得写死秒数）"
-Assert-True ($shellSrc -match '依赖已就绪') "prefetched=true 时文案如实'依赖已就绪'（不承诺具体秒数）"
-Assert-True ($shellSrc -match '可能需要几分钟') "prefetched=false/线上时如实'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
+Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 保留 prefetched 标志（旧记录向后兼容；真实状态才为 true）"
+Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于真实进度，不得写死秒数）"
+Assert-True ($shellSrc -match 'ComposeTerminalTitleText') "构建成功/失败终态文本统一经 ComposeTerminalTitleText（结论驻留标题栏，不再静默消失）"
+Assert-True ($shellSrc -match '可能需要几分钟') "线上回退路径如实提示'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
+
+# ---- 2026-09 静默失败收口 + 首装全局安装 + 发布闸门 + 测试确定性（新增断言，只增不弱）----
+Assert-True ($shellSrc -match 'TryEnsureGlobalDshInstalled') "首装（无 dsh）改走 npm 全局安装（替代 SelfContained 双份构建，失败不静默落 npx）"
+Assert-True ($shellSrc -match 'DSH_TEST_ALLOW_GLOBAL_INSTALL') "首装全局安装带沙盒门控（CI/沙盒默认跳过真实网络安装）"
+Assert-True ($shellSrc -match 'InvalidateCache\(\)') "首装安装成功后失效发现层记忆（新装 shim/版本立即可见）"
+Assert-True ($shellSrc -match 'TryShowFatalDialog') "终态崩溃可见化：UnhandledException → [E9001] 弹窗（非无头模式），双击无声消失有线索"
+$errCodes = Get-Content (Join-Path $root "src\DshShell\ErrorCodes.cs") -Raw
+Assert-True ($errCodes -match 'E1009 =>' ) "[E1009] 带 Describe（第二实例主窗未就绪的 Info 弹窗）"
+Assert-True ($errCodes -match 'E1012 =>' ) "[E1012] 带 Describe（首装 npm 全局安装失败的真实根因展示）"
+$bpyml = Get-Content (Join-Path $root ".github\workflows\build.yml") -Raw
+Assert-True ($bpyml -match 'missing-changelog' -and $bpyml -match 'exit 1') "发布闸门：tag 提交缺 CHANGELOG 条目时 fail-fast（v0.4.0 占位文案事故根治）"
+Assert-True ($bpyml -match "contains\(github\.ref_name, '-'\)") "预发布 tag（含 '-'）整体跳过自动流水线（rc 由手动 gh --prerelease 发布，不抢正式版）"
+$xunitCfg = Get-Content (Join-Path $root "tests\DshShell.Tests\xunit.runner.json") -Raw
+Assert-True ($xunitCfg -match '"parallelizeTestCollections"\s*:\s*false') "单测已禁用集合间并行（StagedUpdate 静态状态互踩随机红根治）"
 
 # ---- Sandbox (DSH_SANDBOX) 静态断言：门控 + 环境覆盖 ----
 Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan

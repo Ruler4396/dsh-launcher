@@ -1372,18 +1372,19 @@ public static class ShellLogic
         }
 
         /// <summary>
-        /// 经 cmd.exe /c 包装运行 taskkill（AGENTS.md 三必须：cmd 包装 + 输出重定向 + 超时
-        /// Kill(entireProcessTree)）。等待 taskkill 自身退出；超时则强杀 taskkill 整树并返回 false。
+        /// 直接运行 taskkill.exe（ADR-021：严禁 cmd.exe 包装——taskkill 是 System32 原生
+        /// exe，无 .cmd shim 与编码陷阱，直启同样满足三必须：重定向输出并异步排空、限时
+        /// 等待、超时 Kill(entireProcessTree) 清理）。等待 taskkill 自身退出；
         /// 命令是否真正杀掉目标由调用方 <see cref="WaitForProcessExit"/> 判定（taskkill 退出码不可靠）。
         /// </summary>
         internal static bool RunTaskKill(string args, int timeoutMs)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c taskkill {args} > NUL 2>&1")
+            var psi = new System.Diagnostics.ProcessStartInfo("taskkill.exe", args)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             using var proc = new System.Diagnostics.Process { StartInfo = psi, EnableRaisingEvents = false };
             try
@@ -1620,6 +1621,49 @@ public static class ShellLogic
         internal static bool IsOurShortcutTarget(string? targetPath) =>
             !string.IsNullOrWhiteSpace(targetPath)
             && string.Equals(Path.GetFileName(targetPath), "DshWeb.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 首装全局安装预算策略（纯函数，契约测试锁定）：跨镜像源共享一个总预算，单次尝试另有上限；
+    /// 剩余预算不足最小可尝试时长时放弃后续源——替代旧实现"每源 20 分钟 × N 源"的失控等待
+    /// （v0.4.x 用户回归："一段时间后静默失败"的体验根源之一）。
+    /// </summary>
+    public static class ProvisionPolicy
+    {
+        /// <summary>低于该剩余时长即视为预算耗尽（发起必然超时的尝试没有意义）。</summary>
+        public const long MinAttemptMs = 60_000;
+
+        /// <summary>默认共享总预算（秒），供进度文案引用。</summary>
+        public const int TotalBudgetSeconds = 600;
+
+        /// <summary>
+        /// 计算下一次安装尝试的超时上限（ms）：min(单次上限, 总预算-已耗用)；
+        /// 剩余不足 MinAttemptMs 时原样返回负差值（调用方据此放弃）。
+        /// </summary>
+        public static long RemainingInstallTimeoutMs(long elapsedMs, long totalBudgetMs, long perAttemptCapMs)
+        {
+            var remain = totalBudgetMs - Math.Max(0, elapsedMs);
+            if (remain < MinAttemptMs) return remain;
+            return Math.Min(Math.Max(0, perAttemptCapMs), remain);
+        }
+    }
+
+    /// <summary>
+    /// 启动失败错误码映射策略（纯函数，Headless 可测）：首装全局安装失败时，
+    /// StartService=false 会以通用 E2001（"缺少 start-dsh.vbs"）上报，与真实原因不符——
+    /// 组合根据本映射改用 E1012 与安装失败详情展示（静默失败收口：用户看到的是真实根因）。
+    /// </summary>
+    public static class StartupFailurePolicy
+    {
+        public static (string Code, string Detail)? MapFirstRunInstallFailure(
+            string? outcomeErrorCode, string? firstRunInstallError)
+        {
+            if (outcomeErrorCode != "E2001" || string.IsNullOrWhiteSpace(firstRunInstallError))
+                return null;
+            return ("E1012",
+                "首次运行自动安装 dsh 组件失败。\n\n" + firstRunInstallError +
+                "\n\n可检查网络/代理后重试，或在命令行手动执行：npm install -g @deepseek-ai/dsh");
+        }
     }
 
     /// <summary>

@@ -254,13 +254,21 @@ public sealed class LauncherApp
 
         // ---- WaitingForReadiness：轮询 HTTP 就绪（异步探测；取消/超时/日志报错三态）----
         progress?.Report("正在等待 dsh 服务就绪…");
-        // 首次运行（dsh 未安装，服务经 npx 网络下载启动）放宽就绪等待预算（与 Program.WaitServiceReady 一致）。
-        var pollBudgetSeconds = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(
-            DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source == DshWeb.Domain.DshSource.NpxCache);
+        // [修复] 就绪预算判定所需的 dsh 身份发现挪入后台线程：旧实现在 await 续体（UI 线程）
+        // 上同步调 DiscoverCurrentRuntime()——全局安装场景会 spawn node --version 探测（数百 ms
+        // ～3s，旧实现更可无限阻塞），Splash 因此冻结（用户回归"点击很久才有窗口"）。
+        // 生产路径走组合根注入的 ReadinessProbe（自带后台线程与预算逻辑）；Headless 默认分支
+        // 同样把发现+预算计算包进 Task.Run，保证方法在首个 await 即让出调用线程。
         var waitResult = ReadinessProbe is not null
             ? await ReadinessProbe(ct)
-            : await _service.WaitReadyAsync(Port, TimeSpan.FromSeconds(pollBudgetSeconds), ct)
-                ? "ready" : "timeout";
+            : await Task.Run(async () =>
+            {
+                var networkFallback = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source
+                    == DshWeb.Domain.DshSource.NpxCache;
+                var budget = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(networkFallback);
+                return await _service.WaitReadyAsync(Port, TimeSpan.FromSeconds(budget), ct)
+                    ? "ready" : "timeout";
+            }, ct);
         WaitResult = waitResult;
         if (waitResult != "ready")
         {

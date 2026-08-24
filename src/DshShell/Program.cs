@@ -214,11 +214,13 @@ internal static class Program
     internal static void ShowWindowNative(IntPtr hwnd, int nCmdShow) => ShowWindow(hwnd, nCmdShow);
 
     /// <summary>
-    /// P0-2（质量治理）：崩溃留痕钩子。未捕获异常先写日志（E9001 + 异常全文）再终止。
-    /// - UI 线程异常（async void 事件处理器等）经 Application.ThreadException；
-    /// - 主线程/后台线程未捕获异常经 AppDomain.UnhandledException（钩子执行完进程即终止，
-    ///   Logger.Write 为同步 AppendAllText，写盘先于进程结束）。
-    /// 克制：只加诊断、不加恢复逻辑（恢复 = 用户重新打开）。
+    /// P0-2（质量治理）+ 静默失败收口：崩溃留痕钩子。未捕获异常先写日志（E9001 + 异常全文）。
+    /// - UI 线程异常经 Application.ThreadException：只记日志不弹窗（消息泵继续、应用可存活，
+    ///   弹模态框反而打断交互；日志已含全文可定位）。
+    /// - 主线程/后台线程未捕获异常经 AppDomain.UnhandledException：写日志后进程即终止——此前
+    ///   "双击后无声消失"零可见线索，现补 [E9001] 弹窗（非无头模式），至少让用户看到失败原因
+    ///   与日志路径（v0.4.x 用户回归："一段时间后静默失败"的收口之一）。
+    /// 克制：只加诊断与可见性、不加恢复逻辑（恢复 = 用户重新打开）。
     /// </summary>
     private static void RegisterCrashHooks()
     {
@@ -226,8 +228,29 @@ internal static class Program
             Logger.Error("unhandled UI-thread exception: " + e.Exception, ErrorCodes.E9001,
                 new { ex = e.Exception.ToString() });
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
             Logger.Error("unhandled exception: " + e.ExceptionObject, ErrorCodes.E9001,
                 new { ex = e.ExceptionObject?.ToString() });
+            TryShowFatalDialog("unhandled exception", e.ExceptionObject?.ToString());
+        };
+    }
+
+    /// <summary>终态崩溃可见化（静默失败收口）：弹 [E9001] 对话框展示异常摘要与统一日志路径。
+    /// 仅非无头模式弹出；弹窗自身失败不影响已完成的日志留痕。</summary>
+    private static void TryShowFatalDialog(string kind, string? detail)
+    {
+        if (NoUiMode || E2EMode) return; // 无头/探针模式维持纯 stdout+log，防模态窗挂起自动化
+        try
+        {
+            var summary = string.IsNullOrWhiteSpace(detail) ? "" :
+                (detail.Length > 800 ? detail[..800] + "…" : detail) + "\n";
+            MessageBox.Show(
+                $"[{ErrorCodes.E9001}] dsh-launcher 发生内部错误（{kind}），无法继续运行。\n\n" +
+                summary +
+                $"\n完整日志：{UnifiedLogPath}",
+                "dsh-launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        catch { /* 弹窗失败仅留日志 */ }
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
@@ -340,8 +363,12 @@ internal static class Program
         using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);
         if (!firstInstance)
         {
+            // [静默失败收口] 主窗等待从 20s 收紧到 5s，且找不到不再无声退出——给出 [E1009]
+            // Info 弹窗说明"另一实例正在启动但窗口未就绪"。此前用户在首实例慢启动期间连点图标，
+            // 每次点击都落入这个最长 20s 的静默黑洞后无声消失（v0.4.x 用户回归：
+            // "双击启动器不会有弹窗，会在一段时间后静默失败"的最直接吻合点）。
             var existing = FindWindowEx(IntPtr.Zero, IntPtr.Zero, null, "DeepSeek Harness");
-            for (var i = 0; existing == IntPtr.Zero && i < 40; i++)
+            for (var i = 0; existing == IntPtr.Zero && i < 10; i++)
             {
                 Thread.Sleep(500);
                 existing = FindWindowEx(IntPtr.Zero, IntPtr.Zero, null, "DeepSeek Harness");
@@ -354,7 +381,11 @@ internal static class Program
             }
             else
             {
-                Trace("second instance: main window not found within 20s");
+                Trace("second instance: main window not found within 5s; surfacing E1009 instead of silent exit");
+                ShowError(ErrorCodes.E1009,
+                    $"检测到另一个 dsh-launcher 实例正在启动（端口 {Target.Port}），但其窗口 5 秒内没有出现。\n\n" +
+                    $"请稍候再试一次；若反复出现，请查看统一日志：{UnifiedLogPath}",
+                    level: Logger.Level.Info);
             }
             return false;
         }
@@ -394,16 +425,15 @@ internal static class Program
         if (!ServerManagedExternally && !_serviceStartedByShell)
             TryAdoptOrphanService();
 
-        // ---- ADR-023：服务就绪即进入启动健康监控（进程/日志/HTTP 层立即武装；
-        // 页面层等主窗 NavigationCompleted 后由 RunUserInterface 武装）----
+        // ---- ADR-023：服务就绪即进入启动健康监控。其内部的跨会话回滚武装（含 dsh 身份发现）
+        // 移入后台线程执行——此前它连同下面的 PortOpen 终检都在 Splash 关闭后的 UI 线程上同步跑
+        // （node --version 探测可达数秒），造成"Splash 关闭 → 主窗出现"之间的死窗期
+        // （v0.4.x 用户回归："点击很久之后才会打开，弹窗没有一点击就出现"）。
         StartBootHealthMonitor();
 
-        if (!PortOpen(Target.Port))
-        {
-            ShowError(ErrorCodes.E2004, $"dsh 服务不可用（{Target.Url}），请确认服务已启动并查看统一日志：{UnifiedLogPath}");
-            return false;
-        }
-
+        // 就绪判定的单一真相源 = 流水线 outcome.Ready（TCP+HTTP 双探针刚验证通过）。
+        // 不再重复 PortOpen 同步终检：服务若恰在此间隙退出，主窗加载失败路径与健康监控会接管报错；
+        // 此处多等一次只会白吃一段死窗时间。
         if (NoUiMode)
         {
             Trace("no-ui mode: service ready; exiting without window");
@@ -1503,7 +1533,10 @@ internal static class Program
                 catch (Exception ex) { Logger.Warn("boot-monitor: re-persist failed: " + ex.Message); }
             };
             BootMonitor = monitor;
-            ArmUpdateRollbackGuardFromPersistedState(); // [update-guard] 跨会话观察期武装
+            // [update-guard] 跨会话观察期武装：含 dsh 身份发现（可能 spawn node --version 探测）
+            // 与注册表/文件读取，移入后台线程——不再阻塞 Splash 关闭后的建窗路径（死窗期修复，
+            // 见 EnsureServiceAndRuntime 注释）。武装产物仅被后续健康失败裁决读取，时序足够。
+            _ = Task.Run(ArmUpdateRollbackGuardFromPersistedState);
             monitor.Start();
             if (pid > 0) monitor.AttachProcess(pid);
             Logger.Info($"[boot-monitor] started url={Target.Url} log={UnifiedLogPath} servicePid={(pid > 0 ? pid.ToString() : "n/a")}");
@@ -1995,145 +2028,87 @@ internal static class Program
         return env?.NodeExe;
     }
 
+    /// <summary>首装全局安装失败时的用户可见详情（E1012 展示用）；null = 未尝试或已成功。</summary>
+    internal static string? _firstRunProvisionError;
+
     /// <summary>
-    /// 首次运行预装 SelfContained 运行时（本地未安装 dsh 时的"更快下载/启动"路径，用户要求的
-    /// 修复方向之一）：用 npm 一次性把最新版 dsh 完整安装进 DataDir/runtimes/&lt;version&gt;，
-    /// 之后 <see cref="StartDshServiceViaVbs"/> 的发现会命中 SelfContained → node.exe 秒级启动
-    /// （本此与后续均不再依赖慢速/易超时的 npx 冷下载）。
-    ///
-    /// 纯降级友好：任何失败（无网络、无 node、npm 错误、非"未安装"状态）都静默回退到 npx 路径
-    /// （该路径的就绪超时已放宽到 360s），绝不阻塞启动、绝不打扰用户。
-    /// 测试/无头/沙盒模式一律跳过（避免 CI 触发真实网络下载）。
+    /// 首装（本机无任何可用 dsh）改为 npm 全局安装 @deepseek-ai/dsh（2026-09 用户决策）：
+    /// 单次安装、复用 npm 缓存，又快又稳——替代旧 SelfContained staging 双份构建（重、慢、吃
+    /// CPU/内存），也彻底避开 npx 冷解析的反复下载。成功后失效发现缓存，交统一 vbs 拉起链。
+    /// 失败响亮返回 false（详情经 HandleStartupFailure 以 [E1012] 覆盖展示），绝不静默落 npx。
+    /// 总预算/单次上限由 <see cref="ShellLogic.ProvisionPolicy"/> 纯函数决策（契约测试锁定）；
+    /// 每个降级边界（换源）向 Splash 发黄色告警文案。测试/无头/外部托管跳过；沙盒默认跳过，
+    /// DSH_TEST_ALLOW_GLOBAL_INSTALL=1 显式放行演练（流量受 DSH_NPM_MIRROR/npm_config_* 约束）。
     /// </summary>
-    private static bool TryProvisionFirstRunRuntime()
+    private static bool TryEnsureGlobalDshInstalled()
     {
-        // 测试/自动化/沙盒环境不触发真实网络下载预装。
-        // 沙盒默认同样跳过；DSH_TEST_ALLOW_PROVISION=1 显式放行冷启动演练——
-        // 流量仍受 DSH_NPM_MIRROR/REGISTRY 与 npm_config_* 环境约束，可全闭环在沙盒内。
         if (E2EMode || NoUiMode
             || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_SERVICE_CMD")))
-            return false;
+            return true; // 测试钩子：服务命令外部给定，交由原路径
         if (IsSandboxMode
-            && !string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_ALLOW_PROVISION"), "1",
+            && !string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_ALLOW_GLOBAL_INSTALL"), "1",
                 StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        try
-        {
-            var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
-            // 仅"完全未安装"（唯一可用路径是 npx 网络下载）才值得预装；
-            // 已装全局 dsh / 已存在 SelfContained / 外部托管都不需要。
-            if (identity.Source != DshWeb.Domain.DshSource.NpxCache)
-                return true;
-
-            _firstRunProvisionProgress?.Invoke("正在获取 dsh 最新版本…");
-            string? version;
-            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
-                version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
-            if (string.IsNullOrWhiteSpace(version))
-            {
-                Logger.Warn("first-run provision: cannot resolve latest dsh version, falling back to npx");
-                return false; // 无网络：回退 npx（就绪超时已放宽）
-            }
-            Logger.Info($"first-run provision: installing dsh {version} into SelfContained runtime");
-
-            var runtimesDir = Path.Combine(DataDir, "runtimes");
-            var targetDir = Path.Combine(runtimesDir, version);
-            if (File.Exists(Path.Combine(targetDir, "node_modules", "@deepseek-ai", "dsh", "package.json")))
-                return true; // 已预装过同一版本，直接复用
-
-            _firstRunProvisionProgress?.Invoke($"正在下载并安装 dsh v{version}（首次运行，仅需一次）…");
-
-            // 构建到 staging，完成后原子移动到 runtimes/<version>（与更新 Apply 路径 A 一致的原子切换）
-            var staging = Path.Combine(DataDir, "staging");
-            var buildDir = Path.Combine(staging, $"runtime-build-{version}");
-            Directory.CreateDirectory(staging);
-            TryDeleteDir(buildDir); // 清理上次失败的残留
-            Directory.CreateDirectory(buildDir);
-
-            if (!ProvisionBuildSelfContained(buildDir, version))
-            {
-                Logger.Warn("first-run provision: build failed, falling back to npx");
-                TryDeleteDir(buildDir);
-                return false;
-            }
-
-            var dshPkg = Path.Combine(buildDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
-            if (!File.Exists(dshPkg))
-            {
-                Logger.Warn("first-run provision: build produced no dsh package, falling back to npx");
-                TryDeleteDir(buildDir);
-                return false;
-            }
-
-            // 原子切换到 runtimes/<version>
-            Directory.CreateDirectory(runtimesDir);
-            if (Directory.Exists(targetDir)) TryDeleteDir(targetDir);
-            Directory.Move(buildDir, targetDir);
-            Logger.Info($"first-run provision: SelfContained runtime ready at {targetDir}");
             return true;
-        }
-        catch (Exception ex)
+
+        var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
+        if (identity.Source != DshWeb.Domain.DshSource.NpxCache)
+            return true; // 已有 SelfContained / 全局 dsh / npm shim，无需安装
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        _firstRunProvisionProgress?.Invoke("正在获取 dsh 最新版本…");
+        string? version;
+        using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
+            version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
+        if (string.IsNullOrWhiteSpace(version))
         {
-            Logger.Warn("first-run provision failed, falling back to npx: " + ex.Message);
-            return false;
+            // 版本解析失败不直接放弃：registry 直连可达时 @latest 仍可装；真断网则安装步报错收口
+            Logger.Warn("first-run global install: cannot resolve latest version; trying @latest tag");
+            version = "latest";
         }
+        var spec = version == "latest" ? "@deepseek-ai/dsh@latest" : $"@deepseek-ai/dsh@{version}";
+        _firstRunProvisionProgress?.Invoke($"正在全局安装 dsh {version}（首次运行，仅需一次，约 1-3 分钟）…");
+        Logger.Info($"first-run global install: npm install -g {spec}");
+
+        var sources = GetNpmRegistrySources();
+        var lastTail = "";
+        for (var i = 0; i < sources.Length; i++)
+        {
+            var timeoutMs = ShellLogic.ProvisionPolicy.RemainingInstallTimeoutMs(
+                elapsedMs: sw.ElapsedMilliseconds, totalBudgetMs: 600000, perAttemptCapMs: 420000);
+            if (timeoutMs < ShellLogic.ProvisionPolicy.MinAttemptMs)
+            {
+                Logger.Warn($"first-run global install: shared budget exhausted before source #{i}");
+                break;
+            }
+            if (i > 0) // 降级边界必须可见：黄色告警（旧实现静默换源，用户只见"卡住"）
+                _firstRunProvisionProgress?.Invoke(
+                    $"[warn] 安装源失败，切换备用源重试…（{i}/{sources.Length}，已用 {sw.Elapsed.TotalSeconds:F0}s/预算 {ShellLogic.ProvisionPolicy.TotalBudgetSeconds}s）");
+            if (RunNpmCommand(
+                    $"install -g \"{spec}\" --no-audit --no-fund" + sources[i],
+                    out var tail,
+                    progress: s => _firstRunProvisionProgress?.Invoke(s),
+                    timeoutMs: (int)timeoutMs))
+            {
+                Logger.Info($"first-run global install succeeded via source #{i} (dsh {version})");
+                DshWeb.Domain.DshDiscovery.InvalidateCache(); // 发现链立即可见新装的 shim/版本
+                return true;
+            }
+            lastTail = tail;
+            Logger.Warn($"first-run global install failed on source #{i}: {tail}");
+        }
+
+        _firstRunProvisionError = "npm 全局安装失败（所有镜像源均不可用或共享预算耗尽）。" +
+            (string.IsNullOrWhiteSpace(lastTail) ? "" : "\n最后错误：\n" + lastTail);
+        Logger.Error(_firstRunProvisionError, ErrorCodes.E1012, new { spec });
+        _firstRunProvisionProgress?.Invoke("[warn] dsh 组件自动安装失败，本次启动已停止（详见统一日志）。");
+        return false;
     }
 
-    /// <summary>
-    /// 在一个干净的 buildDir 里完成 dsh 包的下载 + 安装（pnpm 机会主义加速 / npm 回退，与更新
-    /// 构建 <see cref="DownloadDshUpdateStaged"/> 同源）。成功（node_modules/@deepseek-ai/dsh 就绪）
-    /// 返回 true；任何失败返回 false（调用方清理并回退 npx）。
-    /// </summary>
-    private static bool ProvisionBuildSelfContained(string buildDir, string version)
-    {
-        try
-        {
-            var tarballName = $"deepseek-ai-dsh-{version}.tgz";
-            var tarballPath = Path.Combine(buildDir, tarballName);
-
-            // 步骤 1：npm pack 下载 tarball（本地/就近镜像，秒级）
-            _firstRunProvisionProgress?.Invoke($"正在下载 dsh v{version} 安装包…");
-            if (!RunNpmCommand(
-                    $"pack @deepseek-ai/dsh@{version} --pack-destination \"" + buildDir + "\"",
-                    out var packTail))
-            {
-                Logger.Warn($"first-run provision pack failed: {packTail}");
-                return false;
-            }
-            if (!File.Exists(tarballPath)) return false;
-
-            // 步骤 2：完整安装（pnpm ~10s / npm ~60s）。与更新构建同源，同一镜像保证 cache 命中。
-            _firstRunProvisionProgress?.Invoke($"正在安装 dsh v{version}（首次运行，仅需一次）…");
-            var nodeEnv = RuntimeResolver.ResolveExisting();
-            var nodeExe = nodeEnv?.NodeExe;
-            var pnpmEntryJs = nodeExe is not null ? DshWeb.Domain.JsEntryResolver.ResolvePnpmEntry() : null;
-            var regSources = GetNpmRegistrySources();
-            if (nodeExe is not null && pnpmEntryJs is not null)
-            {
-                if (TryNpmOverRegistries(regSources, srcIdx => RunPnpmInstall(
-                        nodeExe, pnpmEntryJs, tarballPath, buildDir,
-                        registryArgs: regSources[srcIdx]), "provision-pnpm", out _))
-                    return true;
-                Logger.Warn("first-run provision pnpm install failed, falling back to npm");
-            }
-            return TryNpmOverRegistries(regSources, srcIdx => RunNpmCommand(
-                $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
-                    + regSources[srcIdx],
-                out var installTail, timeoutMs: 1200000, workingDirectory: buildDir), "provision-npm", out _);
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn("first-run provision build exception: " + ex.Message);
-            return false;
-        }
-    }
-
-    /// <summary>拉起 dsh 服务：首次运行（未安装）先预装 SelfContained 运行时以加速/规避 npx 超时，
-    /// 再走统一发现链启动。失败静默回退（TryProvisionFirstRunRuntime 内部已兜底）。</summary>
+    /// <summary>拉起 dsh 服务：首装（未安装任何 dsh）先经 npm 全局安装组件，再走统一 vbs 拉起链。
+    /// 安装失败响亮返回 false——不回退 npx 冷下载慢路径（同样吃网络，且会把失败藏进长等待里）。</summary>
     private static bool StartDshServiceViaVbsWithProvision()
     {
-        TryProvisionFirstRunRuntime();
+        if (!TryEnsureGlobalDshInstalled()) return false;
         return StartDshServiceViaVbs();
     }
 
@@ -2167,6 +2142,15 @@ internal static class Program
         // Node 缺失/下载失败：错误码随 outcome 直达，无需再读日志
         if (outcome.ErrorCode is not null)
         {
+            // [静默失败收口] 首装全局安装失败时 StartService=false 走通用 E2001 文案
+            // （"缺少 start-dsh.vbs"）会误导——按 StartupFailurePolicy 改用真实根因 E1012 展示。
+            var mapped = ShellLogic.StartupFailurePolicy.MapFirstRunInstallFailure(
+                outcome.ErrorCode, _firstRunProvisionError);
+            if (mapped is not null)
+            {
+                ShowError(mapped.Value.Code, mapped.Value.Detail, level: Logger.Level.Error);
+                return;
+            }
             ShowError(outcome.ErrorCode, outcome.ErrorDetail ?? "启动失败。",
                 level: outcome.ErrorCode == ErrorCodes.E1002 ? Logger.Level.Info : Logger.Level.Error);
             return;
