@@ -412,23 +412,27 @@ internal static class Program
         };
 
         // 托盘图标：由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
-        // 壳只读取配置，不硬编码托盘逻辑
-        // 仅在 Tray 模式下创建托盘（更新通知通过其他机制实现，不依赖托盘）
-        var lifetimeMode = ReadLifetimeMode();
-        if (lifetimeMode == ShellLogic.ServiceLifetime.Tray)
+        // 壳只读取配置，不硬编码托盘逻辑；更新通知走系统 Toast，不依赖托盘。
+        // [Regression_TrayResidentSwitchAtRuntime] 委托装配与"启动时的模式"解耦：
+        // 此前四个委托只在启动时 mode==Tray 的分支内装配——运行中在设置页切到"托盘驻留"
+        // 后，壳里永远没有托盘（FormClosing 因 TrayIcon==null 不拦截 → 直接整壳退出），
+        // 与设置页"立即生效"的承诺相悖。现改为始终装配；IsTrayWantedProvider 每次调用
+        // 现读配置（ReadLifetimeMode 自带插件降级/purge），启动模式仅决定是否立刻建图标。
+        WindowManager.Instance.IsTrayWantedProvider = () =>
+            ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray;
+        WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
+        WindowManager.Instance.TrayExitAction = () =>
         {
-            WindowManager.Instance.IsTrayWantedProvider = () => true;
-            WindowManager.Instance.TrayWhaleIconProvider = () => TrayWhaleIcon ?? SystemIcons.Application;
-            WindowManager.Instance.TrayExitAction = () =>
-            {
-                WindowManager.Instance.MarkTrayExitRequested();
-                // [2026-08 关窗异步化] 托盘退出与关窗共用编排：窗口即刻消失，
-                // 服务清理后台执行（原为 UI 线程同步 StopShellService，卡 1.5s+）
-                BeginShutdownAsync(GetMainFormForDialog());
-            };
-            WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
-            WindowManager.Instance.VerifyDependencies();
-            WindowManager.Instance.EnsureTrayIcon(form);
+            WindowManager.Instance.MarkTrayExitRequested();
+            // [2026-08 关窗异步化] 托盘退出与关窗共用编排：窗口即刻消失，
+            // 服务清理后台执行（原为 UI 线程同步 StopShellService，卡 1.5s+）
+            BeginShutdownAsync(GetMainFormForDialog());
+        };
+        WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
+        WindowManager.Instance.VerifyDependencies();
+        if (ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray)
+        {
+            WindowManager.Instance.EnsureTrayIcon(form); // 启动即处于托盘驻留：立刻可见
         }
 
         WindowManager.Instance.ResolveDarkModeProvider = () => ResolveDarkMode();
@@ -451,17 +455,23 @@ internal static class Program
             if (_shutdownInitiated) return;
 
             var mode = ReadLifetimeMode();
-            // Tray 模式：关闭窗口隐藏到托盘（插件控制，壳读取配置）
-            // 仅在托盘图标存在时拦截（避免插件未启用时误拦截）
-            if (mode == ShellLogic.ServiceLifetime.Tray
-                && WindowManager.Instance.TrayIcon is not null
-                && !WindowManager.Instance.TrayExitRequested
+            // Tray 模式：关闭窗口隐藏到托盘（插件控制，壳读取配置）。
+            // [Regression_TrayResidentSwitchAtRuntime] 图标可能尚未创建（启动时非 Tray、
+            // 运行中才切到托盘驻留）：先按需补建再拦截；补建失败（NotifyIcon 异常）
+            // 则放行真实关闭——fail-open，绝不把用户困在无托盘可唤起的隐藏窗口里。
+            if (ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(mode, WindowManager.Instance.TrayExitRequested)
                 && !_isBuildInProgress)
             {
-                e.Cancel = true;
-                form.Hide();
-                WebViewManager.HiddenSince = DateTime.UtcNow;
-                return;
+                WindowManager.Instance.EnsureTrayIcon(form);
+                if (WindowManager.Instance.TrayIcon is not null)
+                {
+                    e.Cancel = true;
+                    form.Hide();
+                    WebViewManager.HiddenSince = DateTime.UtcNow;
+                    return;
+                }
+                Logger.Warn("tray-resident close could not create tray icon; closing for real",
+                    ctx: new { mode = mode.ToString() });
             }
 
             // ---- 任务五：防误关拦截 ----
