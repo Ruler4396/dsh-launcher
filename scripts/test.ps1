@@ -104,13 +104,23 @@ Assert-True ($crCount -eq $lfCount -and $crCount -gt 0) "check-prereq.cmd 使用
 $shellSrc = Get-Content (Join-Path $root "src\DshShell\Program.cs") -Raw
 # 更新引擎内核已抽至 DshUpdateManager（2026-09 RealOS 可测性抽离）——相关断言扫描"Program+Manager 拼接源"，语义等价
 $updateCoreSrc = $shellSrc + (Get-Content (Join-Path $root "src\DshShell\Managers\DshUpdateManager.cs") -Raw)
-Assert-True ($shellSrc -match 'Path\.Combine\(AppContext\.BaseDirectory, "DshWeb\.exe"\)') "壳自启写 DshWeb.exe（拉壳方案）"
+# 【ADR-024】双轨制收敛：进程/npm 执行原语迁至 ProcessRunner、服务生命周期迁至 ServiceLifecycleOps。
+# 迁移类断言扫描"引擎联合源"（Program + 更新引擎 + 进程原语 + 服务管理），语义等价不削弱：
+# 断言锁定的不变式（超时上限/异步排空/工作目录等）必须存在于系统某处，且 Program 本体被
+# 下方 2.2 节双轨制门禁禁止重新收留这些原语。
+$processRunnerSrc = Get-Content (Join-Path $root "src\DshShell\Managers\ProcessRunner.cs") -Raw
+$serviceMgrSrc = Get-Content (Join-Path $root "src\DshShell\Managers\ServiceManager.cs") -Raw
+$lifecycleOpsSrc = Get-Content (Join-Path $root "src\DshShell\Managers\ServiceLifecycleOps.cs") -Raw
+$engineSrc = $updateCoreSrc + $processRunnerSrc + $serviceMgrSrc + $lifecycleOpsSrc
+$appEnvSrc = Get-Content (Join-Path $root "src\DshShell\Managers\AppEnvironment.cs") -Raw
+$jsEntrySrc = Get-Content (Join-Path $root "src\DshShell\Domain\JsEntryResolver.cs") -Raw
+Assert-True ($appEnvSrc -match 'Path\.Combine\(AppContext\.BaseDirectory, "DshWeb\.exe"\)') "壳自启写 DshWeb.exe（拉壳方案；实现现居 AppEnvironment.EnsureAutoStartRequested）"
 Assert-True ($shellSrc -notmatch 'wscript\.exe.*start-dsh\.vbs.*HKCU') "壳自启不再用 wscript+start-dsh.vbs"
 # v0.3.0 静态回归：统一日志 / 诊断导出 / 配置降级 / 延迟更新 / 错误码
 Assert-True ($shellSrc -match 'Logger\.Init\(UnifiedLogPath\)') "壳启动初始化统一日志"
 Assert-True ($shellSrc -match 'RotateIfNeeded\(\)') "壳启动早段执行日志轮转"
 Assert-True ($shellSrc -match '--diagnose') "壳支持 --diagnose 诊断导出"
-Assert-True ($shellSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级）"
+Assert-True ($appEnvSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级；探测现居 AppEnvironment.ReadLifetimeMode）"
 Assert-True ($shellSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged）"
 Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-web.log 路径"
 
@@ -187,10 +197,10 @@ Assert-True ($logicSrc -match 'GetProcessIdByPort') "壳含端口→PID 反查�
 Assert-True ($logicSrc -match 'GetExtendedTcpTable') "壳含 P/Invoke GetExtendedTcpTable（精确端口归属）"
 Assert-True ($logicSrc -match 'KillProcessTree') "壳含进程树强杀（taskkill /T /F 语义）"
 Assert-True ($logicSrc -match 'GetAncestorPids') "壳含祖先进程链（清理 cmd/npx 外壳）"
-Assert-True ($shellSrc -match 'IsRetryableNpmError') "壳含 npm 失败可重试判定（pending 保留/清理策略）"
-Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗 + pending 策略）"
-Assert-True ($shellSrc -match '正在应用更新 \(v') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'）"
-Assert-True ($shellSrc -match 'BeginOutputReadLine') "壳以逐行异步方式读取 npm 实时日志（非一次性 ReadToEnd）"
+Assert-True ($engineSrc -match 'IsRetryableNpmError') "系统含 npm 失败可重试判定（pending 保留/清理策略；现居更新引擎）"
+Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗收口，策略在引擎）"
+Assert-True ($engineSrc -match '正在应用更新 \(v') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'；现居引擎）"
+Assert-True ($engineSrc -match 'BeginOutputReadLine') "npm 实时日志逐行异步读取（非一次性 ReadToEnd；现居 ProcessRunner）"
 
 $loggerSrc = Get-Content (Join-Path $root "src\DshShell\Logger.cs") -Raw
 Assert-True ($loggerSrc -match 'FileShare\.ReadWrite') "Logger 用 FileShare.ReadWrite 防日志锁死（兼容 cmd >> 句柄）"
@@ -225,22 +235,24 @@ Assert-True ($shellSrc -match '--no-audit --no-fund') "安装统一 --no-audit -
 Assert-True ($shellSrc -match 'GetNpmRegistrySources') "pack/build/apply 共用同一源序列 GetNpmRegistrySources（防跨 registry cache miss）"
 Assert-True ($shellSrc -match 'preserving tarball for next launch retry') "构建失败保留 tarball 待下次重试（降级不断链路）"
 Assert-True ($updateCoreSrc -match 'timeoutMs: 1200000') "npm 构建路径有超时上限（强制 kill，不留僵尸树；内核现居 DshUpdateManager）"
-# ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言 ----
-Assert-True ($shellSrc -match 'FindNpmCliJs') "壳含 npm-cli.js 探测（node.exe 同级 + AppData 全局两优先级）"
-Assert-True ($shellSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
-Assert-True ($shellSrc -match 'internal static bool RunProcessCaptured') "底层进程执行器 RunProcessCaptured 存在（供 Real-OS 测试零 Mock 调用）"
+# ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言
+#      【ADR-024】探测原语迁至 Domain/JsEntryResolver.ResolveNpmCliJs、执行原语迁至 ProcessRunner ----
+Assert-True ($jsEntrySrc -match 'ResolveNpmCliJs') "npm-cli.js 探测存在（node.exe 同级 + AppData 全局两优先级；现居 JsEntryResolver）"
+Assert-True ($engineSrc -match 'RunProcessCaptured\(nodeEnv\.NodeExe') "RunNpmCommand 用 node.exe 绝对路径启动（降维打击：绕过 .cmd/.bat/cmd.exe 全部陷阱）"
+Assert-True ($engineSrc -match 'internal static bool RunProcessCaptured') "底层进程执行器 RunProcessCaptured 存在（供 Real-OS 测试零 Mock 调用；现居 ProcessRunner）"
 Assert-True ($shellSrc -notmatch '(?m)^\s*chcp\s+65001') "已彻底删除 chcp 65001 Hack 代码（编码冲突根除，注释保留说明无害）"
 Assert-True ($shellSrc -notmatch '/c \\"" \+ npmCmd') "已删除 cmd /c 双层引号 Hack（node 引擎替代）"
-Assert-True ($shellSrc -match '未检测到可用的 Node\.js 环境') "node.exe 缺失时给出明确 UI 错误（不继续执行）"
-Assert-True ($shellSrc -match '未找到 npm-cli\.js') "npm-cli.js 缺失时给出明确错误（提示重装 Node）"
-Assert-True ($shellSrc -match 'StandardErrorEncoding = System\.Text\.Encoding\.UTF8') "stderr 显式 UTF-8（npm≥7 内部即 UTF-8，任何代码页可读）"
+Assert-True ($engineSrc -match '未检测到可用的 Node\.js 环境') "node.exe 缺失时给出明确错误（不继续执行；现居 ProcessRunner）"
+Assert-True ($engineSrc -match '未找到 npm-cli\.js') "npm-cli.js 缺失时给出明确错误（提示重装 Node；现居 ProcessRunner）"
+Assert-True ($engineSrc -match 'StandardErrorEncoding = System\.Text\.Encoding\.UTF8') "stderr 显式 UTF-8（npm≥7 内部即 UTF-8，任何代码页可读）"
 Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露真实 errorTail（不再硬编码'下载失败'藏原因）"
 Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
 $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
 # ---- 预热工作目录修复断言随架构升级改锁新形态：npm 回退构建必须显式传 buildDir 工作目录
-#      （相对路径 ./<tarball> 依赖该目录；ENOENT 根因同类，工作域从 prefetch_temp 迁移到 buildDir）----
-Assert-True ($shellSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录）"
+#      （相对路径 ./<tarball> 依赖该目录；ENOENT 根因同类，工作域从 prefetch_temp 迁移到 buildDir）
+#      【ADR-024】实现现居 ProcessRunner.RunNpmCommand ----
+Assert-True ($engineSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCommand 支持工作目录参数（相对路径 ./<tarball> 依赖该目录；现居 ProcessRunner）"
 Assert-True ($updateCoreSrc -match 'workingDirectory: buildDir') "npm 构建传入 staging buildDir 为工作目录（相对路径 ./<tarball> 依赖该目录；内核现居 DshUpdateManager）"
 # ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复断言随架构升级改锁新形态：
 #      pack 目标目录先创建（buildDir 由 Directory.CreateDirectory 保证存在）----
@@ -253,12 +265,13 @@ Assert-True ($stagedSrc -match 'PrefetchTempDir') "StagedUpdate 保留 prefetch_
 Assert-True ($stagedSrc -match 'prefetched') "pending-update.json 保留 prefetched 标志（旧记录向后兼容；真实状态才为 true）"
 Assert-True ($shellSrc -notmatch '依赖已预热，预计') "禁止'依赖已预热，预计 5-10 秒'虚假承诺（文案必须基于真实进度，不得写死秒数）"
 Assert-True ($shellSrc -match 'ComposeTerminalTitleText') "构建成功/失败终态文本统一经 ComposeTerminalTitleText（结论驻留标题栏，不再静默消失）"
-Assert-True ($shellSrc -match '可能需要几分钟') "线上回退路径如实提示'可能需要几分钟'（管理预期，不写死 1-2 分钟）"
+Assert-True ($engineSrc -match '可能需要几分钟') "线上回退路径如实提示'可能需要几分钟'（管理预期，不写死 1-2 分钟；文案现居引擎 Apply 路径 B）"
 
-# ---- 2026-09 静默失败收口 + 首装全局安装 + 发布闸门 + 测试确定性（新增断言，只增不弱）----
-Assert-True ($shellSrc -match 'TryEnsureGlobalDshInstalled') "首装（无 dsh）改走 npm 全局安装（替代 SelfContained 双份构建，失败不静默落 npx）"
-Assert-True ($shellSrc -match 'DSH_TEST_ALLOW_GLOBAL_INSTALL') "首装全局安装带沙盒门控（CI/沙盒默认跳过真实网络安装）"
-Assert-True ($shellSrc -match 'InvalidateCache\(\)') "首装安装成功后失效发现层记忆（新装 shim/版本立即可见）"
+# ---- 2026-09 静默失败收口 + 首装全局安装 + 发布闸门 + 测试确定性（新增断言，只增不弱）
+#      【ADR-024】首装链实现迁至 DshUpdateManager.EnsureDshInstalled（原 TryEnsureGlobalDshInstalled）----
+Assert-True ($updateCoreSrc -match 'EnsureDshInstalled') "首装（无 dsh）改走 npm 全局安装（替代 SelfContained 双份构建，失败不静默落 npx；现居更新引擎）"
+Assert-True ($updateCoreSrc -match 'DSH_TEST_ALLOW_GLOBAL_INSTALL') "首装全局安装带沙盒门控（CI/沙盒默认跳过真实网络安装）"
+Assert-True ($engineSrc -match 'InvalidateCache\(\)') "首装安装成功后失效发现层记忆（新装 shim/版本立即可见）"
 Assert-True ($shellSrc -match 'TryShowFatalDialog') "终态崩溃可见化：UnhandledException → [E9001] 弹窗（非无头模式），双击无声消失有线索"
 $errCodes = Get-Content (Join-Path $root "src\DshShell\ErrorCodes.cs") -Raw
 Assert-True ($errCodes -match 'E1009 =>' ) "[E1009] 带 Describe（第二实例主窗未就绪的 Info 弹窗）"
@@ -270,6 +283,39 @@ $xunitCfg = Get-Content (Join-Path $root "tests\DshShell.Tests\xunit.runner.json
 Assert-True ($xunitCfg -match '"parallelizeTestCollections"\s*:\s*false') "单测已禁用集合间并行（StagedUpdate 静态状态互踩随机红根治）"
 
 # ---- Sandbox (DSH_SANDBOX) 静态断言：门控 + 环境覆盖 ----
+# ---- 【ADR-024】双轨制门禁：Program.cs 组合根纯净度（CI 红线） ----
+# 铁律：Main/组合根只允许"环境初始化 + 装配 + 消息泵"。业务原语（进程拉起、HTTP 客户端、
+# 文件删除、注册表读写、端口探测）一旦回流 Program.cs，Manager 依赖方向即被架空，
+# 双轨制（vbs 旧链 vs Identity 新链）就会复活。以下 token 在 Program.cs 的**实际代码行**
+# 中出现任意一个 → CI 立即标红。注释行豁免；限定名调用（如 ShellLogic.ServiceReadiness.PortOpen）
+# 不算违例——组合根允许经 Manager/纯函数间接使用原语，禁止的是**直接持有**。
+Write-Host "`n== 2.2. 双轨制门禁（ADR-024：Program.cs 组合根纯净度） ==" -ForegroundColor Cyan
+$programLines = Get-Content (Join-Path $root "src\DshShell\Program.cs")
+$bannedPatterns = @(
+    @('new\s+HttpClient|HttpClient\s*\{',                     'HTTP 客户端（应经 Managers.WebRuntimeInstaller.CreateHttpClient）'),
+    @('new\s+ProcessStartInfo|Process\.Start\(',              '进程拉起（应经 ServiceManager.Start / ProcessRunner / WebRuntimeInstaller.OpenExternally）'),
+    @('cmd\.exe|wscript',                                     'cmd.exe/wscript 中间层（ADR-021/024 双轨制已消灭）'),
+    @('taskkill|msiexec',                                     '外部工具直调（应经 ShellLogic.ProcessManagement / Windows.LegacyUpgradeCleanup）'),
+    @('File\.Delete\(|Directory\.Delete\(',                   '删除原语（应经 Managers.ProcessRunner.TryDeleteDir 等引擎收口）'),
+    @('Registry\.|Microsoft\.Win32\.Registry',                '注册表读写（应经 AppEnvironment / LegacyUpgradeCleanup）'),
+    @('(?<!\.)\bPortOpen\s*\(',                               '裸 PortOpen 探测（只允许 ShellLogic.ServiceReadiness.PortOpen 限定名）'),
+    @('\bTcpClient\b',                                        'TCP 客户端（就绪探测属 ServiceManager.PollReadiness）'),
+    @('File\.WriteAllText\(',                                 '文件写入原语（核心状态走 ShellLogic.FileSystemPolicy.AtomicWrite，其余经 Manager）')
+)
+$dualTrackViolations = @()
+foreach ($pl in $programLines) {
+    $line = $pl.Trim()
+    if ($line.StartsWith('//') -or $line.StartsWith('///') -or $line.StartsWith('*')) { continue }
+    $codeOnly = $line -replace '\s+//.*$', ''   # 剥离行尾注释（字符串字面量含 // 的场景由人工评审兜底）
+    foreach ($bp in $bannedPatterns) {
+        if ($codeOnly -match $bp[0]) { $dualTrackViolations += "$($bp[1]) => $line"; break }
+    }
+}
+Assert-True ($dualTrackViolations.Count -eq 0) "【ADR-024】Program.cs 零业务原语（$(if($dualTrackViolations.Count -gt 0){'首例: ' + $dualTrackViolations[0]}else{'clean'})"
+# 正面断言：Identity 直启链在组合根可见（StartDshServiceViaIdentity 是唯一服务拉起入口名）
+Assert-True ($shellSrc -match 'StartDshServiceViaIdentity') "组合根唯一服务拉起入口 StartDshServiceViaIdentity（按 Identity 直启）"
+Assert-True ($shellSrc -notmatch 'StartDshServiceViaVbs') "旧 wscript/vbs 启动链入口名已从组合根根除"
+
 Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan
 # DSH_SANDBOX 门控：四个机器级副作用调用点必须被 DSH_SANDBOX 门控
 Assert-True ($shellSrc -match 'IsSandboxMode') "Program.cs 暴露 IsSandboxMode 属性（DSH_SANDBOX=1 判定）"
@@ -280,22 +326,25 @@ Assert-True ($shellSrc -match 'TryPromptOldVersionCleanup' -and $shellSrc -match
 Assert-True ($shellSrc -match 'CleanupOrphanShortcuts' -and $shellSrc -match 'IsSandboxMode') "CleanupOrphanShortcuts 存在且 IsSandboxMode 存在（门控）"
 # 验证门控在正确位置：EnsureSingleInstanceAndAutostart 中有 !IsSandboxMode 保护
 Assert-True ($shellSrc -match '!IsSandboxMode') "EnsureSingleInstanceAndAutostart 用 !IsSandboxMode 门控副作用"
-# 验证 CleanupProgramDataResidue 方法体内有 early return
-$lines = $shellSrc -split "`n"
+# 验证门控在正确位置：【ADR-024】CleanupProgramDataResidue/EnsureAutoStartRequested 实现
+# 已迁至 AppEnvironment——方法体沙盒早退门禁改扫 AppEnvironment 源（语义等价不削弱）
+$appEnvLines = $appEnvSrc -split "`n"
 $inCleanup = $false; $foundGate = $false
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match 'private static void CleanupProgramDataResidue') { $inCleanup = $true }
-    if ($inCleanup -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate = $true; break }
-    if ($inCleanup -and $lines[$i] -match '^\s*\}') { break }
+for ($i = 0; $i -lt $appEnvLines.Count; $i++) {
+    if ($appEnvLines[$i] -match 'internal static void CleanupProgramDataResidue') { $inCleanup = $true }
+    if ($inCleanup -and $appEnvLines[$i] -match 'IsSandboxMode.*return') { $foundGate = $true; break }
+    if ($inCleanup -and $appEnvLines[$i] -match '^\s*\}') { break }
 }
-Assert-True $foundGate "CleanupProgramDataResidue 方法体内有 IsSandboxMode 早期返回"
+Assert-True $foundGate "CleanupProgramDataResidue 方法体内有 IsSandboxMode 早期返回（AppEnvironment）"
 $inEnsure = $false; $foundGate2 = $false
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match 'private static void EnsureAutoStartRequested') { $inEnsure = $true }
-    if ($inEnsure -and $lines[$i] -match 'IsSandboxMode.*return') { $foundGate2 = $true; break }
-    if ($inEnsure -and $lines[$i] -match '^\s*try\s*\{') { break }
+for ($i = 0; $i -lt $appEnvLines.Count; $i++) {
+    if ($appEnvLines[$i] -match 'internal static void EnsureAutoStartRequested') { $inEnsure = $true }
+    if ($inEnsure -and $appEnvLines[$i] -match 'IsSandboxMode.*return') { $foundGate2 = $true; break }
+    if ($inEnsure -and $appEnvLines[$i] -match '^\s*try\s*\{') { break }
 }
-Assert-True $foundGate2 "EnsureAutoStartRequested 方法体内有 IsSandboxMode 早期返回"
+Assert-True $foundGate2 "EnsureAutoStartRequested 方法体内有 IsSandboxMode 早期返回（AppEnvironment）"
+# 组合根仍须保留转发名与门控判定（调用点完整性）
+Assert-True ($shellSrc -match 'CleanupProgramDataResidue' -and $shellSrc -match '!IsSandboxMode') "组合根保留 CleanupProgramDataResidue 调用与 !IsSandboxMode 门控"
 
 # DSH_PORTABLE_NODE_DIR 环境覆盖
 $runtimeSrc = Get-Content (Join-Path $root "src\DshShell\RuntimeResolver.cs") -Raw

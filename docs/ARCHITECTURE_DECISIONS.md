@@ -706,6 +706,51 @@ Safe-mode ask happens at most once per session, shared by all detection paths.
 
 ---
 
+## ADR-024: 系统模型升级——确立 DshRuntimeIdentity 为唯一真相源，消灭双轨制
+
+**状态**: 已生效  
+**日期**: 2026-09 系统模型升级  
+**影响**: `Domain/DshRuntimeIdentity`（重定义）、`Managers/ManagerInterfaces`（契约重写）、`Managers/RuntimeManager`、`Managers/ServiceManager`（`Start(DshRuntimeIdentity, ...)`）、`Managers/DshUpdateManager` + `IDshUpdateManager`（更新引擎唯一入口）、`Managers/ProcessRunner`（进程/npm 原语）、`Managers/ServiceLifecycleOps`（PID 账本/停服）、`Managers/AppEnvironment`、`Managers/WebRuntimeInstaller`、`Managers/SelftestReporter`、`Windows/LegacyUpgradeCleanup`、`Program.cs`（组合根瘦身 ~4000→~2800 行）、`scripts/test.ps1`（双轨制门禁）、`tests/DshShell.Tests/Outcomes/SystemUpgradeOutcomeContracts`（5 条 L3 Outcome）
+
+### 背景
+
+升级前系统存在**双轨制**：同一件事"把 dsh 跑起来"有两条并行实现——
+旧轨：`Program.Main → wscript start-dsh.vbs → cmd.exe`，内部再做 where-dsh/npm-shim/npx 三级回退；
+新轨：`RuntimeManager → ServiceManager`。
+两轨各自探测版本与路径，"检测到的 dsh"与"启动的 dsh"可以不是同一个（FP1 身份错位事故的直接根因）。同时 `Program.cs` 仍是事实上的 God Object：HTTP 客户端、npm 执行、注册表、msiexec、PID 管理散落其间，Manager 的依赖方向被架空。
+
+### 决策
+
+1. **Identity 即真相源**：`DshRuntimeIdentity(Source, NodeExePath, DshEntryJsPath, Version, ProfilePath?)` 是全系统唯一合法的"dsh 在哪、什么版本"载体。
+   - `IRuntimeManager` 只产出 Identity（`Task<RuntimeResolution>`）；
+   - `IServiceManager.Start` **必须**接收 Identity，启动命令只能由 `Identity.NodeExePath × Identity.DshEntryJsPath` 拼装（`ShellLogic.ServiceLaunch.BuildArgs`），wscript/cmd.exe 中间层整体废除；
+   - `IUpdateManager` 全部接口 Identity 化；跨 Manager 严禁裸传版本字符串/包名/相对路径。
+   - 物理要件可空是刻意的：External/NpxCache 形态没有本地 node/入口——此时 `CanLaunchDirectly=false`，启动层响亮 E2001，绝不静默落 npx 冷路径（首装链负责先补装再重发现）。
+2. **组合根纯净度铁律**：`Program.Main` 退化为纯装配（环境初始化 + Manager 接线 + 消息泵）。业务原语全部迁出：
+   - 进程/npm → `ProcessRunner`；PID 账本/停服/接管 → `ServiceLifecycleOps`；环境探查/迁移 → `AppEnvironment`；
+   - WebView2 安装/外链打开 → `WebRuntimeInstaller`；旧版卸载 UI 流程 → `Windows/LegacyUpgradeCleanup`；
+   - 自测落盘 → `SelftestReporter`。`test.ps1` 新增 **2.2 双轨制门禁**：`new HttpClient / Process.Start / cmd.exe / wscript / taskkill / msiexec / File.Delete / Directory.Delete / Registry. / 裸 PortOpen / TcpClient / File.WriteAllText` 在 Program.cs 实际代码行中出现任意一个 → CI 标红。
+3. **五条 L3 Outcome 契约**（`tests/DshShell.Tests/Outcomes/SystemUpgradeOutcomeContracts.cs`，零 Mock 外部进程，只认物理终态）：更新改变实际运行身份 / 更新失败保留旧运行时 / 安全模式物理隔离 profile / 崩溃 10s 内发重载信号 / 退出零污染（~/.dsh、HKCU Run、npm 全局目录逐项快照比对）。
+
+### 不变式
+
+```
+DshRuntimeIdentity is the single source of truth: managers exchange identity,
+never raw versions/package names/relative paths.
+Service launch command is derived ONLY from Identity.NodeExePath × DshEntryJsPath;
+no cmd.exe/wscript intermediary may re-enter the launch chain.
+Program.cs (composition root) contains zero business primitives — enforced by test.ps1 gate 2.2.
+Update success is judged by re-discovered identity (LogPostApplyIdentity), never by npm exit code.
+```
+
+### 与既有 ADR 的关系
+
+- **ADR-021**（禁 cmd.exe 包装）：本 ADR 把该原则从"npm 调用"推广到"整条服务启动链"，并给出静态门禁执行机制。
+- **ADR-022**（安全模式隔离 profile）：`--profile` 只收 name 的 dsh 契约由 `BuildArgs` 统一兑现（ProfilePath 携带完整物理目录、命令行只取目录名），物理存在性由 Outcome 3 锁定。
+- **ADR-020**（Outcome 契约）：5 条新测试是该方法论在"系统模型升级"上的落地样本。
+
+---
+
 ## 附录 A：被拒 / 降级方案档案
 
 > 自 `docs/v0.3.0-plan.md`（已归档删除）第六章归并。记录评审中被拒绝或降级的方案与原因，避免重复论证。

@@ -19,28 +19,11 @@ namespace DshShell.Tests.Managers;
 ///   3. LauncherApp 在更新（后台维护）后仍能进入 Running（旧版本继续启动，不因更新失败挂起）。
 /// 全部确定性、毫秒级、零网络。
 /// </summary>
-public class UpdateFlowContractTests
+[Collection("EnvHygiene")]
+    public class UpdateFlowContractTests
 {
-    // ---------------- Fakes（与现有 LauncherAppScenarioTests 同风格，零 Mock 依赖） ----------------
-
-    private sealed class FakeRuntime : IRuntimeManager
-    {
-        public RuntimeResult Result { get; init; } = RuntimeResult.ReadyNow("node.exe");
-        public Task<RuntimeResult> EnsureRuntimeAsync(CancellationToken ct = default) => Task.FromResult(Result);
-        public void PrependToPath(string nodeRoot) { }
-    }
-
-    private sealed class FakeService : IServiceManager
-    {
-        public bool Ready { get; init; } = true;
-        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
-        public bool KillZombieResult { get; init; } = true;
-        public bool NeedsStart(int port) => false;
-        public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
-            => Task.FromResult(Ready);
-        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
-        public bool KillZombieTree(int port) => KillZombieResult;
-    }
+    public UpdateFlowContractTests() => EnvHygiene.ClearHostileEnv();
+    // ---------------- Fakes：共享 TestFakes（ADR-024 Identity 契约单一来源） ----------------
 
     /// <summary>捕获 IProgress&lt;string&gt; 上报序列的进度记录器。</summary>
     private sealed class ProgressRecorder : IProgress<string>

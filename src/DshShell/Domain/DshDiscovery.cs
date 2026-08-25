@@ -32,8 +32,9 @@ public static class DshDiscovery
     }
 
     /// <summary>
-    /// 发现当前 dsh 运行时身份。返回确定的 DshRuntimeIdentity。
-    /// 优先级：SelfContained → DSH_VERSION → DSH_WEB_URL → where dsh → npm shim → npx。
+    /// 发现当前 dsh 运行时身份（ADR-024：全系统唯一合法的 Identity 产出点）。
+    /// 优先级：SelfContained → DSH_VERSION → DSH_WEB_URL → where dsh/npm shim（合并 GlobalNpm）→ npx。
+    /// 返回的身份携带 NodeExePath × DshEntryJsPath 物理要件——服务启动命令只能由它拼装。
     /// </summary>
     public static DshRuntimeIdentity DiscoverCurrentRuntime()
     {
@@ -45,50 +46,43 @@ public static class DshDiscovery
         if (!string.IsNullOrWhiteSpace(externalUrl))
         {
             return new DshRuntimeIdentity(
-                DshSource.External, null, $"external:{externalUrl}", envVersion, PackageName);
+                DshSource.External, null, null, envVersion);
         }
 
         // 2. SelfContained 运行时（launcher 自管，后台构建，原子切换）— 最高优先级
         var selfContained = DiscoverSelfContainedRuntime();
         if (selfContained is not null)
         {
-            return selfContained with { InstalledVersion = envVersion ?? selfContained.InstalledVersion };
+            return selfContained with { Version = envVersion ?? selfContained.Version };
         }
 
-        // 3. where dsh → 全局 npm 安装
+        // 3. 全局 npm 安装：where dsh 命中，或 %APPDATA%\npm\dsh.cmd 存在但 PATH 未包含。
+        //    [ADR-024] 旧 DshSource.NpmShim 并入 GlobalNpm——两者物理形态相同（全局安装），
+        //    分裂建模曾导致"检测的 dsh"与"启动的 dsh"身份割裂。
         var globalDsh = FindOnPath("dsh.cmd") ?? FindOnPath("dsh.exe") ?? FindOnPath("dsh");
-        if (globalDsh is not null)
-        {
-            var version = envVersion ?? ReadVersionFromExecutable(globalDsh);
-            return new DshRuntimeIdentity(
-                DshSource.GlobalNpm, globalDsh, "dsh", version, PackageName);
-        }
-
-        // 4. %APPDATA%\npm\dsh.cmd → npm shim
         var npmShim = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "npm", "dsh.cmd");
-        if (File.Exists(npmShim))
+        if (globalDsh is not null || File.Exists(npmShim))
         {
-            var version = envVersion ?? ReadVersionFromExecutable(npmShim);
+            var version = envVersion ?? ReadVersionFromExecutable(globalDsh ?? npmShim);
+            // JS 入口经统一解析器定位（绕过 .cmd；缺失时 CanLaunchDirectly=false，
+            // 启动层响亮报 E2001 而非静默落入 cmd.exe 中间层）。
+            var entryJs = JsEntryResolver.ResolvePackageEntry(PackageName);
             return new DshRuntimeIdentity(
-                DshSource.NpmShim, npmShim, $"\"{npmShim}\"", version, PackageName);
+                DshSource.GlobalNpm, FindNodeExe(), entryJs, version);
         }
 
-        // 5. npx 兜底
-        var registry = Environment.GetEnvironmentVariable("DSH_NPM_MIRROR")
-            ?? "https://registry.npmmirror.com";
+        // 4. npx 兜底（无任何物理安装；首装链负责 npm -g 后 InvalidateCache 再发现）
         return new DshRuntimeIdentity(
-            DshSource.NpxCache, null,
-            $"npx -y --registry={registry} {PackageName}",
-            envVersion, PackageName);
+            DshSource.NpxCache, null, null, envVersion);
     }
 
-    /// <summary>检查当前 dsh 是否已安装（SelfContained / GlobalNpm / NpmShim）。</summary>
+    /// <summary>检查当前 dsh 是否已物理安装（SelfContained / GlobalNpm）。</summary>
     public static bool IsGloballyInstalled()
     {
         var identity = DiscoverCurrentRuntime();
-        return identity.Source is DshSource.SelfContained or DshSource.GlobalNpm or DshSource.NpmShim;
+        return identity.Source is DshSource.SelfContained or DshSource.GlobalNpm;
     }
 
     // ---------- SelfContained 运行时发现 ----------
@@ -134,9 +128,7 @@ public static class DshDiscovery
             {
                 var binPath = Path.Combine(bestDir, "node_modules", "@deepseek-ai", "dsh", bestBinEntry);
                 return new DshRuntimeIdentity(
-                    DshSource.SelfContained, bestDir,
-                    $"node \"{binPath}\"",
-                    bestVersion, PackageName);
+                    DshSource.SelfContained, FindNodeExe(), binPath, bestVersion);
             }
         }
         catch { /* 发现失败按无 SelfContained 处理 */ }

@@ -6,30 +6,12 @@ using Xunit;
 namespace DshShell.Tests.Managers;
 
 /// <summary>LauncherApp 组合根的 Headless 集成测试：Fake Manager 驱动生命周期，不起 UI/Node。
-/// 验证"服务就绪 → Running"与"就绪超时 → ShuttingDown"两条核心路径（E2002 映射由组合根承担）。</summary>
-public class LauncherAppTests
+/// 验证"服务就绪 → Running"与"就绪超时 → ShuttingDown"两条核心路径（E2002 映射由组合根承担）。
+/// 【ADR-024】Fake 收敛至共享 TestFakes（Identity 契约单一来源）。</summary>
+[Collection("EnvHygiene")]
+    public class LauncherAppTests
 {
-    private sealed class FakeRuntime : IRuntimeManager
-    {
-        public RuntimeResult Result { get; init; } = RuntimeResult.ReadyNow("node.exe");
-        public string? Prepend { get; private set; }
-        public Task<RuntimeResult> EnsureRuntimeAsync(CancellationToken ct = default) => Task.FromResult(Result);
-        public void PrependToPath(string r) => Prepend = r;
-    }
-
-    private sealed class FakeService : IServiceManager
-    {
-        public bool Ready { get; init; } = true;
-        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
-        public bool KillZombieResult { get; init; } = true;
-        public int KillZombieCalls { get; private set; }
-        public bool NeedsStart(int port) => false;             // 端口已开，走就绪路径
-        public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
-            => Task.FromResult(Ready);
-        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
-        public bool KillZombieTree(int port) { KillZombieCalls++; return KillZombieResult; }
-    }
-
+    public LauncherAppTests() => EnvHygiene.ClearHostileEnv();
     [Fact]
     public void Composition_AssemblesAllFiveManagers()
     {
@@ -58,6 +40,35 @@ public class LauncherAppTests
     }
 
     [Fact]
+    public async Task ServiceStart_ReceivesIdentity_FromRuntimeManager()
+    {
+        // 【ADR-024 契约】IServiceManager.Start 必须收到 IRuntimeManager 产出的同一 Identity 实例，
+        // 且端口/日志路径由组合根装配——跨模块零散装字符串。
+        var identity = IdentityFixtures.Launchable("1.2.3-test");
+        var service = new FakeService { Ready = true, PortState = ShellLogic.ServicePortState.Closed };
+        var app = new LauncherApp(
+            new FakeRuntime { Result = RuntimeResolution.Ready(identity) }, service,
+            serviceLogPath: @"C:\fake\dsh.log");
+        Assert.True(await app.RunStartupAsync());
+
+        Assert.Equal(1, service.StartCalls); // 端口 Closed → 拉起一次
+        Assert.NotNull(service.LastStartArgs);
+        Assert.Equal(identity, service.LastStartArgs!.Value.Identity); // 同一身份实例流动
+        Assert.Equal(3080, service.LastStartArgs.Value.Port);
+        Assert.Equal(@"C:\fake\dsh.log", service.LastStartArgs.Value.LogPath);
+    }
+
+    [Fact]
+    public async Task ServiceStartFailure_DrivesToFailed_WithE2001()
+    {
+        var app = new LauncherApp(new FakeRuntime(),
+            new FakeService { Ready = true, StartResult = false, PortState = ShellLogic.ServicePortState.Closed });
+        Assert.False(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Failed, app.State);
+        Assert.Equal(ErrorCodes.E2001, app.LastErrorCode);
+    }
+
+    [Fact]
     public async Task ReadinessTimeout_DrivesToShuttingDown_AndFalse()
     {
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = false });
@@ -68,7 +79,7 @@ public class LauncherAppTests
     [Fact]
     public async Task RuntimeFailed_DrivesToFailed()
     {
-        var app = new LauncherApp(new FakeRuntime { Result = RuntimeResult.Failed("E1003", "download failed") },
+        var app = new LauncherApp(new FakeRuntime { Result = RuntimeResolution.Failed("E1003", "download failed") },
             new FakeService { Ready = true });
         Assert.False(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Failed, app.State);

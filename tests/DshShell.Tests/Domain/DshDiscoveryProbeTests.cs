@@ -94,9 +94,9 @@ public class DshDiscoveryProbeTests
         try
         {
             Environment.SetEnvironmentVariable("DSH_VERSION", "7.7.7-test");
-            Assert.Equal("7.7.7-test", DshDiscovery.DiscoverCurrentRuntime().InstalledVersion);
+            Assert.Equal("7.7.7-test", DshDiscovery.DiscoverCurrentRuntime().Version);
             Environment.SetEnvironmentVariable("DSH_VERSION", "8.8.8-test");
-            Assert.Equal("8.8.8-test", DshDiscovery.DiscoverCurrentRuntime().InstalledVersion);
+            Assert.Equal("8.8.8-test", DshDiscovery.DiscoverCurrentRuntime().Version);
         }
         finally
         {
