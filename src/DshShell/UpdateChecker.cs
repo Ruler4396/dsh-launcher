@@ -165,14 +165,13 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 本地 dsh 版本：委托 DshDiscovery 统一发现（与 start-dsh.vbs 同源）。
-    /// 返回 InstalledVersion（GlobalNpm/NpmShim 时为实际版本，NpxCache 时可能为 null）。
+    /// 本地 dsh 版本：委托 DshDiscovery 统一发现（与启动链同源，ADR-024）。
+    /// 返回 Identity.Version（GlobalNpm/SelfContained 时为实际版本，NpxCache 时可能为 null）。
     ///
     /// 【身份统一】此前本方法独立执行 cmd /c dsh —version，仅检测全局 npm 安装，
-    /// 与 start-dsh.vbs 的三级回退链（where → npm shim → npx）脱节 →
-    /// "更新了全局 npm 包，但实际运行的是 npx 缓存"的幽灵 Bug。
+    /// 与服务启动的回退链脱节 → "更新了全局 npm 包，但实际运行的是 npx 缓存"的幽灵 Bug。
     /// 现统一委托 DshDiscovery.DiscoverCurrentRuntime()，确保检查与启动同源。
     /// </summary>
     public static string? ResolveLocalDshVersion()
-        => DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
+        => DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version;
 }

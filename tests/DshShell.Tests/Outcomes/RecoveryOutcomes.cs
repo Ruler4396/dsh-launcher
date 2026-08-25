@@ -2,6 +2,7 @@ using DshWeb;
 using DshWeb.Domain;
 using DshWeb.Lifecycle;
 using DshWeb.Managers;
+using DshShell.Tests.Managers;
 using Xunit;
 
 namespace DshShell.Tests.Outcomes;
@@ -13,8 +14,10 @@ namespace DshShell.Tests.Outcomes;
 /// - WebView 崩溃后状态机是否正确转移
 /// - 配置降级（插件缺失）时是否回退到安全默认值
 /// </summary>
-public class RecoveryOutcomes
+[Collection("EnvHygiene")]
+    public class RecoveryOutcomes
 {
+    public RecoveryOutcomes() => EnvHygiene.ClearHostileEnv();
     // ---- Outcome 4: WebView 崩溃自动恢复 ----
 
     /// <summary>
@@ -97,23 +100,5 @@ public class RecoveryOutcomes
         Assert.False(shouldPurge); // 合法值不清理
     }
 
-    // ---- Fakes ----
-
-    private sealed class FakeRuntime : IRuntimeManager
-    {
-        public RuntimeResult Result { get; init; } = RuntimeResult.ReadyNow("node.exe");
-        public Task<RuntimeResult> EnsureRuntimeAsync(CancellationToken ct = default) => Task.FromResult(Result);
-        public void PrependToPath(string nodeRoot) { }
-    }
-
-    private sealed class FakeService : IServiceManager
-    {
-        public bool Ready { get; init; } = true;
-        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
-        public bool NeedsStart(int port) => false;
-        public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
-            => Task.FromResult(Ready);
-        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
-        public bool KillZombieTree(int port) => true;
-    }
+    // ---- Fakes：共享 TestFakes（ADR-024 Identity 契约单一来源）----
 }

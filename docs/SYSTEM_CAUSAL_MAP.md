@@ -84,10 +84,10 @@ graph TD
 
     subgraph "Phase 4: Verify（终极验证）"
         L -->|"是"| M["⑨ ClearPending()"]
-        M --> N["⑩ StartDshServiceViaVbs()"]
-        N --> O["⑪ WaitServiceReady()"]
+        M --> N["⑩ StartDshServiceViaIdentity()<br/>ServiceManager.Start(identity)"]
+        N --> O["⑪ ServiceManager.PollReadiness()"]
         O -->|"📦 证据: HTTP 响应"| P["⑫ DshDiscovery.DiscoverCurrentRuntime()"]
-        P --> Q{"InstalledVersion<br/>== targetVersion?"}
+        P --> Q{"identity.Version<br/>== targetVersion?"}
         Q -->|"是"| R["✅ 真正成功"]
         Q -->|"否"| S["❌ FP1: Identity 未变<br/>npm 成功 ≠ 更新成功"]
     end
@@ -125,13 +125,13 @@ graph TD
 | FP7 | 更新失败导致死循环 | 不可重试错误未清 pending | `IsRetryableNpmError` 分类 |
 
 **关键身份传递节点**：
-- **① → ③**: `Identity.InstalledVersion` 决定"是否有更新"
-- **① → ⑧**: `Identity.Source` 决定"用什么命令安装"
-- **⑩**: `Identity.InvocationCommand` 决定"用什么命令启动服务"
-- **⑫**: **终极验证** — Identity 必须等于目标版本（防 FP1）
+- **① → ③**: `identity.Version` 决定"是否有更新"
+- **① → ⑧**: `identity.Source` 决定"用什么命令安装"
+- **⑩**: `identity.NodeExePath × DshEntryJsPath` 决定启动命令（`ShellLogic.ServiceLaunch.BuildArgs`；ADR-024 后唯一合法来源）
+- **⑫**: **终极验证** — Identity 必须等于目标版本（防 FP1；引擎侧由 `LogPostApplyIdentity` 留痕）
 
 **L3 测试保护**：
-- `Outcome_Update_Changes_Actual_Running_Identity` — 验证 ⑫ 的 Identity 变化
+- `Update_Changes_Actual_Running_Identity`（SystemUpgradeOutcomeContracts）— 验证 ⑫ 的 Identity 物理切换
 - `Outcome_Update_NpmSuccess_WithoutIdentityChange_IsFalsePositive` — 专门拦截 FP1
 - `Outcome_Update_DetectionAndVerification_UseSameIdentity` — 锁定 ① 和 ⑫ 同源
 - **P**: 最终验证必须基于 `DshDiscovery`，而非独立探测
@@ -157,11 +157,11 @@ graph TD
     J -->|"否"| L["下载便携 Node.js"]
     L --> K
     K --> M{"端口状态?"}
-    M -->|"Closed"| N["StartService()<br/>wscript start-dsh.vbs"]
+    M -->|"Closed"| N["ServiceManager.Start(identity)<br/>node.exe × entry 直启（ADR-024）"]
     M -->|"Healthy"| O["跳过拉起"]
     M -->|"Zombie"| P["SweepStaleServicePid → KillServiceProcess<br/>🔧修复点2 僵尸认领闭环"]
     M -->|"Foreign"| Q["快速失败 E2004"]
-    N --> R["WaitReadyAsync()<br/>TCP + HTTP 轮询"]
+    N --> R["PollReadiness()<br/>TCP + HTTP 轮询（含日志宽限）"]
     O --> R
     P --> R
     R --> S{"就绪?"}
@@ -170,9 +170,9 @@ graph TD
 ```
 
 **关键身份传递节点**：
-- **I**: `RuntimeResolver.ResolveExisting()` 返回 `NodeEnvironment`（Node.js 身份）
+- **I**: `RuntimeManager.EnsureRuntimeAsync` 产出 `DshRuntimeIdentity`（Source + node × 入口物理要件；ADR-024 唯一真相源）
 - **K**: `ServiceManager.ProbePort()` 使用 `ShellLogic.ProcessManagement`（进程身份校验）
-- **N**: `start-dsh.vbs` 内部的 dsh 发现链（`where dsh` → npm shim → npx）
+- **N**: 启动命令只能由 `Identity.NodeExePath × Identity.DshEntryJsPath` 拼装——旧 `start-dsh.vbs → cmd.exe` 轨道已废除（ADR-024 双轨制门禁守护）
 
 ---
 
@@ -305,9 +305,9 @@ graph TD
 
 ### 身份一致性检查
 
-当修改涉及以下模块时，**必须**检查 `DshRuntimeIdentity` 的传递：
-- `UpdateChecker` — 版本检测
-- `start-dsh.vbs` / `Program.StartDshServiceViaVbs` — 服务启动
-- `DshDiscovery` — 统一发现
-- `Program.ReadGlobalDshVersion` — 版本读取
-- `Program.HandlePendingUpdateAtStartup` — 更新决策
+当修改涉及以下模块时，**必须**检查 `DshRuntimeIdentity` 的传递（ADR-024）：
+- `DshDiscovery.DiscoverCurrentRuntime` — 统一发现（唯一合法 Identity 产出点）
+- `UpdateChecker.ResolveLocalDshVersion` — 版本检测（必须委托 DshDiscovery，返回 `.Version`）
+- `RuntimeManager.EnsureRuntimeAsync` — 身份解析（产出 RuntimeResolution.Identity）
+- `ServiceManager.Start(identity, port)` — 服务启动（命令只由 Identity 拼装）
+- `DshUpdateManager.HandlePendingAtStartup / ApplyPending` — 更新决策与应用（判定基于 `identity.Version`，应用后 `LogPostApplyIdentity` 取证）

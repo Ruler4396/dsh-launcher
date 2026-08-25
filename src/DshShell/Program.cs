@@ -89,119 +89,28 @@ internal static class Program
     /// <summary>壳的数据目录（settings.json / 统一日志 / service-pid 等）：DSH_HOME\dsh-launcher。</summary>
     private static string DataDir => Path.Combine(DshHomeDir, "dsh-launcher");
 
-    /// <summary>统一日志路径（v0.3.0 单一日志文件）：壳的 JSON Lines 与 dsh 服务输出同文件。
-    /// 通过 DSH_LOG 环境变量传给 start-dsh.vbs（追加写入）。</summary>
+    /// <summary>统一日志路径（v0.3.0 单一日志文件）：壳的 JSON Lines 与 dsh 服务输出同文件。</summary>
     private static string UnifiedLogPath => Path.Combine(DataDir, "dsh.log");
 
-    /// <summary>
-    /// 启动时迁移旧版数据（%LOCALAPPDATA%\dsh-launcher → DSH_HOME\dsh-launcher）：
-    /// settings.json 保留用户的选择；旧文件迁移后删除，避免卸载后残留。
-    /// 旧版曾把 WebView2 用户数据放 %LOCALAPPDATA%\DshWeb（标准位置，保持不动）。
-    /// </summary>
-    private static void MigrateLegacyData()
-    {
-        try
-        {
-            var legacyDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dsh-launcher");
-            var newDir = DataDir;
-            if (!Directory.Exists(legacyDir) || string.Equals(legacyDir, newDir, StringComparison.OrdinalIgnoreCase))
-                return;
-            Directory.CreateDirectory(newDir);
+    /// <summary>沙盒模式标志：DSH_SANDBOX=1 时禁用所有机器级副作用（自启/数据清理/首装网络安装）。
+    /// 纯环境读取下沉至 ShellLogic.RuntimeConfig（Manager 层同源门控）；此处保留组合根转发。</summary>
+    internal static bool IsSandboxMode => ShellLogic.RuntimeConfig.IsSandboxMode;
 
-            var legacySettings = Path.Combine(legacyDir, "settings.json");
-            var newSettings = Path.Combine(newDir, "settings.json");
-            if (File.Exists(legacySettings) && !File.Exists(newSettings))
-            {
-                try { File.Copy(legacySettings, newSettings); } catch { /* 复制失败保留旧文件 */ }
-            }
+    /// <summary>启动时迁移旧版数据（%LOCALAPPDATA% → DSH_HOME）：实现见 AppEnvironment。</summary>
+    private static void MigrateLegacyData() => Managers.AppEnvironment.MigrateLegacyData();
 
-            // 清理旧目录（shell.log / service-pid 等历史文件一并删除，无残留）
-            foreach (var file in Directory.GetFiles(legacyDir))
-            {
-                try { File.Delete(file); } catch { /* 被占用则跳过 */ }
-            }
-            try { if (Directory.GetFiles(legacyDir).Length == 0) Directory.Delete(legacyDir); } catch { }
-        }
-        catch
-        {
-            // 迁移失败不影响启动
-        }
-    }
-
-    /// <summary>沙盒模式标志：DSH_SANDBOX=1 时禁用所有机器级副作用（自启/ProgramData 清理/孤儿快捷方式/旧版本清理）。</summary>
-    internal static bool IsSandboxMode =>
-        string.Equals(Environment.GetEnvironmentVariable("DSH_SANDBOX"), "1", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>清理卸载后 ProgramData 范围外的空目录残留（清理项 1）：安装用 FolderPicker
-    /// 会在 C:\ProgramData\dsh-launcher 创建中转文件（picked.txt），卸载不删该目录；目录为空
-    /// （无其他用户残留文件）时顺手清掉。非空（如被其他软件占用）则不动。</summary>
+    /// <summary>清理卸载后 ProgramData 空目录残留：实现见 AppEnvironment（沙盒门控在调用侧）。</summary>
     private static void CleanupProgramDataResidue()
     {
         if (IsSandboxMode) return; // [SANDBOX] 禁用机器级副作用
-        try
-        {
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "dsh-launcher");
-            if (!Directory.Exists(dir)) return;
-            // 只清理中转文件与空目录；不删除任何非本产品文件
-            var picked = Path.Combine(dir, "picked.txt");
-            if (File.Exists(picked))
-            {
-                try { File.Delete(picked); } catch { /* 占用则跳过 */ }
-            }
-            try
-            {
-                if (Directory.GetFiles(dir).Length == 0 && Directory.GetDirectories(dir).Length == 0)
-                    Directory.Delete(dir);
-            }
-            catch { /* 删除失败（可能有其他用户文件/占用）不动 */ }
-        }
-        catch
-        {
-            // 清理失败不影响启动
-        }
+        Managers.AppEnvironment.CleanupProgramDataResidue();
     }
 
-    /// <summary>自启落地（修复 0.2.3 issue：per-machine 提权安装写 HKCU Run 不可靠，
-    /// 勾选了也不落到任何真实用户 hive）。MSI 勾选自启时只在 HKLM 写机器级意图标志
-    /// （AutoStartWanted=1，随卸载自动清除），本方法在壳启动时读标志、以当前用户
-    /// 身份补写 HKCU Run——用户上下文写 HKCU 100% 可靠，交互/静默安装均覆盖；也顺带
-    /// 解决"其他管理员过 UAC 时自启写错 hive"的问题（谁先用壳，自启就落在谁头上）。
-    /// 升级/自定义目录导致的路径变化自动更新；用户跑了 uninstall-autostart.cmd
-    /// （会同时清 HKLM 标志）则不再自愈。</summary>
+    /// <summary>自启落地（HKLM 意图标志 → HKCU Run 拉壳）：实现见 AppEnvironment。</summary>
     private static void EnsureAutoStartRequested()
     {
         if (IsSandboxMode) return; // [SANDBOX] 禁用机器级副作用
-        try
-        {
-            var wanted = false;
-            try
-            {
-                using var flagKey = Registry.LocalMachine.OpenSubKey(@"Software\dsh-launcher");
-                wanted = flagKey?.GetValue("AutoStartWanted") is int v && v == 1;
-            }
-            catch { /* 读不到按无标志处理（便携版/未勾选） */ }
-            if (!wanted) return;
-
-            // 自启直接拉起壳（登录即见窗口）：壳自行探测/拉起 dsh 服务（无服务时
-            // 自己跑 start-dsh.vbs），不再走 wscript 静默自启服务。值格式与安装器
-            // SetAutoStartFlag CA 一致；旧版 wscript+vbs 格式的存量值会被下面重写
-            // 为新格式（自动迁移）。
-            var exe = Path.Combine(AppContext.BaseDirectory, "DshWeb.exe");
-            if (!File.Exists(exe)) return; // 自身路径异常时不写
-            var expected = "\"" + exe + "\"";
-
-            using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-            var cur = run.GetValue("dsh-launcher") as string;
-            if (string.Equals(cur, expected, StringComparison.OrdinalIgnoreCase)) return;
-            run.SetValue("dsh-launcher", expected, RegistryValueKind.String);
-            Trace("autostart: " + (cur is null ? "created" : "updated") + " HKCU Run entry (HKLM AutoStartWanted=1)");
-        }
-        catch (Exception ex)
-        {
-            Trace("autostart ensure failed: " + ex);
-        }
+        Managers.AppEnvironment.EnsureAutoStartRequested(Trace);
     }
 
     /// <summary>
@@ -273,6 +182,11 @@ internal static class Program
     private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     [STAThread]
+    /// <summary>
+    /// 组合根（ADR-001/ADR-024）：环境初始化 + CLI 分派 + 单实例闸门 + 启动流水线装配 + 消息泵。
+    /// 【铁律】本方法（及整个文件）严禁业务原语——进程拉起/HTTP/删除 IO 全部经
+    /// Managers/ 与 Domain/ 模块执行；启动编排 100% 由 LauncherApp.RunStartupAsync 驱动。
+    /// </summary>
     private static void Main()
     {
         // [INVARIANT] Main must be synchronous. WebView2 environment creation (native
@@ -392,8 +306,8 @@ internal static class Program
         Trace("first instance");
         if (!IsSandboxMode) // [SANDBOX] 禁用机器级副作用
         {
-            TryPromptOldVersionCleanup();
-            CleanupOrphanShortcuts();
+            Windows.LegacyUpgradeCleanup.TryPromptOldVersionCleanup(NoUiMode);
+            Windows.LegacyUpgradeCleanup.CleanupOrphanShortcuts();
         }
         return true;
     }
@@ -900,17 +814,10 @@ internal static class Program
     /// <summary>
     /// 把自测结果落盘（CI 可靠取回通道——GUI 子系统应用的 stdout/退出码在 pwsh 里未必可靠回传）。
     /// 写入当前目录 ui-selftest-result.txt；可用 DSH_TEST_RESULT 覆盖路径。
+    /// [ADR-024] 实现迁至 SelftestReporter（组合根零文件写入原语）。
     /// </summary>
     private static void WriteSelftestResult(bool pass, string detail)
-    {
-        try
-        {
-            var path = Environment.GetEnvironmentVariable("DSH_TEST_RESULT") ?? "ui-selftest-result.txt";
-            try { System.IO.Path.GetFullPath(path); } catch { path = "ui-selftest-result.txt"; }
-            File.WriteAllText(path, $"pass={pass}\n{detail}\n");
-        }
-        catch { /* 落盘失败不阻断 */ }
-    }
+        => Managers.SelftestReporter.Write(pass, detail);
 
     private enum PendingUpdate { None, Dsh, LauncherSecurity }
     private static PendingUpdate _pendingUpdate;
@@ -963,75 +870,9 @@ internal static class Program
         return MessageBox.Show($"[{code}] {ErrorCodes.Describe(code)}\n\n{detail}", "DeepSeek Harness", buttons, icon);
     }
 
-    /// <summary>v0.3.1 P2：WebView2 缺失兜底——下载 Evergreen Bootstrapper（官方固定链接，
-    /// 约 2MB）静默安装后重测；任何一步失败返回 false（调用方回退 E1006 弹窗）。不内嵌 runtime。
-    /// 质量治理 P1-5：各失败分支写入结构化日志（区分 已装/下载失败/安装失败/超时），不再静默。</summary>
-    private static async Task<bool> TryInstallWebView2Async()
-    {
-        try
-        {
-            if (ShellLogic.RuntimeConfig.ReadWebView2Version() is not null) return true;
-            var boot = Path.Combine(Path.GetTempPath(), "dsh-wv2-bootstrapper.exe");
-            try
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
-                using var resp = await http.GetAsync("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
-                if (!resp.IsSuccessStatusCode)
-                {
-                    Logger.Error($"webview2 bootstrapper download failed: HTTP {(int)resp.StatusCode}",
-                        ErrorCodes.E1006, new { stage = "download" });
-                    return false;
-                }
-                await using var fs = new FileStream(boot, FileMode.Create, FileAccess.Write);
-                await resp.Content.CopyToAsync(fs);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("webview2 bootstrapper download error: " + ex.Message, ErrorCodes.E1006, new { stage = "download" });
-                return false;
-            }
-            try
-            {
-                var psi = new ProcessStartInfo(boot, "/silent /install")
-                {
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var p = Process.Start(psi);
-                if (p is null)
-                {
-                    Logger.Error("webview2 bootstrapper failed to start", ErrorCodes.E1006, new { stage = "install" });
-                    return false;
-                }
-                if (!p.WaitForExit(120000))
-                {
-                    try { p.Kill(entireProcessTree: true); } catch { }
-                    Logger.Error("webview2 bootstrapper install timed out", ErrorCodes.E1006, new { stage = "install", timeout = 120000 });
-                    return false;
-                }
-                var ok = p.ExitCode == 0 && ShellLogic.RuntimeConfig.ReadWebView2Version() is not null;
-                if (!ok)
-                    Logger.Error($"webview2 bootstrapper install failed: exit={p.ExitCode}",
-                        ErrorCodes.E1006, new { stage = "install", exitCode = p.ExitCode });
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("webview2 bootstrapper install error: " + ex.Message, ErrorCodes.E1006, new { stage = "install" });
-                return false;
-            }
-            finally
-            {
-                try { if (File.Exists(boot)) File.Delete(boot); } catch { }
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("webview2 fallback install error: " + ex.Message, ErrorCodes.E1006, new { stage = "unknown" });
-            return false;
-        }
-    }
+    /// <summary>v0.3.1 P2：WebView2 缺失兜底安装——实现迁至 WebRuntimeInstaller（ADR-024：
+    /// 下载/进程原语离开组合根文件；本转发保留调用点与语义）。</summary>
+    private static Task<bool> TryInstallWebView2Async() => Managers.WebRuntimeInstaller.TryInstallWebView2Async();
 
     /// <summary>
     /// 统一启动流水线（v0.4.2 收尾）：由 LauncherApp（状态机 + Manager）驱动，替代旧
@@ -1057,7 +898,7 @@ internal static class Program
             else
                 progress.Report(new SplashForm.Message("probe", t));
         });
-        // 任务一：把 Splash 进度桥接进 RunBackgroundMaintenance → ApplyPendingDshUpdate → npm 实时日志。
+        // 任务一：把 Splash 进度桥接进 RunBackgroundMaintenance → ApplyPending → npm 实时日志。
         // 应用更新阶段用 "[apply] " 前缀标记（Splash 更新 Label 并禁用取消按钮）。
         _updateApplyProgress = s => textProgress.Report("[apply] " + s);
         // 首次运行预装进度：普通文本前缀（保持取消可用，不进入 IsApplyingUpdate）。
@@ -1075,14 +916,34 @@ internal static class Program
         }
         finally
         {
+            // 首装失败详情镜像（HandleStartupFailure 的 [E1012] 展示数据源）
+            _firstRunProvisionError = app.FirstRunProvisionError ?? _firstRunProvisionError;
+            // apply 前身份版本镜像（npm 回滚降级目标）
+            if (SessionUpdates is Managers.DshUpdateManager engine
+                && engine.PreApplyIdentityVersion is not null)
+                _preApplyIdentityVersion = engine.PreApplyIdentityVersion;
             _updateApplyProgress = null; // 本次会话结束，清理桥接（防跨会话污染）
             _firstRunProvisionProgress = null; // 同上：首次运行预装进度桥接
         }
     }
 
-    /// <summary>装配 LauncherApp：注入真实副作用（与 Program 静态状态解耦，组合根接线）。</summary>
+    /// <summary>装配 LauncherApp：注入真实副作用（与 Program 静态状态解耦，组合根接线）。
+    /// 【ADR-024】服务拉起不再经 wscript/vbs 委托——LauncherApp 直接调 IServiceManager.Start(identity)；
+    /// 更新编排经 IDshUpdateManager 引擎实例（本会话共享，UI 回调在此接线）。</summary>
     private static LauncherApp CreateLauncherApp(Func<string, string, Task<bool>> confirm)
     {
+        var updates = new Managers.DshUpdateManager(DataDir, Target.Port)
+        {
+            // UI 收口回调：更新失败弹窗 / 首装进度滚动 / PromptRestart 版本登记
+            NotifyApplyFailed = NotifyUpdateApplyFailed,
+            ProvisionProgress = s => _firstRunProvisionProgress?.Invoke(s),
+            DeferRestartPrompt = v => _applyRestartPendingVersion = v,
+        };
+        // [update-guard] apply 成功 → 武装回滚闸门（新版启动自检失败时自动回滚）
+        updates.UpdateApplied += v => _updateRollbackArmedVersion = v;
+        SessionUpdates = updates;
+
+        var service = new ServiceManager();
         return new LauncherApp(
             runtime: new RuntimeManager(confirmDownload: () =>
                 // 自动化环境不打断（原 EnsureNodeForStartupAsync 顶部语义）
@@ -1096,40 +957,48 @@ internal static class Program
                             : "未检测到 Node.js。\n") +
                         "是否自动下载便携版 Node.js 到用户目录？\n" +
                         "（约 30MB，仅用于本启动器，不改动系统环境；版本采用 LTS 固定版）")),
-            service: new ServiceManager(),
-            staleCleanup: _ => SweepStaleServicePid())
+            service: service,
+            staleCleanup: _ => SweepStaleServicePid(),
+            updates: updates,
+            serviceLogPath: UnifiedLogPath)
         {
-            BackgroundMaintenance = ct => RunBackgroundMaintenance(ct, _updateApplyProgress), // 阶段 0 可取消；进度桥接到 Splash
+            BackgroundMaintenance = ct => RunBackgroundMaintenance(updates, ct, _updateApplyProgress), // 阶段 0 可取消；进度桥接到 Splash
             SweepStaleAndApplyUpdate = () =>
             {
-                // v0.4.0：ApplyPendingDshUpdate 已上移到 BackgroundMaintenance（阶段 0）——
-                // npm install -g 应用更新可能耗时 30-60s，原在"正在启动 dsh 服务…"阶段会让用户
-                // 误以为服务卡死且取消无效。阶段 0 完成后用户看到的"启动服务"即真实拉起。
-                if (!PortOpen(Target.Port))
+                // v0.4.0：pending 应用已上移到阶段 0（BackgroundMaintenance）——npm install -g
+                // 可能耗时 30-60s，原在"正在启动 dsh 服务…"阶段会让用户误以为卡死且取消无效。
+                if (!ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", Target.Port))
                 {
                     SweepStaleServicePid();   // 僵尸清扫：上次崩溃记录过、已不在监听的进程
                 }
             },
-            StartService = StartDshServiceViaVbsWithProvision,
-            ReadinessProbe = ct => Task.Run(() => WaitServiceReady(ct, Target.Port, Target.Url, UnifiedLogPath, E2EMode), ct),
+            ReadinessProbe = ct => Task.Run(() =>
+                service.PollReadiness(ct, Target.Port, Target.Url, UnifiedLogPath, E2EMode), ct),
         };
     }
 
+    /// <summary>本会话的更新引擎引用（CreateLauncherApp 装配；供主窗流程复用同一实例，
+    /// 保证 PreApplyIdentityVersion/回滚武装等会话状态一致）。Headless/测试可为 null。</summary>
+    internal static IDshUpdateManager? SessionUpdates { get; private set; }
+
     /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。
-    /// v0.4.0：延迟更新应用（npm install -g）也在此执行——属耗时 IO（30-60s），放阶段 0 后
-    /// 用户看到的"正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。
-    /// <paramref name="ct"/> 传给 ApplyPendingDshUpdate → npm 安装可被取消（Splash 取消立即生效）。
-    /// <paramref name="progress"/>（任务一）：由组合根桥接 Splash 的 IProgress，把"正在应用更新
-    /// (vX)…"与 npm 实时安装日志（"added 50 packages"）滚动上报，消除更新期间 UI 静默/卡死错觉。</summary>
-    private static void RunBackgroundMaintenance(CancellationToken ct, Action<string>? progress = null)
+    /// v0.4.0：延迟更新应用也在此执行——属耗时 IO（30-60s），放阶段 0 后用户看到的
+    /// "正在启动 dsh 服务…"即真实拉起，不再有"卡住"的误导。
+    /// 【ADR-024】pending 决策/应用编排委托给更新引擎（updates.HandlePendingAtStartup /
+    /// CleanupStagingCache）；本方法只做组合根侧的无 UI 维护项。
+    /// <paramref name="ct"/> 传入引擎 → npm 安装可被取消（Splash 取消立即生效）。
+    /// <paramref name="progress"/>：Splash 桥接，"正在应用更新 (vX)…"与 npm 实时日志滚动上报。</summary>
+    private static void RunBackgroundMaintenance(
+        Managers.DshUpdateManager updates, CancellationToken ct, Action<string>? progress = null)
     {
-        if (!PortOpen(Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
+        if (!ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", Target.Port)) Logger.RotateIfNeeded(); // 仅无活服务占用时轮转
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
         UpdateDataGuard.Init(DataDir, DshHomeDir); // [update-guard] apply 前快照 / 自检失败回滚
-        HandlePendingUpdateAtStartup(ct, progress); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
-        CleanupStagingCache();         // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
+        updates.HandlePendingAtStartup(ct, progress,
+            p => ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", p)); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
+        updates.CleanupStagingCache(); // 下载缓存管理：清理 DataDir\staging 中 >7 天的过期包
         MigrateLegacyData();           // 旧版 %LOCALAPPDATA% 数据迁移到 DSH_HOME
         CleanupProgramDataResidue();   // 清理卸载后 ProgramData 空目录残留
         EnsureAutoStartRequested();    // 自启落地：MSI 机器级意图标志 → 当前用户 HKCU Run
@@ -1158,100 +1027,11 @@ internal static class Program
     /// 仅"本地未安装 dsh"的首次运行触发；会话结束清空防污染。</summary>
     private static Action<string>? _firstRunProvisionProgress;
 
-    /// <summary>
-    /// 启动早期待应用更新决策（v0.4.0 T2，纯函数矩阵 U2 的接线）：
-    /// - ApplyNow：服务未运行 → 直接应用（可取消）；
-    /// - ClearPending：运行版本 == 待应用版本 → 清账（历史残留）；
-    /// - PromptRestart：服务在跑且版本不一致 → 记版本，主窗就绪后一次性询问；
-    /// - None：无 pending。
-    /// 端口开着时绝不静默跳过（根因 A 修复）。
-    /// </summary>
-    private static void HandlePendingUpdateAtStartup(CancellationToken ct, Action<string>? progress = null)
-    {
-        // 测试钩子（DSH_TEST_FAKE_APPLY=1）：E2E 模拟"确认更新→重启→应用"全流程。
-        if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
-        {
-            ApplyPendingDshUpdate(ct, progress);
-            return;
-        }
-        var (pendingVersion, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
-        if (string.IsNullOrWhiteSpace(pendingVersion)) return;
-
-        // [INVARIANT] SelfContained 构建完成后，必须无条件执行 Apply，无论端口是否被占用。
-        // 旧服务仍在运行（端口开）时，强杀后执行原子切换。
-        if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
-        {
-            // [2026-08-22 回归·源完整性门禁] 半成品目录（构建中被新构建清场/中断）一旦
-            // 搬出即事故：坏目标 + 锁死后续应用。不完整则本次跳过强制应用，保留 pending
-            // 等构建方重写或用户重新点更新，绝不搬运。
-            if (!StagedUpdate.IsSourceRuntimeComplete(runtimeDir, pendingVersion!))
-            {
-                Logger.Warn($"[Apply] pending runtimeDir exists but INCOMPLETE ({runtimeDir}); skipping forced apply this launch", ErrorCodes.E4002);
-                progress?.Invoke($"检测到未完成的更新产物 v{pendingVersion}，已跳过自动应用；请重新点击更新。");
-                return;
-            }
-            Logger.Info($"[Apply] SelfContained runtime ready: {runtimeDir}, forcing apply");
-            if (PortOpen(Target.Port))
-            {
-                Logger.Info($"[Apply] Port {Target.Port} occupied, killing old service before apply");
-                KillServiceOnPort(Target.Port);
-            }
-            ApplyPendingDshUpdate(ct, progress);
-            return;
-        }
-
-        // 旧版 pending（无 runtimeDir）：按原决策矩阵处理
-        var action = ShellLogic.LifecycleDecisions.ResolvePendingUpdateAction(
-            pendingExists: true,
-            portOpen: PortOpen(Target.Port),
-            runningVersion: ReadGlobalDshVersion(),
-            pendingVersion: pendingVersion);
-        Logger.Info($"[Apply] Decision: {action}, portOpen={PortOpen(Target.Port)}, running={ReadGlobalDshVersion()}, pending={pendingVersion}");
-        switch (action)
-        {
-            case ShellLogic.PendingUpdateAction.ApplyNow:
-                ApplyPendingDshUpdate(ct, progress);
-                break;
-            case ShellLogic.PendingUpdateAction.ClearPending:
-                StagedUpdate.ClearPending();
-                Logger.Info($"[Apply] Cleared stale pending: {pendingVersion} already running");
-                break;
-            case ShellLogic.PendingUpdateAction.PromptRestart:
-                _applyRestartPendingVersion = pendingVersion;
-                Logger.Info($"[Apply] Deferred: {pendingVersion} pending while service running; will prompt on main window");
-                break;
-        }
-    }
-
-    /// <summary>强杀占用指定端口的 dsh 服务进程（Apply 前清理旧服务）。</summary>
-    private static void KillServiceOnPort(int port)
-    {
-        try
-        {
-            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
-            if (pid <= 0) return;
-            Logger.Info($"[Apply] Killing old service PID={pid} on port {port}");
-            if (KillProcess(pid))
-            {
-                // 等待端口释放（最长 2 秒）
-                var deadline = DateTime.UtcNow.AddSeconds(2);
-                while (DateTime.UtcNow < deadline && PortOpen(port))
-                    Thread.Sleep(100);
-                Logger.Info($"[Apply] Port {port} released: {!PortOpen(port)}");
-            }
-            else
-            {
-                Logger.Warn($"[Apply] Failed to kill PID={pid}, proceeding with apply anyway");
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"[Apply] KillServiceOnPort error: {ex.Message}");
-        }
-    }
+    /// <summary>首装全局安装失败详情（引擎 FirstRunProvisionError 的会话镜像；E1012 展示用）。</summary>
+    internal static string? _firstRunProvisionError;
 
     /// <summary>
-    /// 读取当前 dsh 版本：委托 DshDiscovery 统一发现（与 UpdateChecker 同源）。
+    /// 读取当前 dsh 版本：委托 DshDiscovery 统一发现（与 UpdateChecker 同源，ADR-024）。
     /// 会话级缓存：避免重复探测。
     /// </summary>
     private static string? _cachedGlobalDshVersion = "unset";
@@ -1259,113 +1039,30 @@ internal static class Program
     private static string? ReadGlobalDshVersion()
     {
         if (_cachedGlobalDshVersion != "unset") return _cachedGlobalDshVersion;
-        _cachedGlobalDshVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
+        _cachedGlobalDshVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version;
         return _cachedGlobalDshVersion;
     }
 
     /// <summary>
-    /// 拉起 dsh 服务。优先使用 SelfContained 运行时（node.exe 直接执行），
-    /// 回退到 start-dsh.vbs（全局安装 / npm shim / npx 三级回退）。
-    /// 返回 false = 拉起失败（E2001）。
+    /// 按当前身份拉起 dsh 服务（ADR-024：组合根唯一启动入口，委托 IServiceManager.Start）。
+    /// 安全模式激活时以隔离 profile 身份（--profile .dsh-safe）重启。
+    /// 返回 false = 拉起失败（E2001）。旧 wscript/start-dsh.vbs 中间层已彻底移除——
+    /// 启动命令只信 Identity.NodeExePath × Identity.DshEntryJsPath。
     /// </summary>
-    private static bool StartDshServiceViaVbs()
+    private static bool StartDshServiceViaIdentity()
     {
-        // 端口与统一日志路径透传给子进程
-        Environment.SetEnvironmentVariable("DSH_PORT", Target.Port.ToString());
-        Environment.SetEnvironmentVariable("DSH_LOG", UnifiedLogPath);
-
-        // 测试开关：DSH_SERVICE_CMD 指定自定义启动命令（用于沙盒测试）。
-        // ADR-021：严禁 cmd.exe 包装——直接拆分 (exe, args) 后 ProcessStartInfo 直启
-        //（node.exe + .js 入口，绕开 .cmd/编码/引号全部陷阱）。格式：["]<exe>["] [args]。
-        var testCmd = Environment.GetEnvironmentVariable("DSH_SERVICE_CMD");
-        Trace($"DSH_SERVICE_CMD={testCmd ?? "(null)"}");
-        if (!string.IsNullOrWhiteSpace(testCmd))
-        {
-            var split = ShellLogic.ProcessManagement.SplitCommandLine(testCmd);
-            if (split is null)
-            {
-                Logger.Warn($"DSH_SERVICE_CMD unparseable (missing exe or unterminated quote): {testCmd}");
-            }
-            else
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo(split.Value.Exe, split.Value.Args)
-                    {
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                    };
-                    Process.Start(psi);
-                    Trace($"service start via DSH_SERVICE_CMD: {split.Value.Exe} {split.Value.Args}");
-                    _serviceStartedByShell = true;
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Warn($"DSH_SERVICE_CMD start failed: {ex.Message}");
-                }
-            }
-        }
-
-        // [Fix] 优先使用 SelfContained 运行时（node.exe 直接执行，秒级启动）
         var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
-        if (identity.Source == DshWeb.Domain.DshSource.SelfContained && identity.ExecutablePath is not null)
-        {
-            var binJs = FindDshBinJs(identity.ExecutablePath);
-            if (binJs is not null)
-            {
-                var nodeExe = FindNodeExe();
-                if (nodeExe is not null)
-                {
-                    try
-                    {
-                        // 安全模式（ADR-022）：用根级 --profile .dsh-safe（web 子命令与 --profile
-                        // 互斥），剥离第三方插件，仅供 dsh 核心 bundle。正常运行保持 web 子命令。
-                        // [2026-08 回归修复] 参数统一经 ShellLogic.ServiceLaunch 拼装：两分支
-                        // 都带 --no-open（dsh web 默认 ShellExecute 打开系统浏览器；旧普通分支
-                        // 漏传 → 安装 SelfContained 运行时后每次启动都拉起浏览器）。
-                        var launchArgs = ShellLogic.ServiceLaunch.BuildSelfContainedArgs(
-                            binJs, Target.Port,
-                            SafeMode.IsActive ? DshWeb.Domain.SafeProfileBuilder.SafeProfileName : null);
-                        if (SafeMode.IsActive)
-                            Trace($"service start via SelfContained (SAFE profile): node.exe {launchArgs}");
-                        var psi = new ProcessStartInfo(nodeExe, launchArgs)
-                        {
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            WorkingDirectory = identity.ExecutablePath,
-                        };
-                        Process.Start(psi);
-                        Trace($"service start via SelfContained: {launchArgs}");
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Warn($"SelfContained start failed, falling back to vbs: {ex.Message}");
-                    }
-                }
-            }
-        }
-
-        // 回退：start-dsh.vbs（全局安装 / npm shim / npx 三级回退）
-        var vbs = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-        if (!File.Exists(vbs))
-        {
-            Logger.Error($"missing {vbs}, cannot start dsh service", ErrorCodes.E2001);
-            return false;
-        }
-        try
-        {
-            Process.Start(new ProcessStartInfo("wscript.exe", "\"" + vbs + "\"") { UseShellExecute = true });
-            Trace("service start requested via start-dsh.vbs");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("failed to start dsh service: " + ex.Message, ErrorCodes.E2001);
-            return false;
-        }
+        if (SafeMode.IsActive)
+            identity = identity.WithProfile(SafeProfile.SafeProfileDir);
+        var ok = ShellService.Start(identity, Target.Port, UnifiedLogPath);
+        if (ok) Trace(identity.IsSafeProfile
+            ? "service start via identity (SAFE profile)"
+            : "service start via identity");
+        return ok;
     }
+
+    /// <summary>组合根共享的服务 Manager 实例（无状态；安全模式/回滚/重启询问等主窗流程复用）。</summary>
+    private static readonly ServiceManager ShellService = new();
 
     /// <summary>
     /// 安全模式双重观测（ADR-022 Task 3）：readiness + 插件崩溃签名消失。
@@ -1375,11 +1072,11 @@ internal static class Program
     /// </summary>
     private static bool WaitSafeModeVerified()
     {
-        // 阶段一：readiness
+        // 阶段一：readiness（快探经 ServiceLifecycleOps——HTTP 原语已迁出组合根文件）
         var deadline = DateTime.UtcNow.AddSeconds(60);
-        while (DateTime.UtcNow < deadline && !HttpReady())
+        while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
             Task.Delay(500).Wait();
-        if (!HttpReady())
+        if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
         {
             Logger.Error("safe mode verification: service not ready within 60s", ErrorCodes.E1011);
             return false;
@@ -1430,8 +1127,8 @@ internal static class Program
             Trace("SAFEMODE(bg): stopping service");
             StopShellService();
             Trace("SAFEMODE(bg): StopShellService returned");
-            var restartOk = StartDshServiceViaVbs();
-            Trace($"SAFEMODE(bg): StartDshServiceViaVbs returned {restartOk}");
+            var restartOk = StartDshServiceViaIdentity();
+            Trace($"SAFEMODE(bg): identity-driven start returned {restartOk}");
             if (!restartOk)
             {
                 BootMonitor?.Stop(); // 重启失败且不再有服务可监视
@@ -1648,7 +1345,7 @@ internal static class Program
         try
         {
             if (_updateRollbackArmedVersion is not null) return; // 本会话已武装（apply 成功），不覆盖
-            var identityVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
+            var identityVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version;
             var unconfirmed = UpdateDataGuard.UnconfirmedSnapshotVersion(identityVersion);
             if (unconfirmed is null) return;
             _updateRollbackArmedVersion = unconfirmed;
@@ -1714,10 +1411,10 @@ internal static class Program
                 try
                 {
                     Logger.Info($"[update-rollback] best-effort npm downgrade to v{_preApplyIdentityVersion}");
-                    var sources = GetNpmRegistrySources();
-                    TryNpmOverRegistries(
+                    var sources = Managers.ProcessRunner.GetNpmRegistrySources();
+                    Managers.ProcessRunner.TryNpmOverRegistries(
                         sources,
-                        srcIdx => RunNpmCommand(
+                        srcIdx => Managers.ProcessRunner.RunNpmCommand(
                             $"install -g \"@deepseek-ai/dsh@{_preApplyIdentityVersion}\" --prefer-offline --no-audit --no-fund"
                             + sources[srcIdx],
                             out _, default, null),
@@ -1730,7 +1427,7 @@ internal static class Program
             }
 
             Trace("[update-rollback] restarting service on previous version");
-            var startOk = StartDshServiceViaVbs();
+            var startOk = StartDshServiceViaIdentity();
             if (!startOk)
             {
                 BootMonitor?.Stop();
@@ -1741,9 +1438,9 @@ internal static class Program
             }
 
             var deadline = DateTime.UtcNow.AddSeconds(90);
-            while (DateTime.UtcNow < deadline && !HttpReady())
+            while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                 Thread.Sleep(500);
-            if (!HttpReady())
+            if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
             {
                 Logger.Error("[update-rollback] service not ready within 90s after rollback", ErrorCodes.E2004);
                 BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
@@ -1823,8 +1520,8 @@ internal static class Program
                     BootMonitor?.Suspend();
                     Trace("restart-service(bg): stopping service");
                     StopShellService();
-                    var startOk = StartDshServiceViaVbs();
-                    Trace($"restart-service(bg): StartDshServiceViaVbs returned {startOk}");
+                    var startOk = StartDshServiceViaIdentity();
+                    Trace($"restart-service(bg): identity-driven start returned {startOk}");
                     if (!startOk)
                     {
                         BootMonitor?.Stop();
@@ -1833,9 +1530,9 @@ internal static class Program
                         return;
                     }
                     var deadline = DateTime.UtcNow.AddSeconds(60);
-                    while (DateTime.UtcNow < deadline && !HttpReady())
+                    while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                         await Task.Delay(500);
-                    if (!HttpReady())
+                    if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                     {
                         Logger.Error("restart-service: service not ready within 60s after reboot", ErrorCodes.E2004);
                         BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
@@ -2006,118 +1703,13 @@ internal static class Program
         });
     }
 
-    /// <summary>在 SelfContained 运行时目录中查找 dsh 的 bin.js 入口。</summary>
-    private static string? FindDshBinJs(string runtimeDir)
-    {
-        try
-        {
-            var pkgJson = Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
-            if (!File.Exists(pkgJson)) return null;
-            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pkgJson));
-            var binEntry = DshWeb.Domain.DshDiscovery.ResolveBinEntry(runtimeDir, doc.RootElement);
-            if (binEntry is null) return null;
-            return Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", binEntry);
-        }
-        catch { return null; }
-    }
-
-    /// <summary>查找 node.exe 绝对路径。</summary>
-    private static string? FindNodeExe()
-    {
-        var env = RuntimeResolver.ResolveExisting();
-        return env?.NodeExe;
-    }
-
-    /// <summary>首装全局安装失败时的用户可见详情（E1012 展示用）；null = 未尝试或已成功。</summary>
-    internal static string? _firstRunProvisionError;
-
-    /// <summary>
-    /// 首装（本机无任何可用 dsh）改为 npm 全局安装 @deepseek-ai/dsh（2026-09 用户决策）：
-    /// 单次安装、复用 npm 缓存，又快又稳——替代旧 SelfContained staging 双份构建（重、慢、吃
-    /// CPU/内存），也彻底避开 npx 冷解析的反复下载。成功后失效发现缓存，交统一 vbs 拉起链。
-    /// 失败响亮返回 false（详情经 HandleStartupFailure 以 [E1012] 覆盖展示），绝不静默落 npx。
-    /// 总预算/单次上限由 <see cref="ShellLogic.ProvisionPolicy"/> 纯函数决策（契约测试锁定）；
-    /// 每个降级边界（换源）向 Splash 发黄色告警文案。测试/无头/外部托管跳过；沙盒默认跳过，
-    /// DSH_TEST_ALLOW_GLOBAL_INSTALL=1 显式放行演练（流量受 DSH_NPM_MIRROR/npm_config_* 约束）。
-    /// </summary>
-    private static bool TryEnsureGlobalDshInstalled()
-    {
-        if (E2EMode || NoUiMode
-            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_SERVICE_CMD")))
-            return true; // 测试钩子：服务命令外部给定，交由原路径
-        if (IsSandboxMode
-            && !string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_ALLOW_GLOBAL_INSTALL"), "1",
-                StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
-        if (identity.Source != DshWeb.Domain.DshSource.NpxCache)
-            return true; // 已有 SelfContained / 全局 dsh / npm shim，无需安装
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        _firstRunProvisionProgress?.Invoke("正在获取 dsh 最新版本…");
-        string? version;
-        using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) })
-            version = UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
-        if (string.IsNullOrWhiteSpace(version))
-        {
-            // 版本解析失败不直接放弃：registry 直连可达时 @latest 仍可装；真断网则安装步报错收口
-            Logger.Warn("first-run global install: cannot resolve latest version; trying @latest tag");
-            version = "latest";
-        }
-        var spec = version == "latest" ? "@deepseek-ai/dsh@latest" : $"@deepseek-ai/dsh@{version}";
-        _firstRunProvisionProgress?.Invoke($"正在全局安装 dsh {version}（首次运行，仅需一次，约 1-3 分钟）…");
-        Logger.Info($"first-run global install: npm install -g {spec}");
-
-        var sources = GetNpmRegistrySources();
-        var lastTail = "";
-        for (var i = 0; i < sources.Length; i++)
-        {
-            var timeoutMs = ShellLogic.ProvisionPolicy.RemainingInstallTimeoutMs(
-                elapsedMs: sw.ElapsedMilliseconds, totalBudgetMs: 600000, perAttemptCapMs: 420000);
-            if (timeoutMs < ShellLogic.ProvisionPolicy.MinAttemptMs)
-            {
-                Logger.Warn($"first-run global install: shared budget exhausted before source #{i}");
-                break;
-            }
-            if (i > 0) // 降级边界必须可见：黄色告警（旧实现静默换源，用户只见"卡住"）
-                _firstRunProvisionProgress?.Invoke(
-                    $"[warn] 安装源失败，切换备用源重试…（{i}/{sources.Length}，已用 {sw.Elapsed.TotalSeconds:F0}s/预算 {ShellLogic.ProvisionPolicy.TotalBudgetSeconds}s）");
-            if (RunNpmCommand(
-                    $"install -g \"{spec}\" --no-audit --no-fund" + sources[i],
-                    out var tail,
-                    progress: s => _firstRunProvisionProgress?.Invoke(s),
-                    timeoutMs: (int)timeoutMs))
-            {
-                Logger.Info($"first-run global install succeeded via source #{i} (dsh {version})");
-                DshWeb.Domain.DshDiscovery.InvalidateCache(); // 发现链立即可见新装的 shim/版本
-                return true;
-            }
-            lastTail = tail;
-            Logger.Warn($"first-run global install failed on source #{i}: {tail}");
-        }
-
-        _firstRunProvisionError = "npm 全局安装失败（所有镜像源均不可用或共享预算耗尽）。" +
-            (string.IsNullOrWhiteSpace(lastTail) ? "" : "\n最后错误：\n" + lastTail);
-        Logger.Error(_firstRunProvisionError, ErrorCodes.E1012, new { spec });
-        _firstRunProvisionProgress?.Invoke("[warn] dsh 组件自动安装失败，本次启动已停止（详见统一日志）。");
-        return false;
-    }
-
-    /// <summary>拉起 dsh 服务：首装（未安装任何 dsh）先经 npm 全局安装组件，再走统一 vbs 拉起链。
-    /// 安装失败响亮返回 false——不回退 npx 冷下载慢路径（同样吃网络，且会把失败藏进长等待里）。</summary>
-    private static bool StartDshServiceViaVbsWithProvision()
-    {
-        if (!TryEnsureGlobalDshInstalled()) return false;
-        return StartDshServiceViaVbs();
-    }
-
     /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。</summary>
     private static void HandleStartupFailure(SplashForm.Outcome outcome)
     {
         var logPath = outcome.LogPath;
         // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
-        if (outcome.WaitResult is "logerror" or "timeout" && outcome.ServiceStartedByShell && PortOpen(Target.Port))
+        if (outcome.WaitResult is "logerror" or "timeout" && outcome.ServiceStartedByShell
+            && ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", Target.Port))
         {
             var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
             if (pid > 0)
@@ -2133,7 +1725,8 @@ internal static class Program
         // P0-1（质量治理）：用户取消 ≠ 放弃服务——后台下载/启动可能仍在进行（与取消文案一致），
         // 但服务必须可被下次启动接管：已监听则记录 PID（此前无 pid 文件 → TryAdoptOrphanService
         // 永远无法认领，服务成为永久无主孤儿，占住端口无人管理）。
-        else if (outcome.WaitResult == "canceled" && outcome.ServiceStartedByShell && PortOpen(Target.Port))
+        else if (outcome.WaitResult == "canceled" && outcome.ServiceStartedByShell
+            && ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", Target.Port))
         {
             RecordServicePid();
             Trace("canceled: service left running; pid recorded for next-start adoption");
@@ -2229,8 +1822,7 @@ internal static class Program
                     form.BeginInvoke(() => NotifyPendingApply(v));
                 }
 
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) }; // P2-9：弱网放宽 8s→15s
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-launcher");
+                using var http = Managers.WebRuntimeInstaller.CreateHttpClient(TimeSpan.FromSeconds(15)); // P2-9：弱网放宽 8s→15s
 
                 // 1) launcher 安全更新优先（安全修复比功能更新重要）。
                 // 独立 try/catch：此步任何意外异常都不得中断后面的 dsh 检查（此前整段任务只有
@@ -2279,7 +1871,7 @@ internal static class Program
                         return;
                     }
                     // v0.3.1：用户拒绝过的版本跳过（新版本 > 跳过版本时重新提示）
-                    var skipped = ReadSkippedDshVersion();
+                    var skipped = StagedUpdate.ReadSkippedDshVersion();
                     if (skipped is not null && UpdateChecker.CompareVersions(latest, skipped) <= 0)
                     {
                         Trace($"dsh update {latest} skipped by user (skipped={skipped})");
@@ -2295,38 +1887,6 @@ internal static class Program
                 Logger.Warn("update check aborted unexpectedly", ctx: new { error = ex.Message });
             }
         });
-    }
-
-    /// <summary>用户拒绝过的 dsh 版本记录路径（DataDir\skipped-update.json）。</summary>
-    private static string SkippedUpdatePath => Path.Combine(DataDir, "skipped-update.json");
-
-    private static void MarkSkippedDshVersion(string version)
-    {
-        try
-        {
-            Directory.CreateDirectory(DataDir);
-            File.WriteAllText(SkippedUpdatePath, System.Text.Json.JsonSerializer.Serialize(new
-            {
-                version,
-                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-            }));
-            Logger.Info($"user skipped dsh update {version}; won't re-prompt until a newer version appears");
-        }
-        catch { /* 记录失败：下次启动可能再提示（可接受） */ }
-    }
-
-    private static string? ReadSkippedDshVersion()
-    {
-        try
-        {
-            if (!File.Exists(SkippedUpdatePath)) return null;
-            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(SkippedUpdatePath));
-            return doc.RootElement.TryGetProperty("version", out var v)
-                && v.ValueKind == System.Text.Json.JsonValueKind.String
-                ? v.GetString()
-                : null;
-        }
-        catch { return null; }
     }
 
     /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：系统通知告知落盘位置，
@@ -2395,8 +1955,7 @@ internal static class Program
         }
         else if (_pendingUpdate == PendingUpdate.LauncherSecurity)
         {
-            try { Process.Start(new ProcessStartInfo("https://github.com/Ruler4396/dsh-launcher/releases/latest") { UseShellExecute = true }); }
-            catch { /* 打开失败忽略 */ }
+            Managers.WebRuntimeInstaller.OpenExternally("https://github.com/Ruler4396/dsh-launcher/releases/latest");
         }
         _pendingUpdate = PendingUpdate.None;
     }
@@ -2416,7 +1975,7 @@ internal static class Program
             "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (r != DialogResult.Yes)
         {
-            MarkSkippedDshVersion(latest); // 用户拒绝：跳过此版本，避免每次启动重复提示
+            StagedUpdate.MarkSkippedDshVersion(latest); // 用户拒绝：跳过此版本，避免每次启动重复提示
             return;
         }
         _ = Task.Run(() => DownloadDshUpdateStaged(form, latest));
@@ -2454,17 +2013,17 @@ internal static class Program
                 var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
                 // 任务二一致性：--no-audit --no-fund；快源优先、失败沿源序列降级
                 string applyErrorTail = "";
-                var applySources = GetNpmRegistrySources();
-                if (TryNpmOverRegistries(applySources, srcIdx => RunNpmCommand(
+                var applySources = Managers.ProcessRunner.GetNpmRegistrySources();
+                if (Managers.ProcessRunner.TryNpmOverRegistries(applySources, srcIdx => Managers.ProcessRunner.RunNpmCommand(
                         $"install -g \"{installSpec}\" --no-audit --no-fund" + applySources[srcIdx],
                         out applyErrorTail), "apply-restart", out _))
                 {
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
-                    StartDshServiceViaVbs(); // 拉起新版本服务
+                    StartDshServiceViaIdentity(); // 按身份直启新版本服务（ADR-024）
                     // 等待就绪后刷新页面（最长 60s）
                     var deadline = DateTime.UtcNow.AddSeconds(60);
-                    while (DateTime.UtcNow < deadline && !HttpReady())
+                    while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                         await Task.Delay(500);
                     try
                     {
@@ -2512,7 +2071,7 @@ internal static class Program
             // [2026-08-22 回归] 清场再构建：复用残留 buildDir 会让 pnpm 命中旧 lockfile
             // 秒级 no-op "成功"，把上次中断/失败的破损布局原样保留——bin 入口校验失败的
             // 根因之一（10:02/10:32 两次 4 秒假成功均因此）。每次必须全新安装。
-            if (Directory.Exists(buildDir)) TryDeleteDir(buildDir);
+            if (Directory.Exists(buildDir)) Managers.ProcessRunner.TryDeleteDir(buildDir);
             Directory.CreateDirectory(buildDir);
             // [2026-08-22 回归·竞态关闭] 旧 pending 若指向本 buildDir，清场即失效——
             // 不清除的话，下次启动"强制应用"会把半成品目录搬到 runtimes\<ver>（12:23:29
@@ -2534,8 +2093,8 @@ internal static class Program
             var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
             var tarballPath = Path.Combine(buildDir, tarballName);
             string errorTail = "";
-            var regSources = GetNpmRegistrySources();
-            var ok = TryNpmOverRegistries(regSources, srcIdx => RunNpmCommand(
+            var regSources = Managers.ProcessRunner.GetNpmRegistrySources();
+            var ok = Managers.ProcessRunner.TryNpmOverRegistries(regSources, srcIdx => Managers.ProcessRunner.RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\""
                     + regSources[srcIdx],
                 out errorTail), "download-tarball", out var packSourceIdx);
@@ -2543,7 +2102,7 @@ internal static class Program
             if (!ok || !File.Exists(tarballPath))
             {
                 Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001, new { latest });
-                TryDeleteDir(buildDir);
+                Managers.ProcessRunner.TryDeleteDir(buildDir);
                 // [2026-08 回归修复] 失败必须有可见结论：红色终态驻留 + E4001 弹窗（此前仅弹窗，
                 // 且部分场景弹窗被吞后用户只看到进度条消失）
                 UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Failed,
@@ -2553,7 +2112,7 @@ internal static class Program
                     string reason = string.IsNullOrWhiteSpace(errorTail)
                         ? "底层执行引擎未能启动 Node.js 环境"
                         : errorTail;
-                    string hint = IsNpmNotFoundError(errorTail)
+                    string hint = ShellLogic.NpmHelpers.IsNpmNotFoundError(errorTail)
                         ? "未检测到 npm 环境，请确保已安装 Node.js 18+。"
                         : "可稍后重试，或手动执行：npm install -g @deepseek-ai/dsh@" + latest;
                     form.BeginInvoke(() => ShowError(ErrorCodes.E4001,
@@ -2592,7 +2151,7 @@ internal static class Program
                 HandleStagedBuildFailure(form, latest,
                     "底层包管理器（pnpm/npm）构建运行时失败，详见日志",
                     tarballPath, staging, tarballName);
-                TryDeleteDir(buildDir);
+                Managers.ProcessRunner.TryDeleteDir(buildDir);
                 return;
             }
 
@@ -2606,7 +2165,7 @@ internal static class Program
                 HandleStagedBuildFailure(form, latest,
                     "构建产物不完整（缺少 @deepseek-ai/dsh 包清单）",
                     tarballPath, staging, tarballName);
-                TryDeleteDir(buildDir);
+                Managers.ProcessRunner.TryDeleteDir(buildDir);
                 return;
             }
 
@@ -2619,7 +2178,7 @@ internal static class Program
                 HandleStagedBuildFailure(form, latest,
                     "构建产物不完整（bin 入口无法解析，可能是 dsh 版本布局变更）",
                     tarballPath, staging, tarballName);
-                TryDeleteDir(buildDir);
+                Managers.ProcessRunner.TryDeleteDir(buildDir);
                 return;
             }
             Logger.Info($"staged update validated: v{latest} bin={binEntry}");
@@ -2643,7 +2202,7 @@ internal static class Program
         catch (Exception ex)
         {
             Logger.Error("staged dsh update build error: " + ex.Message, ErrorCodes.E4001);
-            TryDeleteDir(buildDir);
+            Managers.ProcessRunner.TryDeleteDir(buildDir);
             // [2026-08 回归修复] 异常路径同样给终态（tarball 可见性未知 → 不承诺自动重试）
             try
             {
@@ -2796,1055 +2355,51 @@ internal static class Program
         catch { /* UI 更新失败不影响构建 */ }
     }
 
-    /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟。
-    /// 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim 和 cmd.exe。
-    /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（按 packageId 自归一化，见 UpdateProgress）。
-    /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
-    /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。</summary>
-    internal static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
-        Action<int>? progressCallback = null, string? registryArgs = null)
-    {
-        try
-        {
-            // [Fix] 在 buildDir 创建干净的 package.json，防止 pnpm 向上查找父目录的
-            // stale package.json（测试遗留的 file: 引用会导致 ENOENT）
-            var buildPkgJson = Path.Combine(buildDir, "package.json");
-            if (!File.Exists(buildPkgJson))
-                File.WriteAllText(buildPkgJson, """{"name":"dsh-runtime-build","version":"1.0.0","private":true}""");
+    /// <summary>读取服务停留模式（实现见 AppEnvironment.ReadLifetimeMode；ADR-024 迁移转发）。</summary>
+    private static ShellLogic.ServiceLifetime ReadLifetimeMode() => Managers.AppEnvironment.ReadLifetimeMode(DshHomeDir);
 
-            // [ADR-021] 使用 node.exe 直接执行 pnpm.cjs + --reporter=ndjson 获取精确进度；
-            // [2026-08-22] registryArgs 由调用方按源序列传入（快源优先/降级），缺省取首选源。
-            // [--ignore-workspace 铁律] pnpm 会从 buildDir 向上查找 pnpm-workspace.yaml——
-            // 一旦用户主目录等祖先路径存在游离工作区清单（真实案例：C:\Users\<user>\ 下残留
-            // diag-fix 实验的 package.json+pnpm-workspace.yaml），整个安装会被劫持到那个根：
-            // 包装进用户主目录 node_modules，构建目录缺 bin 入口 → E4001 假性"产物不完整"。
-            // 此参数强制以 buildDir 自身为项目根，与任何外部工作区彻底隔离（沙盒对照已验证）。
-            //
-            // [--config.node-linker=hoisted 铁律] pnpm 默认 linker 用【绝对路径】junction
-            // 链接顶层包——构建完成后 Apply 的 Directory.Move 会把树搬进 runtimes\<ver>，
-            // 所有 junction 立即悬空 → 服务起不来（昨晚 21:33 应用后 rc.2"无法启动"的真凶）
-            // 或发现层读不到 bin 入口。hoisted 布局全部真实文件，移动安全（沙盒已验证：
-            // 重命名后 bin.js 可达，树内 0 个 reparse point）。代价是无去重多占磁盘，可接受。
-            var arguments = $"\"{pnpmEntryJs}\" install \"{tarballPath}\" --ignore-workspace"
-                + " --config.node-linker=hoisted --reporter=ndjson"
-                + (registryArgs ?? GetNpmRegistrySources()[0]);
-
-            var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, arguments)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
-                WorkingDirectory = buildDir,
-            };
-            psi.EnvironmentVariables["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0";
-            psi.EnvironmentVariables["PATH"] = GetMergedPath();
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return false;
-
-            // 流式解析 ndjson 进度（不阻塞到进程结束）。
-            // [2026-08 回归修复] 旧实现把所有 pnpm:progress 事件混计入一个计数再除以硬编码
-            // estimatedTotal=600，很快封顶 → 进度条长期钉在 50%。改用 ShellLogic.UpdateProgress
-            // 聚合器：按 packageId 自归一化（已见/已完成两集合），真实完成占比平滑推进。
-            var aggregator = new ShellLogic.UpdateProgress.PnpmAggregator();
-            var errorOutput = "";
-            // stdout 全文留存：ERR_PNPM_IGNORED_BUILDS 标记在 pnpm v11 走 stdout
-            // ndjson error 事件（stderr 为空），分类必须双流参与（见 UpdateProgress 契约）。
-            var stdoutBuilder = new System.Text.StringBuilder();
-
-            // 后台读取 stderr
-            var stderrTask = System.Threading.Tasks.Task.Run(() =>
-            {
-                try { errorOutput = p.StandardError.ReadToEnd(); } catch { }
-            });
-
-            // 主线程逐行解析 stdout ndjson
-            try
-            {
-                while (!p.StandardOutput.EndOfStream)
-                {
-                    var line = p.StandardOutput.ReadLine();
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    stdoutBuilder.AppendLine(line);
-                    aggregator.OnLine(line);
-                    if (progressCallback is not null)
-                    {
-                        var (percent, hasData) = aggregator.Snapshot();
-                        if (hasData) progressCallback(percent); // 无数据回退脉冲模式（不显示伪百分比）
-                    }
-                }
-            }
-            catch { /* 流读取中断 */ }
-
-            stderrTask.Wait(1000);
-            p.WaitForExit(600000); // 10 分钟超时兜底
-
-            // ERR_PNPM_IGNORED_BUILDS（exit=1）：包已安装，只是 build scripts 被安全策略阻止
-            if (ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(p.ExitCode, stdoutBuilder.ToString(), errorOutput))
-            {
-                Logger.Info($"pnpm install: packages installed but build scripts ignored (exit=1)");
-                return true; // 视为成功
-            }
-
-            if (p.ExitCode != 0)
-            {
-                Logger.Warn($"pnpm install failed: exit={p.ExitCode}, stderr={errorOutput}");
-                return false;
-            }
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"pnpm install error: {ex.Message}");
-            return false;
-        }
-    }
-
-    // [2026-08 回归修复] NotifyBuildFallback 已删除：其职责（失败后 Toast 通知）并入
-    // HandleStagedBuildFailure 统一收口（含标题栏 Failed 终态驻留 + E4001 弹窗 + 重试保留）。
-
-    private static string? FindOnPath(string fileName, string? customPath = null)
-    {
-        var pathEnv = customPath ?? Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(pathEnv)) return null;
-        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            try
-            {
-                var exe = Path.Combine(dir.Trim(), fileName);
-                if (File.Exists(exe)) return exe;
-            }
-            catch { }
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// 合并注册表中的系统 PATH + 用户 PATH + 当前进程 PATH。
-    /// GUI 进程（如 Explorer 启动的 DshWeb.exe）的 PATH 可能不包含
-    /// %APPDATA%\npm 等用户级路径，导致 where pnpm 失败。
-    /// </summary>
-    private static string GetMergedPath()
-    {
-        var current = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var systemPath = "";
-        var userPath = "";
-        try
-        {
-            using var sysKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-                @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment");
-            systemPath = sysKey?.GetValue("PATH", "") as string ?? "";
-        }
-        catch { }
-        try
-        {
-            using var userKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Environment");
-            userPath = userKey?.GetValue("PATH", "") as string ?? "";
-        }
-        catch { }
-
-        // 合并去重：系统 → 用户 → 当前进程
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var merged = new List<string>();
-        foreach (var part in (systemPath + ";" + userPath + ";" + current).Split(';', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var trimmed = part.Trim();
-            if (trimmed.Length > 0 && seen.Add(trimmed))
-                merged.Add(trimmed);
-        }
-        return string.Join(Path.PathSeparator, merged);
-    }
-
-    /// <summary>递归删除目录（幂等）；失败静默（清理临时目录不阻塞主流程）。</summary>
-    internal static void TryDeleteDir(string path)
-    {
-        try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { /* 清理失败忽略 */ }
-    }
-
-    /// <summary>
-    /// 应用已下载的 dsh 新版（原子目录切换，重启零 npm 解析）。
-    ///
-    /// 【核心不变量 I1】：重启路径严禁执行任何 npm install。
-    /// 【核心不变量 I2】：重启路径严禁发起任何网络请求。
-    ///
-    /// 新流程：后台构建已将完整运行时写入 staging/runtime-build-{version}/，
-    /// 此处仅做原子目录移动（同盘 rename，秒级）+ 清理 pending。
-    /// 失败不阻塞启动（继续用旧版本）。
-    /// </summary>
-    // internal（2026-09）：RealOS 全链路测试经 InternalsVisibleTo 驱动生产应用路径（临时 DSH_HOME 隔离）。
-    internal static void ApplyPendingDshUpdate(CancellationToken ct = default, Action<string>? progress = null)
-    {
-        var (version, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
-        if (string.IsNullOrWhiteSpace(version)) return;
-
-        // [Evidence-1] Apply 开始
-        Logger.Info($"[Apply] Start: pending exists, target version={version}, runtimeDir={runtimeDir ?? "null"}, port={Target.Port}");
-
-        // [update-guard] apply 前记录运行身份版本（npm 路径回滚的降级目标）+ 共享数据版本首拍
-        // （同版本只拍一次；快照失败不阻断 apply，但日志响亮留痕——E4003）。
-        _preApplyIdentityVersion ??= DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().InstalledVersion;
-        UpdateDataGuard.SnapshotBeforeApply(version);
-
-        // 测试钩子
-        if (Environment.GetEnvironmentVariable("DSH_TEST_FAKE_APPLY") == "1")
-        {
-            StagedUpdate.ClearPending();
-            Logger.Info($"[Apply] Result: fake apply (test hook), pending cleared");
-            return;
-        }
-
-        progress?.Invoke($"正在应用更新 (v{version})…");
-
-        // ---- 路径 A：SelfContained 原子切换（零 npm，秒级） ----
-        if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
-        {
-            // [2026-08-22 回归·源完整性门禁] 半成品绝不搬运（搬了既产生坏目标，
-            // 又被未退出构建进程的句柄锁死后续删除/移动）。不完整时保留现场，
-            // 明确告知重试路径，不走 npm 降级（源已坏，降级只会再失败一次）。
-            if (!StagedUpdate.IsSourceRuntimeComplete(runtimeDir, version))
-            {
-                Logger.Warn($"[Apply] SelfContained source INCOMPLETE ({runtimeDir}), refusing to move", ErrorCodes.E4002);
-                StagedUpdate.MarkApplyFailed();
-                NotifyUpdateApplyFailed(version, "构建产物未就绪（可能已被新构建重置或中断）。请重新点击更新，完成构建后重启应用。");
-                return;
-            }
-
-            var runtimesDir = Path.Combine(DataDir, "runtimes");
-            Directory.CreateDirectory(runtimesDir);
-            var targetDir = Path.Combine(runtimesDir, version);
-
-            // [Evidence-2] 目标幂等准备 + 原子切换。
-            // [2026-08-22 回归] 旧逻辑 Move 前静默 TryDeleteDir(targetDir)——半成品目标
-            // 被残留句柄锁住时删除失败被吞，Move 抛 "already exists" → 弹窗。
-            // 新逻辑：有效同版本目标 → AlreadyApplied 幂等短路；无效目标 → 备份挪走
-            // （失败会带真实异常信息上抛，不再静默）。
-            Logger.Info($"[Apply] Executing: Directory.Move({runtimeDir}, {targetDir})");
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                var prepareAction = StagedUpdate.PrepareTargetForApply(targetDir, version);
-                if (prepareAction != ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied)
-                    Directory.Move(runtimeDir, targetDir);
-                sw.Stop();
-
-                // [Evidence-3] 切换成功（AlreadyApplied 视为重复应用同版本，同样成功收尾）
-                Logger.Info($"[Apply] Result: atomic swap success (prepare={prepareAction}), Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
-
-                // [update-guard] 武装回滚闸门：新版启动自检失败 → 自动还原数据 + 隔离运行时
-                _updateRollbackArmedVersion = version;
-
-                StagedUpdate.ClearPending();
-                CleanupStagingCache();
-
-                // [Evidence-4] 清理确认
-                var pendingAfter = StagedUpdate.ReadPending().Version;
-                Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
-
-                progress?.Invoke(prepareAction == ShellLogic.StagedApplyPolicy.ExistingTargetAction.AlreadyApplied
-                    ? $"更新 v{version} 已就绪（目标已是同版本，跳过重复切换）。"
-                    : $"更新 v{version} 已应用完成（原子切换，零 npm）。");
-            }
-            catch (Exception ex)
-            {
-                sw.Stop();
-                Logger.Error($"[Apply] Result: atomic swap FAILED, Duration={sw.ElapsedMilliseconds}ms, Error={ex.Message}", ErrorCodes.E4002);
-                StagedUpdate.MarkApplyFailed();
-                NotifyUpdateApplyFailed(version, $"原子切换失败: {ex.Message}");
-            }
-            return;
-        }
-
-        // ---- 路径 B：npm install 路径（兼容旧版 pending / 构建失败降级） ----
-        Logger.Info($"[Apply] Falling back to npm install path (no SelfContained runtime)");
-        var localTarball = StagedUpdate.LocateTarball(version, null);
-        var useLocal = localTarball is not null;
-        var text = useLocal
-            ? $"正在应用更新 (v{version})…（本地安装，可能需要几分钟）"
-            : $"正在应用更新 (v{version})…（需要在线下载，可能需要几分钟）";
-        progress?.Invoke(text);
-
-        if (ct.IsCancellationRequested)
-        {
-            Logger.Info("[Apply] Canceled before npm install");
-            return;
-        }
-
-        var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
-        var npmArgs = $"install -g \"{installSpec}\" --prefer-offline --no-audit --no-fund";
-
-        // [Evidence-2] 执行 npm install（快源优先，失败沿源序列降级）
-        Logger.Info($"[Apply] Executing: npm {npmArgs}");
-        var npmSw = System.Diagnostics.Stopwatch.StartNew();
-        string errorTail = "";
-        var applySources = GetNpmRegistrySources();
-        if (TryNpmOverRegistries(applySources, srcIdx => RunNpmCommand(
-                npmArgs + applySources[srcIdx], out errorTail, ct, progress), "apply-pending", out _))
-        {
-            npmSw.Stop();
-            // [Evidence-3] npm 成功
-            Logger.Info($"[Apply] Result: npm success, Duration={npmSw.ElapsedMilliseconds}ms");
-
-            // [update-guard] 武装回滚闸门：新版启动自检失败 → 自动还原数据 + 尽力降级全局包
-            _updateRollbackArmedVersion = version;
-
-            progress?.Invoke($"更新 v{version} 已应用完成。");
-            StagedUpdate.ClearPending();
-            CleanupStagingCache();
-
-            // [Evidence-4] 清理确认
-            var pendingAfter = StagedUpdate.ReadPending().Version;
-            Logger.Info($"[Apply] Cleanup: pending after apply = {(pendingAfter ?? "null")} (expected null)");
-
-            Logger.Info($"[Apply] Done: dsh update {version} applied successfully");
-        }
-        else
-        {
-            npmSw.Stop();
-            // [Evidence-3] npm 失败
-            Logger.Warn($"[Apply] Result: npm FAILED, Duration={npmSw.ElapsedMilliseconds}ms, ExitCode={errorTail}");
-
-            if (ct.IsCancellationRequested)
-            {
-                Logger.Info("[Apply] Canceled by user; will retry next launch");
-                return;
-            }
-            StagedUpdate.MarkApplyFailed();
-            Logger.Warn($"[Apply] Failed: dsh update {version} apply failed; continuing with current version",
-                ErrorCodes.E4002, new { version, tail = errorTail });
-            NotifyUpdateApplyFailed(version, errorTail);
-        }
-    }
-
-    /// <summary>
-    /// 任务三：更新安装失败的 UI 反馈 + pending 保留/清理策略。
-    /// - 网络/超时类失败（errorTail 含 timeout/ETIMEDOUT/ECONNRESET/registry error）→ 保留 pending，
-    ///   下次启动自动重试（不打扰）——仅记录日志；
-    /// - 其他失败（权限/包损坏等，重试无意义）→ 清 pending（防死循环）+ 模态弹窗明确告知。
-    /// </summary>
-    private static void NotifyUpdateApplyFailed(string version, string errorTail)
-    {
-        var retryable = IsRetryableNpmError(errorTail);
-        // 网络/超时类：保留 pending，下次启动重试；日志记录（避免每次启动都打扰）
-        if (retryable)
-        {
-            Logger.Info($"update {version} apply failed with retryable error; pending kept for next launch",
-                ctx: new { version, tail = errorTail });
-            return;
-        }
-        // 非重试类（权限/包损坏）：清 pending 防死循环 + 模态弹窗
-        StagedUpdate.ClearPending();
-        Logger.Error($"update {version} apply failed with non-retryable error; pending cleared",
-            ErrorCodes.E4002, new { version, tail = errorTail });
-        try
-        {
-            var detail = string.IsNullOrWhiteSpace(errorTail) ? "未知原因" : errorTail;
-            if (!NoUiMode)
-            {
-                // 任务三：显示主窗口之前必须弹模态，明确告知失败原因与后续动作
-                var dlg = _pendingForm; // 更新提示托盘宿主（可能为 null，回退无 owner）
-                var text = $"自动应用更新失败 (v{version})。\n\n将继续使用旧版本启动。\n\n原因：{detail}\n\n" +
-                           "您可以稍后在设置中重试更新。";
-                if (dlg is not null)
-                {
-                    dlg.BeginInvoke(() => MessageBox.Show(dlg, text, "dsh 更新失败",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error));
-                }
-                else
-                {
-                    MessageBox.Show(text, "dsh 更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-        }
-        catch { /* 弹窗失败不影响启动 */ }
-    }
-
-    /// <summary>判定 npm 失败是否为可重试的网络类错误（任务三 pending 保留依据）。委托 ShellLogic 纯函数。</summary>
-    private static bool IsRetryableNpmError(string tail) => ShellLogic.NpmHelpers.IsRetryableNpmError(tail);
-
-    /// <summary>下载缓存管理：清理 DataDir\staging 中修改时间超过 7 天的文件。
-    /// 下载中的当前包（刚写入）不受影响；应用成功后调用方再整体清空。</summary>
-    private static void CleanupStagingCache()
-    {
-        try
-        {
-            var staging = Path.Combine(DataDir, "staging");
-            if (!Directory.Exists(staging)) return;
-            var cutoff = DateTime.UtcNow - TimeSpan.FromDays(7);
-            foreach (var file in Directory.GetFiles(staging))
-            {
-                try
-                {
-                    if (File.GetLastWriteTimeUtc(file) < cutoff)
-                    {
-                        File.Delete(file);
-                        Logger.Info("staging cache cleaned (expired)", ctx: new { file = Path.GetFileName(file) });
-                    }
-                }
-                catch { /* 单文件清理失败跳过 */ }
-            }
-        }
-        catch { /* 清理失败不影响启动 */ }
-    }
-
-    /// <summary>
-    /// npm registry 镜像参数（与 start-dsh.vbs 的 DSH_NPM_MIRROR 约定一致）：
-    /// 设置 → 追加 "--registry=&lt;mirror&gt;"；未设置 → 返回空串（用 npm 默认 registry）。
-    /// 预热与安装都用同一镜像，保证 cache 命中（任务一/二：不同 registry 会 miss 缓存）。</summary>
-    /// <summary>npm 源序列（快源优先）：DSH_NPM_MIRROR（若设）→ npmmirror → 官方默认。
-    /// 策略见 ShellLogic.NpmRegistryPolicy（契约测试锁定）。</summary>
-    internal static string[] GetNpmRegistrySources()
-        => ShellLogic.NpmRegistryPolicy.RegistrySources(
-            Environment.GetEnvironmentVariable("DSH_NPM_MIRROR"));
-
-    /// <summary>
-    /// 按 npm 源序列依次尝试（优先最快可达的源，失败才降级下一个）。
-    /// run(sourceIndex)：用 sources[sourceIndex] 的 --registry 参数执行一次，返回是否成功。
-    /// 成功来源记入日志；winningIndex 返回首个成功源下标（-1=全部失败），供同流程
-    /// 后续步骤粘住同一源（pack 与 build 同源，保证依赖解析与缓存命中一致）。
-    /// [2026-08 用户回归：npmjs 直连不稳且慢 → npmmirror 优先]
-    /// </summary>
-    internal static bool TryNpmOverRegistries(string[] sources, Func<int, bool> run, string opName, out int winningIndex)
-    {
-        for (var i = 0; i < sources.Length; i++)
-        {
-            if (run(i))
-            {
-                winningIndex = i;
-                if (i > 0)
-                    Logger.Info($"npm op '{opName}' succeeded via registry source #{i} (fallback)");
-                return true;
-            }
-        }
-        winningIndex = -1;
-        Logger.Warn($"npm op '{opName}' failed on all {sources.Length} registries");
-        return false;
-    }
-
-    /// <summary>
-    /// 探测 npm-cli.js 的绝对路径（任务：降维打击——彻底绕过 npm.cmd/npm.bat 的编码冲突与
-    /// cmd.exe /c 引号陷阱，用 node.exe 直接执行 npm 核心逻辑）。优先级：
-    ///   a. node.exe 同级 node_modules\npm\bin\npm-cli.js（标准 Node 安装布局）
-    ///   b. %APPDATA%\npm\node_modules\npm\bin\npm-cli.js（全局 npm 目录布局）
-    /// 找不到返回 null（调用方给出明确 UI 错误）。纯探测逻辑，无外部进程依赖。
-    /// internal：供 RealWorldNpmExecutionTests（不 Mock 的真实环境冒烟）直接调用。</summary>
-    internal static string? FindNpmCliJs(string nodeExePath)
-    {
-        try
-        {
-            var nodeDir = Path.GetDirectoryName(nodeExePath);
-            if (!string.IsNullOrWhiteSpace(nodeDir))
-            {
-                var std = Path.Combine(nodeDir, "node_modules", "npm", "bin", "npm-cli.js");
-                if (File.Exists(std)) return std;
-            }
-            var appDataNpm = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
-            var global = Path.Combine(appDataNpm, "node_modules", "npm", "bin", "npm-cli.js");
-            if (File.Exists(global)) return global;
-        }
-        catch { /* 探测失败返回 null */ }
-        return null;
-    }
-
-    /// <summary>运行 npm 命令（v0.4.0 重写：唯一 npm 执行点）。**直接调用 node.exe 执行
-    /// npm-cli.js**——彻底抛弃 npm.cmd/npm.bat 依赖与 cmd.exe /c 包装，根除 .cmd 编码冲突
-    ///（chcp 65001 无效）与 cmd /c 引号剥离（ERROR_INVALID_NAME）两类陷阱。
-    /// 链路：RuntimeResolver.ResolveExisting() → node.exe 绝对路径 → FindNpmCliJs →
-    /// node.exe "npm-cli.js" args（UseShellExecute=false + 双编码 UTF-8）。
-    /// <paramref name="ct"/> 取消时**立即 Kill 进程树**返回 false（Splash 取消立即生效）。
-    /// <paramref name="timeoutMs"/> 默认 120s；预热放宽 180s，超时强制 kill 保留 tarball。
-    /// <paramref name="progress"/> 逐行转发 npm 实时日志到 Splash（滚动消除卡死焦虑）。
-    /// <paramref name="workingDirectory"/> 供预热（./<tarball>、--prefix ./deps 相对路径）。
-    /// internal：供 RealWorldNpmExecutionTests（不 Mock 的真实环境冒烟）直接调用。</summary>
-    internal static bool RunNpmCommand(string args, out string errorTail, CancellationToken ct = default,
-        Action<string>? progress = null, int timeoutMs = 120000, string? workingDirectory = null)
-    {
-        errorTail = "";
-        try
-        {
-            // 1) node.exe：RuntimeResolver 三源解析（PATH/注册表/便携），找不到直接明确报错
-            var nodeEnv = RuntimeResolver.ResolveExisting();
-            if (nodeEnv?.NodeExe is null || !File.Exists(nodeEnv.NodeExe))
-            {
-                errorTail = "未检测到可用的 Node.js 环境。请安装 Node.js 18+ 后重试。";
-                return false;
-            }
-            // 2) npm-cli.js：两优先级探测，找不到明确报错
-            var npmCliJs = FindNpmCliJs(nodeEnv.NodeExe);
-            if (npmCliJs is null || !File.Exists(npmCliJs))
-            {
-                Logger.Error($"node.exe found at {nodeEnv.NodeExe} but npm-cli.js not found", ErrorCodes.E4001);
-                errorTail = "已找到 Node.js 但未找到 npm-cli.js，请重新安装 Node.js。";
-                return false;
-            }
-            // 3) 降维打击：node.exe 直接执行 npm-cli.js，绕过 .cmd/.bat/cmd.exe 全部陷阱。
-            //    node 输出统一 UTF-8（npm ≥7 内部即 UTF-8），双编码显式设置保证任何代码页可读。
-            // 统一走底层执行器（RunProcessCaptured）：UTF-8 捕获 + 超时 kill 僵尸树 + 取消。
-            return RunProcessCaptured(nodeEnv.NodeExe, $"\"{npmCliJs}\" {args}",
-                out errorTail, ct, progress, timeoutMs, workingDirectory);
-        }
-        catch (Win32Exception ex)
-        {
-            // node.exe 启动失败（CreateProcess 异常）：转明确 Node 环境提示而非裸异常
-            errorTail = "无法启动 Node.js（" + ex.Message + "）。请确保已安装 Node.js 18+。";
-            return false;
-        }
-        catch (Exception ex)
-        {
-            errorTail = "系统级执行异常: " + ex.Message;
-            Logger.Error("RunNpmCommand fatal: " + ex);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 底层进程执行器（真实 OS 交互测试的核心目标，SDET 支柱一）：启动任意可执行文件，
-    /// **UTF-8 双编码捕获** stdout/stderr + 逐行实时转发 progress + 超时/取消强杀进程树。
-    /// 从 RunNpmCommand 提取——使"真实 OS 交互"（乱码拦截、僵尸树清理）可被零 Mock 测试。
-    /// internal：供 RealOsProcessTests / Regression_NpmCmd_Execution_And_Encoding 直接调用。
-    /// <paramref name="fileName"/> = 可执行文件绝对路径（node.exe / cmd.exe / 任意 .exe）；
-    /// <paramref name="arguments"/> = 参数串（可含引号路径）；其余语义同 RunNpmCommand。
-    /// </summary>
-    internal static bool RunProcessCaptured(
-        string fileName, string arguments, out string outputTail,
-        CancellationToken ct = default, Action<string>? progress = null,
-        int timeoutMs = 120000, string? workingDirectory = null)
-    {
-        outputTail = "";
-        try
-        {
-            var psi = new ProcessStartInfo(fileName, arguments)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
-                WorkingDirectory = workingDirectory,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return false;
-            // 逐行读取 stdout/stderr 实时转发到 Splash（异步事件，不阻塞主循环）
-            var outLines = new List<string>();
-            var errLines = new List<string>();
-            var outLock = new object();
-            var errLock = new object();
-            p.OutputDataReceived += (_, e) =>
-            {
-                if (string.IsNullOrEmpty(e.Data)) return;
-                lock (outLock) outLines.Add(e.Data);
-                progress?.Invoke(e.Data);
-            };
-            p.ErrorDataReceived += (_, e) =>
-            {
-                if (string.IsNullOrEmpty(e.Data)) return;
-                lock (errLock) errLines.Add(e.Data);
-                progress?.Invoke(e.Data);
-            };
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-            // WaitForExit 期间可被外部取消：注册回调 Kill 进程树，避免"点取消无效"
-            using var reg = ct.Register(() =>
-            {
-                try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
-            });
-            if (!p.WaitForExit(timeoutMs))
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* 尽力 */ }
-                outputTail = "执行超时 (" + (timeoutMs / 1000) + "s)";
-                return false;
-            }
-            if (ct.IsCancellationRequested) return false;
-            // 事件回调可能落后于 WaitForExit 返回，短暂同步读一次剩余流（防 outputTail 缺行）
-            var combined = "";
-            lock (outLock) combined += string.Join("\n", outLines);
-            lock (errLock) { if (combined.Length > 0) combined += "\n"; combined += string.Join("\n", errLines); }
-            var lines = combined.Split('\n')
-                .Where(l => !string.IsNullOrWhiteSpace(l))
-                .ToList();
-            if (lines.Count > 0)
-                outputTail = string.Join("\n", lines.Skip(Math.Max(0, lines.Count - 6)));
-            return p.ExitCode == 0;
-        }
-        catch (Win32Exception ex)
-        {
-            outputTail = "无法启动进程（" + ex.Message + "）。请确保目标可执行文件存在且可访问。";
-            return false;
-        }
-        catch (Exception ex)
-        {
-            outputTail = "系统级执行异常: " + ex.Message;
-            Logger.Error("RunProcessCaptured fatal: " + ex);
-            return false;
-        }
-    }
-
-    /// <summary>判定 npm 输出是否为"找不到 npm/cmd"类错误（'不是内部或外部命令'/'not recognized'）。
-    /// 委托 ShellLogic 纯函数（任务四：契约测试锁定，NpmCmd_NotFound_FailsGracefully 语义）。</summary>
-    private static bool IsNpmNotFoundError(string tail) => ShellLogic.NpmHelpers.IsNpmNotFoundError(tail);
-
-    /// <summary>
-    /// 升级场景：检测已安装的其他版本 dsh-launcher（per-user 旧版 0.1.0-0.1.5 等），
-    /// 提示用户提权卸载。用户选择"否"时记录 HKCU 标记，之后不再打扰（直到旧版被移除）。
-    /// 卸载失败（被取消/旧版仍在运行）不阻断启动，提示用户稍后到"设置 → 应用"手动卸载。
-    /// </summary>
-    private static void TryPromptOldVersionCleanup()
-    {
-        if (NoUiMode) return; // 测试钩子：不弹确认框（自动化环境不打断）
-        try
-        {
-            // 当前产品代码（安装时写入 HKLM\Software\dsh-launcher\CurrentProductCode）：永远不清理自己
-            string? currentCode = null;
-            try
-            {
-                using var selfKey = Registry.LocalMachine.OpenSubKey(@"Software\dsh-launcher");
-                currentCode = selfKey?.GetValue("CurrentProductCode") as string;
-            }
-            catch
-            {
-                // 读不到按无当前产品处理（便携版等）
-            }
-
-            var olds = ShellLogic.UpgradeProducts.FilterByUpgradeCode(
-                ShellLogic.UpgradeProducts.ReadCandidateProducts(), ReadUpgradeCodeOfProduct);
-            olds = ShellLogic.UpgradeProducts.PickOldInstalls(olds, currentCode);
-            if (olds.Count == 0) return;
-
-            const string skipKeyName = @"Software\dsh-launcher";
-            try
-            {
-                using var skipKey = Registry.CurrentUser.OpenSubKey(skipKeyName);
-                if (skipKey?.GetValue("SkipOldUninstall") is int skipFlag && skipFlag == 1)
-                    return;
-            }
-            catch
-            {
-                // 读不到标记按未标记处理
-            }
-
-            var list = string.Join("\n", olds.Select(o => $"  • {o.ProductCode}  (v{o.Version})"));
-            var answer = MessageBox.Show(
-                "检测到旧版本的 dsh-launcher，建议先卸载旧版本，避免两个版本共存。\n\n" + list +
-                "\n\n是否现在卸载？\n（卸载需要管理员确认；请先关闭其他 dsh-launcher 窗口）",
-                "DeepSeek Harness", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-            if (answer != DialogResult.Yes)
-            {
-                try { Registry.CurrentUser.CreateSubKey(skipKeyName)?.SetValue("SkipOldUninstall", 1); }
-                catch { /* ignore */ }
-                return;
-            }
-
-            var failed = 0;
-            foreach (var old in olds)
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo("msiexec.exe", $"/x {old.ProductCode} /qn /norestart")
-                    {
-                        UseShellExecute = true,
-                        Verb = "runas",
-                    };
-                    using var p = Process.Start(psi);
-                    p?.WaitForExit();
-                    if (p is null || p.ExitCode != 0) failed++;
-                }
-                catch
-                {
-                    failed++;
-                }
-            }
-
-            MessageBox.Show(failed == 0
-                ? "旧版本已全部卸载。"
-                : "部分旧版本未能卸载（可能被取消，或旧版本窗口仍在运行）。\n可稍后在 设置 → 应用 中手动卸载。",
-                "DeepSeek Harness", MessageBoxButtons.OK,
-                failed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-        }
-        catch
-        {
-            // 检测/清理失败不打扰用户
-        }
-    }
-
-    /// <summary>
-    /// 读取产品的 UpgradeCode（经其缓存 MSI 的 Property 表）。用于精确识别"我们的产品"，
-    /// 避免误清理其他恰好同名的软件。任何一步失败返回 null（该产品将被过滤掉）。
-    /// </summary>
-    private static string? ReadUpgradeCodeOfProduct(string productCode)
-    {
-        try
-        {
-            dynamic installer = Activator.CreateInstance(
-                Type.GetTypeFromProgID("WindowsInstaller.Installer") ?? throw new InvalidOperationException());
-            var localPackage = (string)installer.ProductInfo(productCode, "LocalPackage");
-            if (string.IsNullOrWhiteSpace(localPackage) || !File.Exists(localPackage))
-                return null;
-            dynamic db = installer.OpenDatabase(localPackage, 0);
-            dynamic view = db.OpenView("SELECT `Value` FROM `Property` WHERE `Property`='UpgradeCode'");
-            view.Execute();
-            dynamic rec = view.Fetch();
-            return rec is null ? null : (string)rec.StringData(1);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 清理 per-user 旧版本（0.1.0-0.1.5）残留的用户级快捷方式。
-    /// 旧版被（提权）卸载后，其用户开始菜单/桌面快捷方式可能不被删除（MSI 提权卸载
-    /// 跳过 per-user 上下文组件）。只删除"目标确实是 DshWeb.exe"的快捷方式，
-    /// 用户自行创建的同名 .lnk（指向其他程序）不受影响；无法读取目标时保守不删。
-    /// </summary>
-    private static void CleanupOrphanShortcuts()
-    {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var userMenuDir = Path.Combine(appData, @"Microsoft\Windows\Start Menu\Programs\dsh-launcher");
-        try
-        {
-            // 目录是 MSI 专用名；只有确认里面有我们的快捷方式（指向 DshWeb.exe）才整体删除
-            if (Directory.Exists(userMenuDir))
-            {
-                var hasOurs = Directory.GetFiles(userMenuDir, "*.lnk")
-                    .Any(lnk => ShellLogic.UpgradeProducts.IsOurShortcutTarget(GetShortcutTarget(lnk)));
-                if (hasOurs) Directory.Delete(userMenuDir, true);
-            }
-        }
-        catch
-        {
-            // 忽略无法访问的目录
-        }
-
-        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        var userDesktopLnk = Path.Combine(desktop, "dsh-launcher.lnk");
-        try
-        {
-            if (File.Exists(userDesktopLnk)
-                && ShellLogic.UpgradeProducts.IsOurShortcutTarget(GetShortcutTarget(userDesktopLnk)))
-            {
-                File.Delete(userDesktopLnk);
-            }
-        }
-        catch
-        {
-            // 忽略
-        }
-
-        // 清理孤儿自启：HKCU Run 的 dsh-launcher 条目。
-        // 1) 指向 start-dsh.vbs 的旧版条目（0.2.x）一律删除——新版 autostart 应指向 DshWeb.exe，
-        //    且 VBS 直接拉起时 %USERPROFILE%\.dsh\dsh-launcher\ 目录可能尚未创建，导致 800A01A8 弹窗。
-        //    若用户在新版勾选了 autostart，EnsureAutoStartRequested 会重写正确条目。
-        // 2) 指向 DshWeb.exe 但文件已不存在的（per-machine 提权卸载跳过 per-user 组件时残留），
-        //    避免下次登录白启一个死项。
-        try
-        {
-            using var runKey = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            if (runKey?.GetValue("dsh-launcher") is string runValue)
-            {
-                var m = Regex.Match(runValue, "\"([^\"]+(?:start-dsh\\.vbs|DshWeb\\.exe))\"",
-                    RegexOptions.IgnoreCase);
-                var targetPath = m.Success ? m.Groups[1].Value : null;
-                // start-dsh.vbs 条目一律删除（旧版残留）；DshWeb.exe 条目仅文件不存在时删除
-                if (targetPath is null ||
-                    targetPath.EndsWith("start-dsh.vbs", StringComparison.OrdinalIgnoreCase) ||
-                    !File.Exists(targetPath))
-                    runKey.DeleteValue("dsh-launcher", false);
-            }
-        }
-        catch
-        {
-            // 忽略
-        }
-    }
-
-    /// <summary>读取 .lnk 的目标路径；失败返回 null（保守不删）。</summary>
-    private static string? GetShortcutTarget(string lnkPath)
-    {
-        try
-        {
-            dynamic shell = Activator.CreateInstance(
-                Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException());
-            dynamic lnk = shell.CreateShortcut(lnkPath);
-            return (string)lnk.TargetPath;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>读取文件文本（容错，失败返回 null）。</summary>
-    private static string? SafeReadText(string path)
-    {
-        try
-        {
-            return File.Exists(path) ? File.ReadAllText(path) : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 服务就绪判定：端口可连 + HTTP 有响应。dsh 前端在端口监听后可能还需数十秒
-    /// 才提供 HTTP，只探测 TCP 会提前"成功"（主窗口白屏）。
-    /// </summary>
-    private static bool HttpReady()
-    {
-        if (!PortOpen(Target.Port)) return false;
-        try
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            return ShellLogic.ServiceReadiness.IsHttpReady(Target.Url, http); // 契约纯函数（P1-6，可注入测试）
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>settings.json 路径（dsh-launcher-lifetime 插件写入，壳读取）：DSH_HOME\dsh-launcher\settings.json。</summary>
-    private static string SettingsPath => Path.Combine(DataDir, "settings.json");
-
-    /// <summary>
-    /// 读取服务停留模式；缺失/非法回退跟随窗口。兼容旧版路径（%LOCALAPPDATA%，
-    /// 迁移前旧插件写入的位置）：新位置读不到时回退旧位置，读到后迁移并清理，
-    /// 避免"用户选了常驻/托盘驻留，壳却按默认跟随窗口执行"的路径错位。
-    /// v0.3.0 配置降级：校验 dsh-launcher-lifetime 插件物理存在否——插件已卸载时
-    /// 忽略残留在 settings.json 里的 serviceLifetime 并回退跟随窗口，同时抹除失效字段
-    /// （幂等，免除用户手动删 JSON）。
-    /// </summary>
-    private static ShellLogic.ServiceLifetime ReadLifetimeMode()
-    {
-        var json = SafeReadText(SettingsPath);
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            try
-            {
-                var legacy = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "dsh-launcher", "settings.json");
-                if (File.Exists(legacy))
-                {
-                    json = SafeReadText(legacy);
-                    if (!string.IsNullOrWhiteSpace(json))
-                    {
-                        try
-                        {
-                            Directory.CreateDirectory(DataDir);
-                            File.WriteAllText(SettingsPath, json);
-                            File.Delete(legacy);
-                        }
-                        catch { /* 迁移失败按旧值执行 */ }
-                    }
-                }
-            }
-            catch { /* 旧路径不可读按默认执行 */ }
-        }
-        var pluginPresent = ShellLogic.PluginConfig.IsLifetimePluginInstalled(DshHomeDir);
-        // 质量治理：settings.json 存在但非法 JSON / 非对象 → 记 Warn（此前静默回退默认模式，
-        // 用户"常驻"配置为何失效无法诊断）。仅在文件内容非空且非合法 JSON 对象时告警。
-        if (!string.IsNullOrWhiteSpace(json) && !ShellLogic.PluginConfig.HasServiceLifetimeKey(json))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
-                if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
-                    Logger.Warn("settings.json is not a JSON object; lifetime defaults apply",
-                        ctx: new { path = SettingsPath });
-            }
-            catch
-            {
-                Logger.Warn("settings.json is not valid JSON; lifetime defaults apply",
-                    ctx: new { path = SettingsPath });
-            }
-        }
-        var (mode, shouldPurge) = ShellLogic.PluginConfig.ResolveEffectiveLifetime(json, pluginPresent);
-        if (shouldPurge)
-        {
-            Logger.Warn("settings.json serviceLifetime ignored (lifetime plugin missing); purging stale value",
-                ErrorCodes.E2011, new { path = SettingsPath, pluginPresent });
-            PurgeServiceLifetime(SettingsPath);
-        }
-        return mode;
-    }
-
-    /// <summary>抹除 settings.json 中的 serviceLifetime 字段（只改字段，不动插件其他内容）；失败幂等。</summary>
-    private static void PurgeServiceLifetime(string path)
-    {
-        try
-        {
-            var text = SafeReadText(path);
-            if (string.IsNullOrWhiteSpace(text)) return;
-            using var doc = JsonDocument.Parse(text);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return;
-            using var stream = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
-            {
-                writer.WriteStartObject();
-                foreach (var prop in doc.RootElement.EnumerateObject())
-                    if (!prop.NameEquals("serviceLifetime")) prop.WriteTo(writer);
-                writer.WriteEndObject();
-            }
-            File.WriteAllText(path, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
-        }
-        catch { /* 抹除失败幂等：下次启动再判 */ }
-    }
-
-    /// <summary>壳托管服务的 PID 记录文件（按端口隔离）：崩溃/异常退出后残留的服务可被下次启动接管管理。</summary>
-    private static string ServicePidFile => Path.Combine(DataDir, $"service-pid-{Target.Port}.txt");
+    // ---- 服务进程生命周期（实现迁至 Managers/ServiceLifecycleOps.cs；ADR-024。
+    //      组合根保留薄转发：调用点语义不变，业务原语不再出现在本文件） ----
 
     /// <summary>记录本次壳拉起的服务 PID（服务就绪后调用），供下次启动接管残留服务。</summary>
     private static void RecordServicePid()
     {
-        try
-        {
-            var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
-            if (pid > 0)
-            {
-                _servicePid = pid;
-                File.WriteAllText(ServicePidFile, pid.ToString());
-            }
-        }
-        catch
-        {
-            // 记录失败不影响启动
-        }
+        Managers.ServiceLifecycleOps.RecordServicePid(DataDir, Target.Port);
+        _servicePid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port); // 内存缓存同步（原语义）
     }
 
     /// <summary>
     /// 端口已开但本实例没拉起服务时调用：若监听进程正是壳上次拉起的残留服务
-    /// （PID 记录在 ServicePidFile），则校验健康后接管管理（跟随窗口关窗时停掉），
-    /// 避免崩溃/异常退出后服务永久残留。
-    /// v0.3.0 健康校验：HTTP 就绪才算可接管（状态恢复，不打断用户）；坏状态/旧版本
-    /// 进程不得带病运行——监听但 HTTP 不通 → 清理（只动我们记录的 PID）。
+    /// （PID 记录在账本），则校验健康后接管管理；坏状态/旧版本进程不得带病运行——
+    /// 监听但 HTTP 不通 → 清理（只动我们记录的 PID）。实现见 ServiceLifecycleOps。
     /// </summary>
     private static void TryAdoptOrphanService()
     {
-        try
+        var adopted = Managers.ServiceLifecycleOps.TryAdoptOrphanService(DataDir, Target.Port, Target.Url);
+        if (adopted > 0)
         {
-            if (!File.Exists(ServicePidFile)) return;
-            if (!int.TryParse(File.ReadAllText(ServicePidFile).Trim(), out var pid) || pid <= 0) return;
-            if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) == pid)
-            {
-                if (HttpReady())
-                {
-                    _serviceStartedByShell = true;
-                    _servicePid = pid;
-                    Trace($"adopted orphan service pid={pid}");
-                }
-                else
-                {
-                    Logger.Warn($"orphan service pid={pid} unhealthy (no HTTP); killing", ErrorCodes.E2005,
-                        new { port = Target.Port });
-                    if (KillProcess(pid)) ClearServicePidFile(); // P2-10：杀不干净则保留 pid 文件
-                }
-            }
-        }
-        catch
-        {
-            // 接管失败不影响启动
+            _serviceStartedByShell = true;
+            _servicePid = adopted;
+            Trace($"adopted orphan service pid={adopted}");
         }
     }
 
-    /// <summary>端口未开时的遗留清扫（拉起服务前调用）：上次崩溃记录过、但已不在
-    /// 监听的进程 → 清理（只动我们记录的 PID），确保端口不被占用、不留僵尸进程。</summary>
-    private static void SweepStaleServicePid()
-    {
-        try
-        {
-            if (!File.Exists(ServicePidFile)) return;
-            if (!int.TryParse(File.ReadAllText(ServicePidFile).Trim(), out var pid) || pid <= 0)
-            {
-                ClearServicePidFile();
-                return;
-            }
-            if (!IsProcessAlive(pid))
-            {
-                ClearServicePidFile();
-                return;
-            }
-            if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) != pid)
-            {
-                // P1-3（质量治理）：记录过但未监听目标端口的 node 大概率是 PID 复用（无关进程）——
-                // 不杀，只清 pid 文件；进程本身不是我们管理的服务。
-                Logger.Warn($"stale service pid={pid} alive but not listening on port {Target.Port}; clearing pid file (possible PID reuse)",
-                    ErrorCodes.E2005, new { port = Target.Port });
-                ClearServicePidFile();
-                return;
-            }
-            // 活着且确实监听目标端口：真僵尸 → 认领并清理（启动清扫闭环，2026-08 修复点2）。
-            // KillServiceProcess 内部再做身份校验 + 端口归属双重防误杀，误杀无辜进程概率为零。
-            Trace($"SWEEP: adopting stale service pid={pid} on port {Target.Port}");
-            bool killed = ShellLogic.ProcessManagement.KillServiceProcess(pid, Target.Port);
-            if (killed && !IsProcessAlive(pid))
-                ClearServicePidFile();
-            else
-                Logger.Error($"stale dsh service pid={pid} on port {Target.Port} could not be terminated; pid file kept for next-start sweep",
-                    ErrorCodes.E2005, new { pid, port = Target.Port });
-        }
-        catch { /* 清扫失败不影响启动 */ }
-    }
+    /// <summary>端口未开时的遗留清扫（拉起服务前调用）：只清理我们记录过的僵尸 PID。实现见 ServiceLifecycleOps。</summary>
+    private static void SweepStaleServicePid() => Managers.ServiceLifecycleOps.SweepStaleServicePid(DataDir, Target.Port);
 
-    private static void ClearServicePidFile()
-    {
-        try { if (File.Exists(ServicePidFile)) File.Delete(ServicePidFile); } catch { }
-    }
+    private static void ClearServicePidFile() => Managers.ServiceLifecycleOps.ClearPidFile(DataDir, Target.Port);
 
-    private static bool IsProcessAlive(int pid)
-    {
-        try { using var p = Process.GetProcessById(pid); return !p.HasExited; }
-        catch { return false; }
-    }
+    /// <summary>停止指定 PID：薄委托 ServiceLifecycleOps → ShellLogic.ProcessManagement.KillServiceProcess
+    /// （身份校验 + 端口归属双重防误杀；等待 taskkill 退出、强杀确认、失败重试一次、失败上报 E2005）。</summary>
+    private static bool KillProcess(int pid) => Managers.ServiceLifecycleOps.KillProcess(Target.Port, pid);
 
-    // ---- P2：SIGINT 尽力而为优雅终止（Windows 无控制台进程没有可靠 Ctrl+C 通道） ----
-    // 策略：先尝试附加目标进程的控制台并投递 CTRL_BREAK（node 映射为 SIGBREAK，若 dsh
-    // 注册了信号处理器则有机会清理）；AttachConsole 失败（wscript 隐藏启动的 node 无控制台，
-    // 常态）自动降级温和 taskkill；仍不退则 /f。绝不改变服务启动链路（不引入可见控制台窗口）。
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AttachConsole(uint dwProcessId);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool FreeConsole();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
-
-    private const uint CTRL_BREAK_EVENT = 1;
-
-    /// <summary>尽力而为：目标进程有控制台时投递 CTRL_BREAK；无控制台返回 false（走温和 taskkill）。</summary>
-    private static bool TryGracefulStop(int pid)
-    {
-        // 安全修复：禁用 CTRL_BREAK 广播路径。
-        // GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0) 的进程组 0 会广播给与目标
-        // 共享控制台的所有进程——包括 shell 自身（AttachConsole 后 shell 与目标共享
-        // 同一控制台）。实测：安全模式重启时该广播直接杀死 shell 进程，导致重启中断、
-        // 窗口消失。优雅终止的收益远小于此误杀风险，故直接返回 false，走温和 taskkill。
-        return false;
-    }
-
-    /// <summary>停止指定 PID（v0.3.1 P2 优雅终止 + 质量治理 P1-2/P2-10）：
-    /// 薄委托给 <see cref="ShellLogic.ProcessManagement.KillServiceProcess"/>（业务逻辑下沉，
-    /// 2026-08 僵尸清扫竞态修复：等待 taskkill 自身退出、强杀确认窗口 300ms→1500ms、失败重试一次、
-    /// 失败响亮上报 E2005 并保留 pid 文件）。签名不变，爆炸半径最小。</summary>
-    private static bool KillProcess(int pid)
-    {
-        try
-        {
-            return ShellLogic.ProcessManagement.KillServiceProcess(pid, Target.Port);
-        }
-        catch { return false; }
-    }
+    /// <summary>
+    /// 停止"壳本次会话拉起的"dsh 服务：优先内存缓存的 PID，端口反查兜底；温和 taskkill 未停
+    /// 则强制 /f /T；端口释放限时探测 + 占用者认领兜底；杀不干净保留 pid 文件由下次启动清扫。
+    /// 实现见 ServiceLifecycleOps.StopService（ADR-024 迁移，逻辑逐行保持原语义）。
+    /// </summary>
+    private static void StopShellService()
+        => Managers.ServiceLifecycleOps.StopService(DataDir, Target.Port, _servicePid);
 
     // ---- 关窗/退出异步化（2026-08 用户回归：点关闭后 UI 线程同步停服务卡 1.5s+） ----
 
@@ -3920,137 +2475,34 @@ internal static class Program
     }
 
     /// <summary>
-    /// 停止"壳本次会话拉起的"dsh 服务：优先用内存缓存的 PID（就绪时已记录，
-    /// 端口反查走 TcpTable 亚毫秒级）。温和 taskkill 对无窗口进程（wscript 隐藏启动的
-    /// node）发 WM_CLOSE 无效：短等待未停则立即强制 /f。v0.4.x 起由 BeginShutdownAsync
-    /// 在后台线程调用（窗口已隐藏，同步等待不再卡 UI）。全程限时（&lt;1s），杀不干净则
-    /// 保留 pid 文件，下次启动由 SweepStaleServicePid 认领。
+    /// 更新应用失败的模态告知（UI 收口；ADR-024）。
+    /// 【策略收敛】pending 保留/清理决策已全部移入更新引擎
+    /// （DshUpdateManager.NotifyApplyFailedInternal：重试类保留 pending、非重试类清 pending 后回调）；
+    /// 本方法只负责把"非重试类失败"以模态弹窗明确告知用户（含真实原因），不再重复策略判断。
     /// </summary>
-    private static void StopShellService()
+    private static void NotifyUpdateApplyFailed(string version, string errorTail)
     {
         try
         {
-            var pid = _servicePid;
-            if (pid <= 0) pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port); // 兜底：内存没有时再查
-            if (pid <= 0)
+            var detail = string.IsNullOrWhiteSpace(errorTail) ? "未知原因" : errorTail;
+            if (!NoUiMode)
             {
-                ClearServicePidFile();
-                return;
-            }
-            // KillProcess 内部：PID 校验 → 温和（CTRL_BREAK/taskkill）→ 同步等待 → /f /T 兜底
-            if (KillProcess(pid))
-            {
-                // v0.4.0 T1：端口释放探测——进程已死但端口未释放（子进程/TIME_WAIT）时同步
-                // 等待，确保关窗后 node 不残留、不占端口。等待上限 1s（原 2s）：TIME_WAIT 由
-                // SO_REUSEADDR 自动收敛，超过即记日志不阻塞关窗（消除"关窗卡两秒"）。
-                var deadline = DateTime.UtcNow.AddSeconds(1);
-                while (DateTime.UtcNow < deadline && ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
-                    Thread.Sleep(80);
-                if (ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port) > 0)
+                // 任务三：显示主窗口之前必须弹模态，明确告知失败原因与后续动作
+                var dlg = _pendingForm; // 更新提示托盘宿主（可能为 null，回退无 owner）
+                var text = $"自动应用更新失败 (v{version})。\n\n将继续使用旧版本启动。\n\n原因：{detail}\n\n" +
+                           "您可以稍后在设置中重试更新。";
+                if (dlg is not null)
                 {
-                    // 2026-08 修复点2 兜底：端口释放超时 → 反查占用者，确属 dsh 服务则认领清理
-                    // （防端口被系统回收给无关进程卡住关窗）。KillServiceProcess 内部再做身份 +
-                    // 端口归属双重校验，非我们管理的进程绝不被误杀。
-                    int occupant = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
-                    if (occupant > 0 && occupant != pid)
-                    {
-                        Trace($"STOP: port {Target.Port} still occupied by pid={occupant}; attempting reclaim");
-                        ShellLogic.ProcessManagement.KillServiceProcess(occupant, Target.Port);
-                    }
-                    Logger.Warn($"service pid={pid} killed but port {Target.Port} still occupied",
-                        ErrorCodes.E2005, new { pid, port = Target.Port });
-                }
-                else
-                    ClearServicePidFile();
-            }
-            // P2-10：杀不干净则保留 pid 文件，下次启动认领
-        }
-        catch
-        {
-            // 停服务失败不影响退出
-        }
-    }
-
-    // FindPidListeningOn（netstat -ano 子进程解析）已删除：所有端口反查统一走
-    // ShellLogic.ProcessManagement.GetProcessIdByPort（GetExtendedTcpTable 亚毫秒级，
-    // netstat 仅其内部兜底）。2026-08 关窗卡顿修复：KillProcess/StopShellService 的
-    // 轮询循环此前每 80ms 拉起一次 netstat 子进程，是关窗同步等待的主要耗时来源。
-
-    // 托盘图标已由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
-    // 壳只读取配置，不硬编码托盘逻辑。
-
-    /// <summary>
-    /// 服务就绪轮询（并行开窗 Step5 抽取）：后台线程等待 dsh 服务 TCP+HTTP 就绪。
-    /// 逻辑与旧内联轮询逐位一致；由状态窗提前创建后的 pollTask 承载。
-    /// 返回 "ready"/"canceled"/"logerror"/"timeout"。
-    /// </summary>
-    private static string WaitServiceReady(CancellationToken token, int port, string url, string logPath, bool e2eMode)
-    {
-        var lastLogCheck = DateTime.MinValue;
-        var logErrorSeen = false;
-        var logErrorSince = DateTime.MinValue;
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        // e2e 探针模式（E2EMode）：轮询上限 20s 自动结束（不弹状态窗、不无限等服务）。
-        // 否则无头 CI 上服务未就绪时会一直转圈，探针路径卡死。
-        // 首次运行（dsh 未安装，服务只能经 npx 网络下载启动）放宽等待预算 180s → 360s：
-        // 让"慢但能成功的首次下载+启动"跑完，避免被误判超时（SelfContained/全局安装则维持 180s）。
-        var networkFallback = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source
-            == DshWeb.Domain.DshSource.NpxCache;
-        var pollBudget = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(networkFallback);
-        Trace($"poll: networkDownloadFallback={networkFallback}, budget={pollBudget}s");
-        for (var i = 0; i < (e2eMode ? 20 : pollBudget); i++)
-        {
-            if (token.IsCancellationRequested) return "canceled";
-            if ((DateTime.UtcNow - lastLogCheck).TotalSeconds >= 5)
-            {
-                lastLogCheck = DateTime.UtcNow;
-                // 任务三：主日志被锁时（cmd >> 独占）读取 fallback 日志，错误标志检查不失效——
-                // 两者任一出现启动错误标志都会触发 15s 宽限期提前退出（诊断盲区消除）。
-                var content = SafeReadText(logPath);
-                if (string.IsNullOrWhiteSpace(content)
-                    && !string.Equals(logPath, Logger.FallbackPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    var fb = SafeReadText(Logger.FallbackPath);
-                    if (!string.IsNullOrWhiteSpace(fb)) content = fb;
-                }
-                if (ShellLogic.ServiceReadiness.LogShowsStartupError(content))
-                {
-                    if (!logErrorSeen)
-                    {
-                        logErrorSeen = true;
-                        logErrorSince = DateTime.UtcNow;
-                        // 日志出现错误标志：不立即判死——启动过程中的良性告警（如网络探测）
-                        // 也会命中，误判会导致用户"要多点一次"。给 15 秒宽限期，期间
-                        // HTTP 就绪仍算成功；只有持续失败才判定启动出错。
-                        Trace("poll: log shows error markers, grace 15s");
-                    }
+                    dlg.BeginInvoke(() => MessageBox.Show(dlg, text, "dsh 更新失败",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error));
                 }
                 else
                 {
-                    logErrorSeen = false; // 日志恢复干净，重置记时
+                    MessageBox.Show(text, "dsh 更新失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
-            if (PortOpen(port))
-            {
-                if (ShellLogic.ServiceReadiness.IsHttpReady(url, http)) // 契约纯函数（P1-6）
-                {
-                    Trace("poll: ready (tcp + http)");
-                    return "ready"; // TCP + HTTP 都已就绪
-                }
-                // HTTP 尚未就绪（前端还在启动），继续等
-            }
-            if (logErrorSeen && DateTime.UtcNow - logErrorSince >= TimeSpan.FromSeconds(15))
-            {
-                Trace("poll: log error markers persisted 15s, giving up");
-                return "logerror";
-            }
-            // 启动延迟优化（Step4d）：前 8 次快速轮询（200ms）——node 服务往往在启动
-            // 临界点就绪，固定 1s 粒度会让"已就绪"最多白等 1s；快速期后恢复 1s（服务
-            // 尚未就绪说明在下载/初始化，低频即可，避免空转）。
-            Thread.Sleep(i < 8 ? 200 : 1000);
         }
-        Trace($"poll: timeout after {pollBudget}s");
-        return "timeout";
+        catch { /* 弹窗失败不影响启动 */ }
     }
 
     // 服务启动状态窗已迁移为 Windows/SplashForm.cs（v0.4.1 极速启动模型）：
@@ -4135,20 +2587,8 @@ internal static class Program
     /// <summary>蓝色鲸鱼图标（托盘/任务栏按钮固定用：DeepSeek 蓝 #4D6BFE，深浅背景都清晰）。</summary>
     private static Icon? _blueWhaleIcon;
 
-    /// <summary>检测系统应用深色模式（注册表 AppsUseLightTheme=0）。</summary>
-    private static bool IsSystemDarkMode()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
-            return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    /// <summary>检测系统应用深色模式（实现见 AppEnvironment.IsSystemDarkMode；ADR-024 迁移转发）。</summary>
+    private static bool IsSystemDarkMode() => Managers.AppEnvironment.IsSystemDarkMode();
 
     /// <summary>读取 dsh 前端的主题选择（DSH_HOME/settings.yaml 的 ui-theme.preference）。
     /// 严格限定在 ui-theme 段内查找，避免误读其他段（如 agent-default-model 等）的 preference 键。</summary>
@@ -4374,5 +2814,6 @@ internal static class Program
     // Step 5b：RegisterThemeWatcher/SafeFileMtime/ReleaseThemeWatcher 已迁入
     // WindowManager.Instance（主题监听：FSW+系统事件+2s 轮询，P2-7 统一释放）。
 
-    private static bool PortOpen(int port) => ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", port); // 契约纯函数（P1-6）
+    // [ADR-024] Program 私有 PortOpen/HttpReady 包装已删除：所有端口/HTTP 探测经
+    // ShellLogic.ServiceReadiness（限定名调用）或 Managers.ServiceLifecycleOps.IsReady。
 }

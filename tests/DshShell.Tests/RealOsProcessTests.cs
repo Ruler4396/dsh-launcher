@@ -1,13 +1,14 @@
 using System.Diagnostics;
 using System.Text;
 using DshWeb;
+using DshWeb.Managers;
 using Xunit;
 
 namespace DshShell.Tests;
 
 /// <summary>
 /// 支柱一：真实 OS 交互集成测试（SDET 硬核防线，打破"Mock 幻觉"）。
-/// **零 Mock、零 Mock 框架**：直接调用 <see cref="Program.RunProcessCaptured"/> 真实启动 OS 进程，
+/// **零 Mock、零 Mock 框架**：直接调用 <see cref="ProcessRunner.RunProcessCaptured"/> 真实启动 OS 进程，
 /// 拦截进程调用、编码冲突、僵尸树清理等单元测试无法触及的系统级 Bug。
 ///
 /// 成员：
@@ -58,7 +59,7 @@ public class RealOsProcessTests
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)); // 无 BOM
 
             // 直接真实启动 cmd.exe 执行该 .cmd（零 Mock），走 UTF-8 捕获管线
-            var ok = Program.RunProcessCaptured(
+            var ok = ProcessRunner.RunProcessCaptured(
                 "cmd.exe", $"/c \"{script}\"", out var outputTail,
                 timeoutMs: 30000);
 
@@ -95,7 +96,7 @@ public class RealOsProcessTests
                 "console.log('下载失败');\n",
                 Encoding.UTF8);
 
-            var ok = Program.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out var outputTail,
+            var ok = ProcessRunner.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out var outputTail,
                 timeoutMs: 30000);
             Assert.True(ok, "node 执行中文输出脚本应成功。outputTail=" + outputTail);
             Assert.Contains("文件名", outputTail);
@@ -136,7 +137,7 @@ public class RealOsProcessTests
                 "process.stdout.write(s + '\\n');\n",
                 Encoding.UTF8);
 
-            var ok = Program.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out var outputTail,
+            var ok = ProcessRunner.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out var outputTail,
                 timeoutMs: 30000);
             Assert.True(ok, "node 执行脚本应成功。outputTail=" + outputTail);
             Assert.False(ContainsGarbage(outputTail),
@@ -172,7 +173,7 @@ public class RealOsProcessTests
         try
         {
             // 引擎真实启动长驻进程；progress 回调捕获脚本 print 的 PID
-            var ok = Program.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out _,
+            var ok = ProcessRunner.RunProcessCaptured(env.NodeExe, $"\"{script}\"", out _,
                 timeoutMs: 800,   // 短超时：进程 sleep 120s 不会自退 → 引擎超时杀树
                 progress: line =>
                 {
@@ -203,7 +204,7 @@ public class RealOsProcessTests
             Assert.True(ForceSmoke, "本地强制模式：未检测到 node.exe");
             return;
         }
-        var ok = Program.RunProcessCaptured(env.NodeExe, "-e \"console.log('hello-real-os')\"",
+        var ok = ProcessRunner.RunProcessCaptured(env.NodeExe, "-e \"console.log('hello-real-os')\"",
             out var outputTail, timeoutMs: 30000);
         Assert.True(ok, "node -e 应成功。outputTail=" + outputTail);
         Assert.Contains("hello-real-os", outputTail);

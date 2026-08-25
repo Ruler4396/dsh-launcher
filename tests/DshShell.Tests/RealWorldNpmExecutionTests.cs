@@ -1,11 +1,13 @@
 using DshWeb;
+using DshWeb.Domain;
+using DshWeb.Managers;
 using Xunit;
 
 namespace DshShell.Tests;
 
 /// <summary>
 /// 真实环境冒烟测试（任务二：打破"测试幻觉"）。
-/// **不使用任何 Mock**：直接调用重构后的 <see cref="Program.RunNpmCommand"/>（node.exe 直接执行
+/// **不使用任何 Mock**：直接调用重构后的 <see cref="ProcessRunner.RunNpmCommand"/>（node.exe 直接执行
 /// npm-cli.js），验证在真实 OS 环境下能拉起 Node/npm 并拿到正确退出码。
 /// 目的：锁定"底层执行引擎"在真实机器上可用——300+ 单测 Mock Process 无法发现 OS 级 Bug
 ///（cmd.exe /c 引号剥离、.cmd 编码冲突、PATH 缺失等真实环境问题），本测试是硬性防线。
@@ -19,10 +21,10 @@ public class RealWorldNpmExecutionTests
 {
     private static bool IsNodeAvailable()
     {
-        // 与 Program.RunNpmCommand 相同的探测链路：RuntimeResolver → node.exe
+        // 与 ProcessRunner.RunNpmCommand 相同的探测链路：RuntimeResolver → node.exe
         var env = RuntimeResolver.ResolveExisting();
         if (env?.NodeExe is null || !File.Exists(env.NodeExe)) return false;
-        var cli = Program.FindNpmCliJs(env.NodeExe);
+        var cli = DshWeb.Domain.JsEntryResolver.ResolveNpmCliJs(env.NodeExe);
         return cli is not null && File.Exists(cli);
     }
 
@@ -46,7 +48,7 @@ public class RealWorldNpmExecutionTests
         if (!IsNodeAvailable()) return; // CI 无 Node：静默通过
 
         // 真实调用：node.exe 直接执行 npm-cli.js --version（不 Mock，完整走 Process.Start）
-        var ok = Program.RunNpmCommand("--version", out var errorTail);
+        var ok = ProcessRunner.RunNpmCommand("--version", out var errorTail);
 
         Assert.True(ok, $"npm --version 应成功退出。errorTail={errorTail}");
         Assert.False(string.IsNullOrWhiteSpace(errorTail), "npm --version 成功时应输出版本号（11.x）");
@@ -60,7 +62,7 @@ public class RealWorldNpmExecutionTests
         if (!IsNodeAvailable()) return;
 
         var env = RuntimeResolver.ResolveExisting()!;
-        var cli = Program.FindNpmCliJs(env.NodeExe!);
+        var cli = DshWeb.Domain.JsEntryResolver.ResolveNpmCliJs(env.NodeExe!);
         Assert.NotNull(cli);
         Assert.True(File.Exists(cli), "npm-cli.js 必须真实存在于磁盘");
 
@@ -81,7 +83,7 @@ public class RealWorldNpmExecutionTests
     }
 
     [Fact]
-    public void FindNpmCliJs_ProbeOrder_StandardLayoutThenAppData()
+    public void ResolveNpmCliJs_ProbeOrder_StandardLayoutThenAppData()
     {
         // 探测优先级契约（纯逻辑，离线可验证）：
         //   a. node.exe 同级 node_modules\npm\bin\npm-cli.js
@@ -94,11 +96,11 @@ public class RealWorldNpmExecutionTests
         File.WriteAllText(stdCli, "std");
 
         // 只有标准布局 → 命中 a
-        Assert.Equal(stdCli, Program.FindNpmCliJs(Path.Combine(nodeDir, "node.exe")));
+        Assert.Equal(stdCli, DshWeb.Domain.JsEntryResolver.ResolveNpmCliJs(Path.Combine(nodeDir, "node.exe")));
 
         // 两布局都不存在 → null
         Directory.Delete(Path.Combine(nodeDir, "node_modules"), recursive: true);
-        Assert.Null(Program.FindNpmCliJs(Path.Combine(nodeDir, "node.exe")));
+        Assert.Null(DshWeb.Domain.JsEntryResolver.ResolveNpmCliJs(Path.Combine(nodeDir, "node.exe")));
     }
 
     /// <summary>每测试用一次性临时目录。</summary>

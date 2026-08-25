@@ -17,6 +17,8 @@ public sealed class LauncherApp
     private readonly IWebViewManager _webview;
     private readonly IWindowManager _window;
     private readonly ITrayManager _tray;
+    private readonly IDshUpdateManager? _updates;
+    private readonly string? _serviceLogPath;
     private readonly LauncherLifecycle _lifecycle = new();
     private readonly Action<int>? _staleCleanup;
 
@@ -30,15 +32,16 @@ public sealed class LauncherApp
 
     /// <summary>阶段 0：无 UI 的轻量维护 IO（日志轮转/数据迁移/自启落地/延迟应用更新等）。
     /// 入参为取消令牌：npm install -g 应用更新可达 30-60s，用户取消 Splash 时必须能中断（v0.4.0）。
-    /// 组合根把 Splash 的 IProgress 桥接进 RunBackgroundMaintenance → ApplyPendingDshUpdate →
+    /// 组合根把 Splash 的 IProgress 桥接进 RunBackgroundMaintenance → ApplyPending →
     /// npm 实时日志逐行上报到 Splash（任务一 UI 联动：缓解"正在安装更新"期间的卡死焦虑）。</summary>
     public Action<CancellationToken>? BackgroundMaintenance { get; set; }
 
     /// <summary>拉起服务前的僵尸清扫 + 延迟更新应用。</summary>
     public Action? SweepStaleAndApplyUpdate { get; set; }
 
-    /// <summary>拉起 dsh 服务（wscript start-dsh.vbs）。返回 false 表示拉起失败（E2001）。</summary>
-    public Func<bool>? StartService { get; set; }
+    /// <summary>首装全局安装失败的用户可见详情（[E1012] 展示用）；null = 未触发或已成功。</summary>
+    public string? FirstRunProvisionError =>
+        (_updates as DshUpdateManager)?.FirstRunProvisionError;
 
     /// <summary>
     /// 就绪轮询探针，返回 "ready"/"timeout"/"logerror"/"canceled"（含 dsh.log 错误标志语义）。
@@ -75,7 +78,9 @@ public sealed class LauncherApp
         IWebViewManager? webview = null,
         IWindowManager? window = null,
         ITrayManager? tray = null,
-        Action<int>? staleCleanup = null)
+        Action<int>? staleCleanup = null,
+        IDshUpdateManager? updates = null,
+        string? serviceLogPath = null)
     {
         _runtime = runtime ?? new RuntimeManager();
         _service = service ?? new ServiceManager();
@@ -83,6 +88,8 @@ public sealed class LauncherApp
         _window = window ?? new WindowManager();
         _tray = tray ?? new TrayManager();
         _staleCleanup = staleCleanup;
+        _updates = updates;
+        _serviceLogPath = serviceLogPath;
         // 契约与 Program.Target 同源（ShellLogic.ResolveTarget）：DSH_WEB_URL → 外部托管；
         // DSH_WEB_PORT → 端口覆盖；缺省 http://127.0.0.1:3080。
         var (url, port) = ShellLogic.RuntimeConfig.ResolveTarget(
@@ -153,7 +160,7 @@ public sealed class LauncherApp
         // ---- ResolvingRuntime：运行时解析（缺 Node 时 Manager 内部先确认再下载，E1002 拒绝）。
         // 同步解析部分（ResolveExisting 读注册表/PATH）包后台，避免阻塞调用线程。----
         progress?.Report("正在准备 Node.js 运行环境…");
-        RuntimeResult rt;
+        RuntimeResolution rt;
         try
         {
             rt = await Task.Run(() => _runtime.EnsureRuntimeAsync(ct), ct);
@@ -169,16 +176,38 @@ public sealed class LauncherApp
             _lifecycle.Fire(LifecycleTrigger.RuntimeFailed);
             return false;
         }
-        if (!rt.Ok)
+        if (!rt.Ok || rt.Identity is null)
         {
-            // 预期失败（E1002-E1005）：记录具体错误码（此前 Failed() 丢码、且误用 Ready 判定）
+            // 预期失败（E1002-E1005）：记录具体错误码
             LastErrorCode = rt.ErrorCode ?? ErrorCodes.E1003;
             LastErrorDetail = rt.ErrorDetail ?? ErrorCodes.Describe(LastErrorCode);
             Logger.Error(LastErrorDetail, LastErrorCode);
             _lifecycle.Fire(LifecycleTrigger.RuntimeFailed);
             return false;
         }
+        var identity = rt.Identity!;
         _lifecycle.Fire(LifecycleTrigger.RuntimeResolved); // → StartingService
+
+        // ---- 首装链（ADR-024）：身份为 NpxCache（本机无任何物理安装）时经更新引擎
+        // npm -g 安装组件，成功后重发现身份。失败响亮 E2001 收口（组合根按
+        // StartupFailurePolicy 映射 [E1012] 展示真实根因），绝不静默落 npx 冷路径。----
+        if (!ServerManagedExternally
+            && identity.Source == DshWeb.Domain.DshSource.NpxCache
+            && _updates is not null)
+        {
+            progress?.Report("正在安装 dsh 组件（首次运行，仅需一次）…");
+            var provisioned = await Task.Run(() => _updates.EnsureDshInstalled(identity), ct);
+            if (!provisioned)
+            {
+                LastErrorCode = ErrorCodes.E2001;
+                LastErrorDetail = "未能自动安装 dsh 组件（详见统一日志）。";
+                Logger.Error(LastErrorDetail, LastErrorCode,
+                    new { detail = (_updates as DshUpdateManager)?.FirstRunProvisionError });
+                _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
+                return false;
+            }
+            identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime(); // 发现链立见新装 shim/版本
+        }
 
         // ---- StartingService：端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）。
         // 修复根因：仅凭 TCP PortOpen 决定"跳过拉起"会误判僵尸服务（端口开但 HTTP 死）为
@@ -230,16 +259,21 @@ public sealed class LauncherApp
         if (needsStart)
         {
             progress?.Report("正在启动 dsh 服务…");
+            // 【ADR-024】服务拉起只信 Identity：node.exe × DshEntryJsPath 直启（Manager 契约），
+            // 不再有 wscript/vbs/cmd 中间层。外部托管（ServerManagedExternally）永不进入此分支。
             var startOk = await Task.Run(() =>
             {
                 SweepStaleAndApplyUpdate?.Invoke(); // 僵尸清扫 + 延迟更新（IO，后台）
-                return StartService is null || StartService(); // 未注入（Headless）视为成功
+                return _service.Start(identity, Port, _serviceLogPath);
             }, ct);
             if (!startOk)
             {
                 LastErrorCode = ErrorCodes.E2001;
-                LastErrorDetail = $"未找到 start-dsh.vbs，无法自动拉起 dsh 服务（{Url}）。";
-                Logger.Error(LastErrorDetail, LastErrorCode);
+                LastErrorDetail = identity.CanLaunchDirectly
+                    ? $"dsh 服务启动失败（{Url}）。请查看统一日志。"
+                    : $"未找到可用的 dsh 运行时身份（node/JS 入口缺失），无法自动拉起 dsh 服务（{Url}）。";
+                Logger.Error(LastErrorDetail, LastErrorCode,
+                    new { source = identity.Source.ToString(), entry = identity.DshEntryJsPath });
                 _lifecycle.Fire(LifecycleTrigger.Fatal); // StartingService + Fatal → Failed
                 return false;
             }

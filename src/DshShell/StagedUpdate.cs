@@ -161,6 +161,46 @@ public static class StagedUpdate
     public static string? StagingDir =>
         _pendingPath.Length > 0 ? Path.Combine(Path.GetDirectoryName(_pendingPath)!, "staging") : null;
 
+    // ==================== 用户跳过的版本（自 Program 迁出，ADR-024） ====================
+
+    /// <summary>用户拒绝过的 dsh 版本记录路径（DataDir\skipped-update.json）。</summary>
+    private static string? SkippedUpdatePath =>
+        _pendingPath.Length > 0 ? Path.Combine(Path.GetDirectoryName(_pendingPath)!, "skipped-update.json") : null;
+
+    /// <summary>记录用户跳过的 dsh 版本（下次启动不再提示，除非出现更新版本）。原子写。</summary>
+    public static void MarkSkippedDshVersion(string version)
+    {
+        var path = SkippedUpdatePath;
+        if (path is null || string.IsNullOrWhiteSpace(version)) return;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            ShellLogic.FileSystemPolicy.AtomicWrite(path, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                version,
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            }));
+            Logger.Info($"user skipped dsh update {version}; won't re-prompt until a newer version appears");
+        }
+        catch { /* 记录失败：下次启动可能再提示（可接受） */ }
+    }
+
+    /// <summary>读取用户跳过的 dsh 版本；无记录/损坏返回 null。</summary>
+    public static string? ReadSkippedDshVersion()
+    {
+        var path = SkippedUpdatePath;
+        if (path is null || !File.Exists(path)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            return doc.RootElement.TryGetProperty("version", out var v)
+                && v.ValueKind == JsonValueKind.String
+                ? v.GetString()
+                : null;
+        }
+        catch { return null; }
+    }
+
     /// <summary>后台依赖预热临时目录（任务一：prefetch_temp）——预热在 staging 下进行，应用成功后整体清理。</summary>
     public static string? PrefetchTempDir =>
         StagingDir is null ? null : Path.Combine(StagingDir, "prefetch_temp");

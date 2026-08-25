@@ -760,27 +760,43 @@ public static class ShellLogic
     /// dsh 服务启动参数拼装（纯函数，契约测试锁定）。
     /// [2026-08 用户回归修复] SelfContained node.exe 直启路径此前漏传 --no-open：
     /// dsh web 默认 ShellExecute 打开系统浏览器，壳自管 WebView2 窗口并不需要；
-    /// start-dsh.vbs 三条路径均显式带 --no-open，唯独该分支遗漏 → 安装 SelfContained
-    /// 运行时后每次冷启动都会弹出浏览器窗口。统一在此拼装保证两条路径一致。
+    /// 统一在此拼装保证所有路径一致。
     /// </summary>
     public static class ServiceLaunch
     {
         /// <summary>
-        /// 构造 node.exe 直启 dsh 的完整参数串。
-        /// <paramref name="safeProfileName"/> 非 null 时走根级 --profile（安全模式 ADR-022，
-        /// web 子命令与 --profile 互斥）；null 时为常规 web 子命令。两分支均含 --no-open。
+        /// 【ADR-024 唯一入口】按身份构造 node.exe 直启 dsh 的完整参数串（不含 node 本身）：
+        /// `"{entryJs}"` + （ProfilePath 为 null → `web` 子命令；非 null → 根级
+        /// `--profile &lt;目录名&gt;`，web 与 --profile 互斥，ADR-022 安全模式）
+        /// + `--host 127.0.0.1 --port {port} --no-open`。
+        /// profile 参数只取目录名：dsh `--profile` 仅收 name、无分隔符
+        /// （SafeProfileBuilder.SafeProfileName 契约）；完整物理路径由 Identity.ProfilePath 携带，
+        /// 供 Outcome 测试断言"目录物理存在"。
         /// </summary>
+        public static string BuildArgs(Domain.DshRuntimeIdentity identity, int port)
+        {
+            var entry = $"\"{identity.DshEntryJsPath}\"";
+            var bootMode = identity.ProfilePath is null
+                ? "web"
+                : "--profile " + Path.GetFileName(identity.ProfilePath.TrimEnd('\\', '/'));
+            return $"{entry} {bootMode} --host 127.0.0.1 --port {port} --no-open";
+        }
+
+        /// <summary>旧签名兼容转发（binJs + 显式安全 profile 名）——语义等价于 BuildArgs。</summary>
         public static string BuildSelfContainedArgs(string binJs, int port, string? safeProfileName)
-            => safeProfileName is null
-                ? $"\"{binJs}\" web --host 127.0.0.1 --port {port} --no-open"
-                : $"\"{binJs}\" " + string.Join(" ",
-                      Domain.SafeProfileBuilder.BuildSafeProfileArguments(safeProfileName, port))
-                  + " --no-open";
+        {
+            var bootMode = safeProfileName is null ? "web" : "--profile " + safeProfileName;
+            return $"\"{binJs}\" {bootMode} --host 127.0.0.1 --port {port} --no-open";
+        }
     }
 
     /// <summary>运行时配置解析：目标地址端口、生命周期模式、WebView2 版本。</summary>
     public static class RuntimeConfig
     {
+        /// <summary>沙盒模式标志（纯环境读取，供 Manager/引擎层门控机器级副作用）：
+        /// DSH_SANDBOX=1 时禁用自启/数据清理/首装真实网络安装等副作用。</summary>
+        internal static bool IsSandboxMode =>
+            string.Equals(Environment.GetEnvironmentVariable("DSH_SANDBOX"), "1", StringComparison.OrdinalIgnoreCase);
         /// <summary>
         /// 解析目标服务地址与端口。空值/非法值/非 http(s) 一律回退默认 3080。
         /// 供 DSH_WEB_URL / DSH_WEB_PORT 环境变量覆盖目标地址/端口（免重建）时使用。

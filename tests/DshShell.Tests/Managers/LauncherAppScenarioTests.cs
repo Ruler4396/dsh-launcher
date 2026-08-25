@@ -14,34 +14,11 @@ namespace DshShell.Tests.Managers;
 ///   4. WebView2 Crash Recovery：崩溃事件 → 状态机自转移保持 Running（拦截并触发重载，不崩溃）。
 /// 全部确定性、毫秒级；断言状态机最终态 + 状态轨迹 + 副作用回调（staleCleanup）。
 /// </summary>
-public class LauncherAppScenarioTests
+[Collection("EnvHygiene")]
+    public class LauncherAppScenarioTests
 {
-    // ---------------- Fakes（与现有 LauncherAppTests 同风格，零 Mock 依赖） ----------------
-
-    private sealed class FakeRuntime : IRuntimeManager
-    {
-        public RuntimeResult Result { get; init; } = RuntimeResult.ReadyNow("node.exe");
-        public Exception? ThrowOnEnsure { get; init; }
-        public Task<RuntimeResult> EnsureRuntimeAsync(CancellationToken ct = default)
-        {
-            if (ThrowOnEnsure is not null) throw ThrowOnEnsure;
-            return Task.FromResult(Result);
-        }
-        public void PrependToPath(string nodeRoot) { }
-    }
-
-    private sealed class FakeService : IServiceManager
-    {
-        public bool Ready { get; init; }
-        public ShellLogic.ServicePortState PortState { get; init; } = ShellLogic.ServicePortState.Healthy;
-        public bool KillZombieResult { get; init; } = true;
-        public int KillZombieCalls { get; private set; }
-        public bool NeedsStart(int port) => false; // 就绪路径（端口已开）
-        public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
-            => Task.FromResult(Ready);
-        public ShellLogic.ServicePortState ProbePort(int port, string url) => PortState;
-        public bool KillZombieTree(int port) { KillZombieCalls++; return KillZombieResult; }
-    }
+    public LauncherAppScenarioTests() => EnvHygiene.ClearHostileEnv();
+    // ---------------- Fakes：共享 TestFakes（ADR-024 Identity 契约单一来源） ----------------
 
     /// <summary>订阅 StateChanged，返回状态轨迹（含最终 Running/初始化事件时序）。</summary>
     private static List<LifecycleState> Trace(LauncherApp app)
@@ -77,13 +54,13 @@ public class LauncherAppScenarioTests
     [Fact]
     public async Task RuntimeFailure_E1004_TransitionsToFailed_AndCodePreserved()
     {
-        var runtime = new FakeRuntime { Result = RuntimeResult.Failed(ErrorCodes.E1004, "sha256 mismatch") };
+        var runtime = new FakeRuntime { Result = RuntimeResolution.Failed(ErrorCodes.E1004, "sha256 mismatch") };
         var app = new LauncherApp(runtime, new FakeService { Ready = true });
 
         Assert.False(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Failed, app.State); // RuntimeFailed → Failed（非 ShuttingDown，见审查报告）
 
-        // 错误码不再被丢弃：RuntimeResult 承载 E1004（此前 Failed() 工厂丢码，组合根无法区分
+        // 错误码不再被丢弃：RuntimeResolution 承载 E1004（此前 Failed() 工厂丢码，组合根无法区分
         // "下载失败 E1003"与"校验和不匹配 E1004"——修复见 ManagerInterfaces 注释）。
         Assert.Equal(ErrorCodes.E1004, runtime.Result.ErrorCode);
     }
@@ -115,36 +92,29 @@ public class LauncherAppScenarioTests
     [Fact]
     public async Task ZombiePort_KillSucceeds_StartServiceInvoked_ThenReadiness()
     {
-        var startCalls = 0;
         var service = new FakeService { PortState = ShellLogic.ServicePortState.Zombie, Ready = true };
-        var app = new LauncherApp(new FakeRuntime(), service)
-        {
-            StartService = () => { startCalls++; return true; },
-        };
+        var app = new LauncherApp(new FakeRuntime(), service);
         var states = Trace(app);
 
         Assert.True(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Running, app.State);
-        // 僵尸清理被触发一次；随后重新拉起服务（start-dsh.vbs 语义）
+        // 僵尸清理被触发一次；随后按 Identity 直启服务（ServiceManager.Start(identity)，ADR-024）
         Assert.Equal(1, service.KillZombieCalls);
-        Assert.Equal(1, startCalls);
+        Assert.Equal(1, service.StartCalls);
+        Assert.NotNull(service.LastStartArgs);
         Assert.Contains(LifecycleState.StartingService, states);
     }
 
     [Fact]
     public async Task ZombiePort_KillFails_TransitionsToFailed_WithE2004_NotTimedOut()
     {
-        var startCalls = 0;
         var service = new FakeService { PortState = ShellLogic.ServicePortState.Zombie, KillZombieResult = false };
-        var app = new LauncherApp(new FakeRuntime(), service)
-        {
-            StartService = () => { startCalls++; return true; },
-        };
+        var app = new LauncherApp(new FakeRuntime(), service);
 
         Assert.False(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Failed, app.State); // 清理失败 → 快速失败，不进入 180s 傻等
         Assert.Equal(ErrorCodes.E2004, app.LastErrorCode);
-        Assert.Equal(0, startCalls); // 清理失败绝不拉起
+        Assert.Equal(0, service.StartCalls); // 清理失败绝不拉起
         Assert.Equal(1, service.KillZombieCalls);
     }
 

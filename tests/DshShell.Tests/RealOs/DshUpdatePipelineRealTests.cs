@@ -1,5 +1,6 @@
 using DshWeb;
 using DshWeb.Domain;
+using DshWeb.Managers;
 using Xunit;
 
 namespace DshShell.Tests.RealOs;
@@ -7,7 +8,7 @@ namespace DshShell.Tests.RealOs;
 /// <summary>
 /// dsh 更新引擎 RealOS 全链路（零 Mock，真实 npm 与镜像网络）：
 /// 真实拉取最新版本 → npm pack 下载 tarball → 双路径构建完整运行时 → bin 入口校验
-/// → MarkPending → 生产 <see cref="Program.ApplyPendingDshUpdate"/>（SelfContained 原子切换路径 A）
+/// → MarkPending → 生产 <see cref="DshUpdateManager.ApplyPending"/>（SelfContained 原子切换路径 A）
 /// → 应用后运行时以 node 真实执行并校验版本号。
 /// 门禁约定：DSH_FORCE_REALNET=1（scripts/test.ps1 -RealNet）时无 Node 即硬失败；
 /// 未设置则跳过——CI（build 与 realos 工作流）默认均不触发，防发布流水线被镜像网络劫持。
@@ -133,7 +134,7 @@ public class DshUpdatePipelineRealTests
             // 升级前：发现器必须选中旧版（证明"旧版本在位且可用"这一前提成立）
             var before = DshDiscovery.DiscoverCurrentRuntime();
             Assert.Equal(DshSource.SelfContained, before.Source);
-            Assert.Equal(oldVer, before.InstalledVersion);
+            Assert.Equal(oldVer, before.Version);
 
             // ---- ② 构建最新版运行时 → pending → 生产应用 ----
             // 同样走 tarball 直铺（上游真实产物、秒级）：本用例专测"跨版本切换与升级后可用性"；
@@ -146,7 +147,7 @@ public class DshUpdatePipelineRealTests
 
             StagedUpdate.MarkPending(newVer!, $"deepseek-ai-dsh-{newVer}.tgz",
                 prefetched: true, runtimeDir: newDir);
-            Program.ApplyPendingDshUpdate();
+            new DshUpdateManager(dataDir).ApplyPending();
 
             // ---- ③ 升级后断言：身份切到新版 / 旧版保留 / bin 可执行 ----
             var appliedDir = System.IO.Path.Combine(runtimes, newVer!);
@@ -156,7 +157,7 @@ public class DshUpdatePipelineRealTests
 
             var after = DshDiscovery.DiscoverCurrentRuntime();
             Assert.Equal(DshSource.SelfContained, after.Source);
-            Assert.Equal(newVer, after.InstalledVersion);
+            Assert.Equal(newVer, after.Version);
             Assert.Equal(appliedDir, after.RuntimeDir);
 
             var binJs = System.IO.Path.Combine(
@@ -330,9 +331,9 @@ public class DshUpdatePipelineRealTests
             Directory.CreateDirectory(buildDir);
             var tarballName = $"deepseek-ai-dsh-{version}.tgz";
             var tarballPath = System.IO.Path.Combine(buildDir, tarballName);
-            var sources = Program.GetNpmRegistrySources();
+            var sources = ProcessRunner.GetNpmRegistrySources();
             string packTail = "";
-            var packed = Program.TryNpmOverRegistries(sources, i => Program.RunNpmCommand(
+            var packed = ProcessRunner.TryNpmOverRegistries(sources, i => ProcessRunner.RunNpmCommand(
                 $"pack @deepseek-ai/dsh@{version} --pack-destination \"" + buildDir + "\"" + sources[i],
                 out packTail), "realos-pack", out var packIdx);
             Assert.True(packed && File.Exists(tarballPath),
@@ -355,7 +356,7 @@ public class DshUpdatePipelineRealTests
             Assert.Equal(version, pend.Version);
             Assert.Equal(tarballName, pend.Tarball);
 
-            Program.ApplyPendingDshUpdate();
+            new DshUpdateManager(dataDir).ApplyPending();
 
             var appliedDir = System.IO.Path.Combine(dataDir, "runtimes", version!);
             Assert.True(Directory.Exists(appliedDir), $"应用后运行时目录缺失: {appliedDir}");

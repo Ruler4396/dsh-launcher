@@ -1,5 +1,6 @@
 using DshWeb;
 using DshWeb.Domain;
+using DshShell.Tests.Managers;
 using Xunit;
 
 namespace DshShell.Tests.Outcomes;
@@ -15,8 +16,10 @@ namespace DshShell.Tests.Outcomes;
 /// ShellLogic.NpmHelpers 四个模块——但用户不在乎这些，
 /// 用户只在乎"更新后版本变了"或"更新失败后还能用"。
 /// </summary>
-public class UpdateOutcomes
+[Collection("EnvHygiene")]
+    public class UpdateOutcomes
 {
+    public UpdateOutcomes() => EnvHygiene.ClearHostileEnv();
     // ---- Outcome 1: 更新改变实际运行版本 ----
 
     /// <summary>
@@ -40,8 +43,9 @@ public class UpdateOutcomes
             var identity = DshDiscovery.DiscoverCurrentRuntime();
 
             // Then: InstalledVersion 必须返回 DSH_VERSION 的值
-            Assert.Equal("0.1.0-rc.7", identity.InstalledVersion);
-            Assert.Equal(DshDiscovery.PackageName, identity.PackageName);
+            Assert.Equal("0.1.0-rc.7", identity.Version);
+            // 【ADR-024】身份不再携带裸包名（铁律：跨模块零散装包名）——改为锁定版本非空
+            Assert.False(string.IsNullOrWhiteSpace(identity.Version));
             Assert.NotEqual(DshSource.External, identity.Source); // 不是 External
         }
         finally
@@ -152,7 +156,7 @@ public class UpdateOutcomes
     // ---- L3 Outcome: 更新改变实际运行 Identity ----
 
     /// <summary>
-    /// 【L3 Outcome — 核心】更新事务完成后，DiscoverCurrentRuntime().InstalledVersion 必须等于目标版本。
+    /// 【L3 Outcome — 核心】更新事务完成后，DiscoverCurrentRuntime().Version 必须等于目标版本。
     ///
     /// 这是整个更新因果链的终极验证。不关心内部调用了哪个函数，
     /// 只关心一个物理证据：Identity 是否真的改变了。
@@ -162,9 +166,9 @@ public class UpdateOutcomes
     /// 场景：npm install -g 成功安装了全局包，但 start-dsh.vbs 用的是 npx 缓存。
     ///
     /// 【因果链验证】：
-    ///   Given: Identity.InstalledVersion = "0.1.0-rc.6"（旧版本）
+    ///   Given: Identity.Version = "0.1.0-rc.6"（旧版本）
     ///   When:  模拟更新事务（StagedUpdate.MarkPending → 模拟 npm install 成功）
-    ///   Then:  DiscoverCurrentRuntime().InstalledVersion 必须 == "0.1.0-rc.7"
+    ///   Then:  DiscoverCurrentRuntime().Version 必须 == "0.1.0-rc.7"
     ///          如果仍 == "0.1.0-rc.6"，则为 False Positive，测试必须拦截。
     /// </summary>
     [Fact]
@@ -181,7 +185,7 @@ public class UpdateOutcomes
 
             // 证据 1: 确认当前 Identity 确实是旧版本
             var beforeIdentity = DshDiscovery.DiscoverCurrentRuntime();
-            Assert.Equal("0.1.0-rc.6", beforeIdentity.InstalledVersion);
+            Assert.Equal("0.1.0-rc.6", beforeIdentity.Version);
 
             // === Phase 2: When — 模拟更新事务 ===
             // 2a: 模拟 pending 更新（StagedUpdate 记录目标版本）
@@ -208,10 +212,10 @@ public class UpdateOutcomes
             var afterIdentity = DshDiscovery.DiscoverCurrentRuntime();
 
             // 核心断言：InstalledVersion 必须等于目标版本
-            Assert.Equal("0.1.0-rc.7", afterIdentity.InstalledVersion);
+            Assert.Equal("0.1.0-rc.7", afterIdentity.Version);
 
             // 核心断言：版本确实发生了变化
-            Assert.NotEqual(beforeIdentity.InstalledVersion, afterIdentity.InstalledVersion);
+            Assert.NotEqual(beforeIdentity.Version, afterIdentity.Version);
 
             // 证据 4: pending 已被清理
             var (afterPending, _, _, _, _) = StagedUpdate.ReadPending();
@@ -219,7 +223,7 @@ public class UpdateOutcomes
 
             // 证据 5: 版本比较确认"不需要再次更新"
             Assert.False(
-                UpdateChecker.CompareVersions("0.1.0-rc.7", afterIdentity.InstalledVersion) > 0,
+                UpdateChecker.CompareVersions("0.1.0-rc.7", afterIdentity.Version) > 0,
                 "更新后再次检测不应认为有新版本（防 FP6 重复提示）");
         }
         finally
@@ -237,7 +241,7 @@ public class UpdateOutcomes
     /// （真实环境中：安装了全局包但实际运行的是 npx 缓存）。
     ///
     /// 【因果链验证】：
-    ///   Given: Identity.InstalledVersion = "0.1.0-rc.6"
+    ///   Given: Identity.Version = "0.1.0-rc.6"
     ///   When:  模拟 npm "成功"（RunNpmCommand 返回 true），但不改变 DSH_VERSION
     ///   Then:  验证 Identity 仍为 "0.1.0-rc.6"
     ///          这证明 npm exit 0 ≠ Identity 变化（I2 不变量）
@@ -254,7 +258,7 @@ public class UpdateOutcomes
             Environment.SetEnvironmentVariable("DSH_VERSION", "0.1.0-rc.6");
 
             var beforeIdentity = DshDiscovery.DiscoverCurrentRuntime();
-            Assert.Equal("0.1.0-rc.6", beforeIdentity.InstalledVersion);
+            Assert.Equal("0.1.0-rc.6", beforeIdentity.Version);
 
             // === When: 模拟 npm "成功"但不改变 Identity ===
             // 这模拟了 FP1：npm install -g 返回 0，但 Identity 未变
@@ -268,12 +272,12 @@ public class UpdateOutcomes
             var afterIdentity = DshDiscovery.DiscoverCurrentRuntime();
 
             // 关键断言：Identity 未变
-            Assert.Equal("0.1.0-rc.6", afterIdentity.InstalledVersion);
+            Assert.Equal("0.1.0-rc.6", afterIdentity.Version);
 
             // 关键断言：npm "成功"但 Identity 未变 → 这是 False Positive
             // 正确的系统行为应该是：不调用 ClearPending，保留 pending 重试
             Assert.True(npmSucceeded, "npm 确实返回了成功");
-            Assert.Equal(beforeIdentity.InstalledVersion, afterIdentity.InstalledVersion);
+            Assert.Equal(beforeIdentity.Version, afterIdentity.Version);
 
             // 证明 I2 不变量：npm exit 0 ≠ 更新成功
             // 系统必须以 Identity 变化为准，而非 npm exit code
@@ -310,11 +314,11 @@ public class UpdateOutcomes
             var verifiedIdentity = DshDiscovery.DiscoverCurrentRuntime();
 
             // 核心断言：两者必须一致（同一个 Identity）
-            Assert.Equal(detectedVersion, verifiedIdentity.InstalledVersion);
+            Assert.Equal(detectedVersion, verifiedIdentity.Version);
 
             // 证明：检测和验证使用同一个发现机制
             Assert.Equal("0.1.0-rc.7", detectedVersion);
-            Assert.Equal("0.1.0-rc.7", verifiedIdentity.InstalledVersion);
+            Assert.Equal("0.1.0-rc.7", verifiedIdentity.Version);
         }
         finally
         {
