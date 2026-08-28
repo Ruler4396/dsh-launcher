@@ -40,8 +40,9 @@
 |---|---|---|---|
 | ~~`DshDiscovery.CompareVersions` Theory（rc.10>rc.9 等）~~ | F1 | L1 | ✅ 批次 1（`ShellLogicVersionPolicyContractTests` 24 例） |
 | 就绪轮询日志判定（陈旧标志不污染/新增标志宽限后判死）+ 时间注入 | F2/F26 | L2+L3 | ✅ 批次 2（`PollReadinessTests` ×6，虚拟时钟毫秒级） |
-| golden 样本：StartupErrorMarkers / IsShellAuthoredLogEntry | F31（部分） | L3 | ✅ 批次 2（`GoldenDshLogTests` ×6）；其余解析器批次 6 补齐 |
-| dsh 输出解析器 golden 其余（MatchBootErrorSignature / EvaluatePageProbe / ProbeVersionOutput） | F31 | L3 | ⏳ 批次 6 |
+| ~~golden 样本：StartupErrorMarkers / IsShellAuthoredLogEntry~~ | F31（部分） | L3 | ✅ 批次 2（`GoldenDshLogTests` ×6） |
+| ~~golden 样本其余：MatchBootErrorSignature / EvaluatePageProbe / ProbeVersionOutput~~ | F31 | L3 | ✅ 批次 3+6（`VersionProbeContractTests` ×2 golden + `GoldenBootGuardTests` ×7，样本共 10 份） |
+| F6 运行期签名匹配限定服务管道行 + F5 渲染豁免契约漂移遥测 | F5/F6 | L3 | ✅ 批次 6（`GoldenBootGuardTests.PipedLine_*` + Rendered 遥测断言） |
 | "用户自己的 node 监听 3080 不被 Zombie 误杀" | F4 | L3 | ⏳ 批次 5 |
 | ~~双实例并发启动（mutex/E1009）~~ | F21 | L1/L3 | ⏳ 批次 5 |
 | 会话生命周期汇入状态机（RequestShutdown/WebViewCrashed/关机不拦截） | F13/F14/F15 | L1/L2 | ✅ 批次 4（LauncherLifecycleTests ×2 + LauncherAppScenarioTests ×3 + ShellLogicTests Theory ×5） |

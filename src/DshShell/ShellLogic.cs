@@ -594,6 +594,15 @@ public static class ShellLogic
         };
 
         /// <summary>
+        /// [F6] 行是否为壳管道转发的服务原始输出（PipeServiceOutputToUnifiedLog 统一加的
+        /// "[HH:mm:ss.fff] [dsh] " 前缀，ADR-024 后服务输出必经该管道）。日志层签名匹配
+        /// 只认服务行——统一日志混排的壳 JSON 行、诊断文案（内嵌 npm ERR 等）一律不参与
+        /// 判死。与 IsShellAuthoredLogEntry 互为纵深（JSON 行理论上可内嵌该字面量）。
+        /// </summary>
+        internal static bool IsServicePipedLogLine(string line)
+            => !string.IsNullOrEmpty(line) && line.Contains("] [dsh] ", StringComparison.Ordinal);
+
+        /// <summary>
         /// 日志层证据是否携带插件归因签名（纯函数，契约测试锁定）。
         /// 2026-08-25 事故：插件把 node 服务进程搞崩（exit=1），页面层从未渲染、无任何
         /// 前端证据；唯一能证明"是插件"的文本证据是服务 stderr 里的加载失败堆栈——但
