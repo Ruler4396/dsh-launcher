@@ -155,12 +155,13 @@ public sealed class ServiceManager : IServiceManager
         return "timeout";
     }
 
-    /// <summary>本轮新增内容是否命中启动错误标志（逐行；跳过壳自写行——F2：壳的 E1012 等错误
-    /// 文案内嵌 npm tail，整文件/整段匹配会误伤）。任何单行读取失败按无标志处理。</summary>
+    /// <summary>本轮新增内容是否命中启动错误标志（逐行；只认壳管道转发的服务行 +
+    /// 跳过壳自写行——F2/F6：壳的 E1012 等错误文案内嵌 npm tail，任何整段匹配都会误伤）。</summary>
     private static bool ShowsStartupErrorIncrement(string content)
         => content.Split('\n')
             .Select(l => l.TrimEnd('\r'))
             .Any(l => l.Length > 0
+                      && ShellLogic.BootGuard.IsServicePipedLogLine(l)
                       && !ShellLogic.BootGuard.IsShellAuthoredLogEntry(l)
                       && ShellLogic.ServiceReadiness.LogShowsStartupError(l));
 

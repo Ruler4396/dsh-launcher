@@ -1,0 +1,4 @@
+[12:00:01.000] [dsh] node:internal/modules/cjs/loader:1145
+[12:00:01.001] [dsh] Cannot find module '@third-party/awesome-plugin/ui'
+[12:00:01.002] [dsh] Require stack: /home/x/.dsh/profiles/web/node_modules/@third-party/awesome-plugin/index.js
+[12:00:01.003] [dsh] code: 'MODULE_NOT_FOUND'

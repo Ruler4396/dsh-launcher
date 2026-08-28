@@ -257,6 +257,9 @@ public sealed class BootHealthMonitor : IDisposable
                             // 壳自写条目（E#### 契约）不参与判定：壳的事件已由原生路径处理，
                             // 日志层只判定服务输出（防跨层重复触发，S22 实测教训）
                             if (ShellLogic.BootGuard.IsShellAuthoredLogEntry(trimmed)) continue;
+                            // [F6] 签名匹配只认壳管道转发的服务行（"[dsh] " 前缀）——统一日志
+                            // 混排的壳诊断文案（E1012 内嵌 npm ERR 等）不得误触发判死。
+                            if (!ShellLogic.BootGuard.IsServicePipedLogLine(trimmed)) continue;
                             if (ShellLogic.BootGuard.MatchBootErrorSignature(trimmed, _profile) is { } marker)
                             {
                                 Report(BootLayer.Log, $"服务日志命中启动错误签名「{marker}」",
@@ -380,7 +383,12 @@ public sealed class BootHealthMonitor : IDisposable
                     return;
                 case ShellLogic.BootGuard.PageProbeKind.Rendered:
                     // [E2008 误报根治] 页面已渲染出 dsh 自身界面（boot 链未完成，如未配置 API key 的
-                    // 欢迎/配置界面）→ 视同健康，停止探针，不判 E2008。
+                    // 欢迎/配置界面）→ Rendered → Healthy，探针停止，不判 E2008。
+                    // [F5] 契约漂移遥测：好符号自始至终未命中、仅靠渲染豁免判健康——dsh 改版
+                    // 导致 GoodSymbol 失效（如 __DSH_BOOT__/__ModuleLoader__ 更名）时，这是
+                    // 统一日志中唯一可发现的信号（Fail-open 的代价必须可见）。
+                    Logger.Warn("[boot-monitor] good symbol never matched; healthy via rendered exemption only (possible dsh boot contract drift)");
+                    _trace("HEALTHY via rendered-exemption: good symbol never matched (contract drift telemetry)");
                     MarkHealthy("页面探针确认已渲染（dsh 自带流程/配置等待界面；boot 链未完成不判死）");
                     return;
                 case ShellLogic.BootGuard.PageProbeKind.BadSignature:

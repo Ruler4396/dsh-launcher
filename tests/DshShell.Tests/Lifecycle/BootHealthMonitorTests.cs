@@ -118,7 +118,7 @@ public class BootHealthMonitorTests
             var failedTask = WaitFailedAsync(m);
             m.Start();
             await Task.Delay(120);
-            await File.AppendAllTextAsync(log, "[plugin] plugin load failed: Cannot find module 'dsh-notification'\n");
+            await File.AppendAllTextAsync(log, "[12:00:01.000] [dsh] plugin load failed: Cannot find module 'dsh-notification'\n"); // [F6] 夹具须为壳管道行（"[dsh] " 前缀）
             var verdict = await failedTask;
             Assert.Equal("E2003", verdict.ErrorCode);
             Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Log
@@ -267,12 +267,13 @@ public class BootHealthMonitorTests
         // [E2008 误报根治] 页面已渲染出 dsh 自身界面（good=false，boot 链未完成，如未配置 API key 的
         // 欢迎/配置界面）→ Rendered → Healthy，探针停止，绝不 E2008 弹窗。
         var calls = 0;
+        var traces = new List<string>();
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1", _ =>
         {
             calls++;
             return Task.FromResult(
                 "{\"good\":false,\"text\":\"欢迎使用 DeepSeek Harness —— 请先配置你的模型提供方 API Key 后即可开始使用。设置入口在右上角齿轮图标，也可以从这里打开帮助文档与示例。\",\"err\":\"\"}");
-        });
+        }, trace: t => traces.Add(t));
         var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         m.HealthyDetected += () => healthy.TrySetResult();
         var failedFired = new TaskCompletionSource();
@@ -285,6 +286,8 @@ public class BootHealthMonitorTests
         var callsAtHealthy = Volatile.Read(ref calls);
         await Task.Delay(150);
         Assert.Equal(callsAtHealthy, Volatile.Read(ref calls)); // Healthy 后探针停止
+        // [F5] 契约漂移遥测：渲染豁免判健康时必须留下"好符号从未命中"的可发现信号
+        Assert.Contains(traces, t => t.Contains("rendered-exemption"));
     }
 
     [Fact]
