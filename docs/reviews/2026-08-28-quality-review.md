@@ -492,3 +492,26 @@ dsh 交互面整体设计成熟：发现/启动/更新收敛到 `DshRuntimeIdent
 | P0 | 0 | 无阻断/崩溃类缺陷 |
 
 **建议整改提交序列**（待指令后执行）：① F1（比较器统一，纯函数级）；② F2+F26（同函数：增量日志 + delay 注入 + golden 样本）；③ F13+F14+F15（会话状态机三连）；④ F4/F5/F6/F7/F16/F21/F31（防护面）；⑤ P3 清理批（F8/F9/F22/F24/F30 死代码与归因性 Warn）。每批独立可回滚。
+
+---
+
+# 执行记录（2026-08-28 整改落地）
+
+分支 `remediation/quality-2026-08`（基点 225c90a6）。每批一个独立可 revert 的提交；全部通过 `scripts/test.ps1`（dotnet test Release + 静态断言 + 环境卫生）与批次 4/8 的 ui-selftest（0px 间隙）。批次 8 后单测规模 **718/718 全绿**（含全部新增契约/回归测试）。
+
+| 批次 | Commit | 内容 | 新增测试 |
+|---|---|---|---|
+| 基线 | fb45d3f0 | 落盘审查时工作区既有 WIP（分支起点固化） | — |
+| 留档 | 6d238505 | 审查文档 + 两份活文档 | — |
+| 1 | ffe7b745 | **F1**（+F10）版本比较器统一：ShellLogic.VersionPolicy 唯一实现，双消费方委托 | ShellLogicVersionPolicyContractTests ×22 |
+| 2 | 1ce3bf62 | **F2+F26** PollReadiness 增量日志扫描 + 虚拟时钟注入；golden 基建首批 | PollReadinessTests ×6 + GoldenDshLogTests ×6 |
+| 3 | 2a79c419 | **F3** 版本探测取首个版本形态行（宽松 SemVer 前缀，无松散 token 搜索） | VersionProbeContractTests ×13 + golden ×2 |
+| 4 | e6cadd27 | **F13/F14/F15** SessionApp/SessionCts 接线：关停汇入状态机、三组后台流共享取消、CloseReason.WindowsShutDown 不拦截 | LauncherLifecycleTests ×2 + LauncherAppScenarioTests ×3 + ShellLogicTests Theory ×5；ui-selftest ✅ |
+| 5 | 9c11a136 | **F4**（账本优先+未知不杀）+ **F16**（IsPluginCrashMessage 纯函数）+ **F21**（SingleInstanceMutexName 纯函数） | ServiceIdentityGuardTests ×16 |
+| 6 | 92c8177b | **F31** golden 全量（样本共 10 份）+ **F5** 渲染豁免契约漂移遥测 + **F6** 运行期签名限定 `[dsh]` 管道行 | GoldenBootGuardTests ×7 |
+| 7 | 96a53b1b | **F7** update-guard 顶层小文件（yaml/yml/json ≤1MB）兜底快照与还原 | UpdateDataGuardOutcomes +2 |
+| 8 | 78ef4b3e | **8a-8j**：F8/F9/F22/F24/F17/F18/F19/F20/F23 清理 + AGENTS.md 与 ADR-021 对齐 | 全量回归 718 绿 |
+
+**明确未执行（待人工确认）**：F11（DSH_WEB_URL query 语义）、F12（dsh 是否读 DSH_PORT/DSH_LOG）、F15 的真实 OS 关机演练、F25（tarball 完整性校验）、F28/F29（网络/注册表注入点，当前 RealOS 兜底充分）、F32（V030FeaturesTests 拆分与 E2E/Outcome 重复度取舍）。
+
+**合并回 master 由仓库维护者决定**；revert 任一批次提交即独立回滚该批整改。
