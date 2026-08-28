@@ -19,6 +19,7 @@ public class BootGuardContractTests
         Assert.True(p.GraceMs > 0, "grace 必须为正（慢启动不误报的第一道闸）");
         Assert.True(p.ProbeIntervalMs > 0);
         Assert.True(p.AbsentThreshold >= 2, "缺席阈值必须 ≥2（单次缺席绝不判死）");
+        Assert.True(p.RenderedMinTextChars > 0, "渲染豁免阈值必须 >0（0 会让空白页也被豁免，等于废掉缺席计票）");
         Assert.NotEmpty(p.BadSignatures);
         // 双版本兼容好符号（2026-08 用户实测回归）：
         // - dsh ≤ 0.1.0-rc.7 在页面注入 window.__DSH_BOOT__ = { version: ... }；
@@ -57,6 +58,7 @@ public class BootGuardContractTests
               "grace_ms": 1500,
               "probe_interval_ms": 250,
               "absent_threshold": 4,
+              "rendered_min_text_chars": 120,
               "log_error_signatures": ["FAKE-LOG-SIG"]
             }
             """;
@@ -66,6 +68,7 @@ public class BootGuardContractTests
         Assert.Equal(1500, p.GraceMs);
         Assert.Equal(250, p.ProbeIntervalMs);
         Assert.Equal(4, p.AbsentThreshold);
+        Assert.Equal(120, p.RenderedMinTextChars);
         Assert.Equal(new[] { "FAKE-LOG-SIG" }, p.ExtraLogSignatures);
         // 沙盒注入假签名的核心诉求：探针脚本必须携带覆盖后的表达式与坏签名求值路径
         Assert.Contains("__MY_BOOT__", p.BuildProbeScript());
@@ -192,6 +195,74 @@ public class BootGuardContractTests
     {
         var r = Evaluate(ProbeJson(false, "DeepSeek Harness (loading)", ""));
         Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
+    }
+
+    // ---------------- 渲染豁免（[E2008 误报根治]：dsh 自带配置/欢迎界面不算 failed） ----------------
+
+    [Fact]
+    public void EvaluatePageProbe_RenderedRichText_NoBadSignature_ReturnsRendered()
+    {
+        // 未配置 API key 等场景：页面已渲染出 dsh 自己的界面（good=false，boot 链未完成），
+        // 但 innerText 达到渲染阈值且无坏签名 → Rendered（视同健康，不再误判 E2008）。
+        var r = Evaluate(ProbeJson(false,
+            "欢迎使用 DeepSeek Harness —— 请先配置你的模型提供方 API Key 以开始使用，设置入口在右上角齿轮。", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Rendered, r.Kind);
+        Assert.NotNull(r.Detail);
+        Assert.StartsWith("rendered=", r.Detail);
+        Assert.Contains("API Key", r.Detail); // 证据携带 text 摘录，便于排障
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_BelowRenderedThreshold_StillAbsent()
+    {
+        // 空白/纯加载页（innerText < RenderedMinTextChars=60）仍走缺席计票：慢启动/白屏保护不削弱。
+        var r = Evaluate(ProbeJson(false, "Loading...", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
+        Assert.DoesNotContain("rendered=", r.Detail ?? "");
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_DomBadSignature_BeatsRendered()
+    {
+        // 坏签名优先级高于渲染豁免：真崩溃错误 UI 即使文本很长也必须计票（dom-suspect），不能被豁免。
+        var r = Evaluate(ProbeJson(false,
+            "启动失败 plugin fatal — 这是一段足够长的错误说明文本，模拟渲染界面长度超过渲染豁免阈值的情况。", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
+        Assert.StartsWith("dom-suspect[plugin fatal]=", r.Detail);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_ErrBadSignature_BeatsRendered()
+    {
+        // err 原文坏签名仍一票否决（S22 硬要求），渲染豁免不得遮蔽。
+        var r = Evaluate(ProbeJson(false, "这是一段足够长的已渲染界面文本内容，用于模拟欢迎界面超过渲染豁免阈值的情形……",
+            "Uncaught: window.__ModuleLoader__ bootstrap facade is missing"));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
+        Assert.StartsWith("err[bootstrap facade is missing]=", r.Detail);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_ProfileRenderedThreshold_Honored()
+    {
+        // 环境覆盖生效：阈值调高后，中等长度文本不再被判 Rendered。
+        var p = ShellLogic.BootGuard.ResolveProfile("""{ "rendered_min_text_chars": 500 }""");
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            good = false,
+            text = "欢迎界面：配置你的 API Key（约一百字以内的短文本，未达自定义阈值）",
+            err = "",
+        });
+        var r = ShellLogic.BootGuard.EvaluatePageProbe(json, p);
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.Absent, r.Kind);
+    }
+
+    [Fact]
+    public void ResolveProfile_RenderedMinTextChars_InvalidType_FallsBackToDefault()
+    {
+        var def = ShellLogic.BootGuard.ResolveProfile(null);
+        Assert.Equal(60, def.RenderedMinTextChars);
+        var bad = ShellLogic.BootGuard.ResolveProfile("""{ "rendered_min_text_chars": "not-a-number" }""");
+        Assert.Equal(def.RenderedMinTextChars, bad.RenderedMinTextChars);
     }
 
     [Theory]

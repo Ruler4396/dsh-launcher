@@ -1229,6 +1229,12 @@ internal static class Program
             monitor.Failed += HandleBootHealthFailed;
             // [update-guard] 好符号确认健康 → 快照落"已确认"、解除回滚武装
             monitor.HealthyDetected += HandleUpdateConfirmedHealthy;
+            // 好符号确认健康 → 清零跨会话连续失败计数（2026-08-25 升级询问的复位通道）
+            monitor.HealthyDetected += () =>
+            {
+                try { SafeMode.ResetFailureStreak(); }
+                catch (Exception ex) { Logger.Warn("[boot-monitor] failure-streak reset failed: " + ex.Message); }
+            };
             // 吸收态证据追加（如进程死后 HTTP 层补充）→ 重写 safe-mode-state 融合视图（S24 验收）
             monitor.VerdictUpdated += v =>
             {
@@ -1310,21 +1316,30 @@ internal static class Program
 
             // 1) 证据落盘：safe-mode-state.json 的 lastFailure 字段（原子写，崩溃/重启仍可查）
             PersistBootFailureEvidence(verdict);
+            // 连续失败计数推进（Failed 路径恰好一次；吸收态 VerdictUpdated 重写不计数）。
+            // 跨会话持久化在 safe-mode.json——事故形态是"每次重开壳都崩"，会话内计数抓不住。
+            SafeMode.RegisterBootFailure();
 
             // 2) 诊断包：静默落 DataDir\diagnostics\（失败仅 Warn，不二次弹窗打扰）
             ExportBootDiagnostics();
 
-            // 3) 分支询问（2026-08 用户回归：无插件也弹"插件不兼容/安全模式"——误导）：
-            //    - 有插件相关证据（坏签名命中 / 本会话插件崩溃消息）→ 安全模式阶梯（原路径）；
-            //    - 纯"好符号缺席"（无坏签名、无插件崩溃）→ 与插件无关，不弹安全模式
-            //      （无第三方插件可禁，安全模式必然无效），改问"重启 dsh 服务"。
+            // 3) 分支询问（经 BootRecoveryPolicy 路由，2026-08-25 事故回归）：
+            //    - 有插件相关证据（页面坏签名 / 插件崩溃消息 / 日志层插件签名）→ 安全模式；
+            //    - 无插件证据但连续失败已达阈值（跨会话计数）→ 升级安全模式（重启必然无效）；
+            //    - 其余匿名单次失败 → 问"重启 dsh 服务"（无插件时弹安全模式是误导）。
             var detail = string.Join("\n", verdict.Evidence.Select(e => $"· [{e.Layer}] {e.Summary}"));
             var form = GetMainFormForDialog();
-            if (VerdictIndicatesPluginInvolvement(verdict))
+            var ask = ShellLogic.BootRecoveryPolicy.Decide(
+                VerdictIndicatesPluginInvolvement(verdict), SafeMode.ConsecutiveBootFailures);
+            if (ask == ShellLogic.BootRecoveryPolicy.RecoveryAsk.AskSafeMode)
             {
+                var escalated = !VerdictIndicatesPluginInvolvement(verdict);
+                var headline = escalated
+                    ? $"dsh 启动已连续 {SafeMode.ConsecutiveBootFailures} 次失败（[{verdict.ErrorCode}]）。"
+                        + "反复重启对确定性故障无效，建议尝试安全模式。\n\n检测到的证据：\n" + detail
+                    : $"{ErrorCodes.Describe(verdict.ErrorCode)}（[{verdict.ErrorCode}]）";
                 var askBody = "是否进入安全模式（禁用第三方插件，仅保留 dsh 核心功能）？\n"
                     + "（不会修改你的任何配置文件）\n\n检测到的证据：\n" + detail;
-                var headline = $"{ErrorCodes.Describe(verdict.ErrorCode)}（[{verdict.ErrorCode}]）";
                 if (form is not null && form.IsHandleCreated)
                     form.BeginInvoke(() => AskAndMaybeEnterSafeMode(form, headline, askBody));
                 else
@@ -1332,7 +1347,7 @@ internal static class Program
             }
             else
             {
-                var headline = $"dsh 页面启动自检未通过（[{ErrorCodes.E2008}]）：页面已加载但启动确认符号持续缺席。\n"
+                var headline = $"dsh 启动自检未通过（[{verdict.ErrorCode}]）：{ErrorCodes.Describe(verdict.ErrorCode)}\n"
                     + "未检测到插件相关证据，多与 dsh 版本兼容性或服务状态有关。\n\n检测到的证据：\n" + detail;
                 if (form is not null && form.IsHandleCreated)
                     form.BeginInvoke(() => AskRestartDshServiceAfterBootFailure(form, headline));
@@ -1489,10 +1504,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// 裁决是否携带插件相关证据（决定 E2008 弹"安全模式"还是"重启服务"）：
-    /// 页面层坏签名命中（detail 以 dom[/err[ 开头，见 BootGuard.EvaluatePageProbe）或
-    /// 本会话收到过插件崩溃 WebMessage（WebViewManager.PluginCrashDetected 路径）。
-    /// CDP 异常不参与判定：核心页面自身异常也会被采集，不足以归因插件（保守防误导）。
+    /// 裁决是否携带插件相关证据（决定弹"安全模式"还是"重启服务"，经
+    /// <c>ShellLogic.BootRecoveryPolicy</c> 路由）。三条归因通道（2026-08-25 事故回归扩展）：
+    /// 1. 页面层坏签名命中（detail 以 dom[/err[ 开头，见 BootGuard.EvaluatePageProbe）——前端崩溃；
+    /// 2. 本会话收到过插件崩溃 WebMessage（WebViewManager.PluginCrashDetected 路径）；
+    /// 3. 【新增】日志层证据携带插件加载失败类签名——服务端启动崩溃的唯一文本证据来源；
+    /// 4. 【新增】第三方插件在场 + 服务进程异常退出——匿名进程崩溃优先按插件嫌疑处理，
+    ///    而不是让用户在注定无效的「重启服务」上循环（事故实测 3 会话 4 次崩溃全被误路由）。
+    /// CDP 异常仍不参与判定：核心页面自身异常也会被采集，不足以归因插件（保守防误导）。
     /// </summary>
     private static bool VerdictIndicatesPluginInvolvement(DshWeb.Lifecycle.BootVerdict verdict)
     {
@@ -1503,9 +1522,20 @@ internal static class Program
                 && (e.Detail.StartsWith("dom[", StringComparison.Ordinal)
                     || e.Detail.StartsWith("err[", StringComparison.Ordinal)))
                 return true;
+            if (e.Layer == DshWeb.Lifecycle.BootLayer.Log
+                && ShellLogic.BootGuard.LogEvidenceIndicatesPlugin(e.Summary + " " + e.Detail))
+                return true;
         }
-        return WebViewManager.LastPluginCrashUtc != default;
+        if (WebViewManager.LastPluginCrashUtc != default) return true;
+        return verdict.Evidence.Any(e =>
+                   e.Layer == DshWeb.Lifecycle.BootLayer.Process
+                   && e.ErrorCode == ErrorCodes.E2007)
+               && ShellLogic.PluginConfig.ProfileHasThirdPartyBundles(WebProfilePackageJsonPath);
     }
+
+    /// <summary>用户 web profile 清单路径（第三方插件在场判定的读取对象；只读不写）。</summary>
+    private static string WebProfilePackageJsonPath
+        => Path.Combine(DshHomeDir, "profiles", "web", "package.json");
 
     /// <summary>
     /// 无插件证据的启动自检失败恢复动作：询问后后台重启 dsh 服务，就绪后刷新页面。

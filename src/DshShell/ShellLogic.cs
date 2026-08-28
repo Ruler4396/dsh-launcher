@@ -294,7 +294,7 @@ public static class ShellLogic
     /// 四个观察位，不依赖 dsh 主动上报。本类只承载**可纯函数化**的部分：
     /// - 签名档（BootProfile）：good_symbol 探针表达式、bad_signatures、grace_ms、
     ///   probe_interval_ms、absent_threshold 的唯一定义点（DSH_BOOT_SIGNATURES JSON 可整体覆盖）；
-    /// - 页面探针结果求值（EvaluatePageProbe）：good / 坏签名命中 / 缺席 / 无效 四分类；
+    /// - 页面探针结果求值（EvaluatePageProbe）：good / 坏签名命中 / 已渲染(Rendered) / 缺席 / 无效 五分类；
     /// - 日志层签名表（MatchBootErrorSignature）：插件/boot 错误标志。
     /// 有状态的融合状态机见 Lifecycle/BootHealthMonitor.cs（依赖注入探针，Headless 可测）。
     /// </summary>
@@ -332,6 +332,15 @@ public static class ShellLogic
             /// <summary>连续缺席阈值：grace 后连续 N 次好符号缺席 ⇒ failed。</summary>
             public int AbsentThreshold { get; init; } = 5;
 
+            /// <summary>
+            /// 页面"已渲染"豁免阈值：body.innerText 长度 ≥ 该值且无坏签名 ⇒ 判 Rendered（视同健康）。
+            /// [E2008 误报根治] 未配置 API key 时 dsh 会渲染出自己的欢迎/配置界面，但 boot 链
+            /// （__ModuleLoader__.mode==="live"）并不完成——此前被误判"好符号持续缺席"→ E2008 弹窗。
+            /// 代理特征为 innerText 长度（探针已采集，无需改协议）；空白/纯加载页远低于该值，
+            /// 仍走缺席计票，慢启动/白屏保护不削弱。坏签名优先级在其上层，真崩溃错误 UI 不被豁免。
+            /// </summary>
+            public int RenderedMinTextChars { get; init; } = 60;
+
             /// <summary>日志层附加签名（在内置表之上追加；沙盒注入假签名用）。</summary>
             public IReadOnlyList<string> ExtraLogSignatures { get; init; } = Array.Empty<string>();
 
@@ -366,6 +375,7 @@ public static class ShellLogic
                 if (TryGetInt(root, "grace_ms", out var grace)) p = p with { GraceMs = grace };
                 if (TryGetInt(root, "probe_interval_ms", out var interval)) p = p with { ProbeIntervalMs = interval };
                 if (TryGetInt(root, "absent_threshold", out var threshold)) p = p with { AbsentThreshold = threshold };
+                if (TryGetInt(root, "rendered_min_text_chars", out var rendered)) p = p with { RenderedMinTextChars = rendered };
                 if (TryGetStringArray(root, "log_error_signatures", out var logs)) p = p with { ExtraLogSignatures = logs };
                 return p;
             }
@@ -405,11 +415,13 @@ public static class ShellLogic
             return true;
         }
 
-        /// <summary>页面探针结果的四分类。</summary>
+        /// <summary>页面探针结果的五分类。</summary>
         public enum PageProbeKind
         {
             /// <summary>好符号出现 → healthy（停止探针）。</summary>
             GoodSymbol,
+            /// <summary>页面已渲染出实质内容（无坏签名）→ 视同健康（dsh 自带流程/配置等待界面）。</summary>
+            Rendered,
             /// <summary>坏签名命中 → failed（一次即判，附原文）。</summary>
             BadSignature,
             /// <summary>有效结果但好符号缺席 → 计入 absent_threshold。</summary>
@@ -428,8 +440,10 @@ public static class ShellLogic
         /// 求值 ExecuteScriptAsync 返回的 JSON（{good:bool,text:string,err:string}）：
         /// **坏签名优先于好符号**——dsh 的 boot 标志在启动早期设置、插件在其后才加载，
         /// 致命插件错误可以发生在 __DSH_BOOT__ 已存在的页面上；若好符号一票遮蔽，
-        /// 崩溃会被静默掩盖（S22 实测教训）。顺序：text/err 命中坏签名 → BadSignature
-        /// （detail=原文摘录）→ good=true → GoodSymbol → 否则 Absent；
+        /// 崩溃会被静默掩盖（S22 实测教训）。顺序：err 原文命中坏签名 → BadSignature
+        /// （detail=原文摘录，一票）→ good=true → GoodSymbol → text 命中坏签名 → Absent
+        /// （dom-suspect 计票，防 E2008 误判）→ 页面已渲染（text ≥ RenderedMinTextChars）→
+        /// Rendered（视同健康，dsh 自带流程/配置等待界面不判死）→ 否则 Absent；
         /// null/空/解析失败 → Invalid（探针异常路径，不判死）。
         /// </summary>
         internal static PageProbeResult EvaluatePageProbe(string? scriptJson, BootProfile profile)
@@ -473,6 +487,13 @@ public static class ShellLogic
                     if (MatchBadSignature(text, profile.BadSignatures) is { } hitText)
                         return new PageProbeResult(PageProbeKind.Absent,
                             "dom-suspect[" + hitText + "]=" + Truncate(text, 300));
+                    // [E2008 误报根治] 渲染豁免：页面已渲染出实质内容（无坏签名）→ Rendered，视同健康。
+                    // 典型场景：未配置 API key 时 dsh 渲染自己的欢迎/配置界面，boot 链不完成
+                    // （__ModuleLoader__.mode 不为 "live"），此前被误判"好符号持续缺席"→ E2008 弹窗。
+                    // 坏签名优先级在上方（err 一票 / DOM 计票），真崩溃错误 UI 不会被此豁免；
+                    // 空白/纯加载页（innerText < RenderedMinTextChars）仍走缺席计票，慢启动保护不削弱。
+                    if (text.Length >= profile.RenderedMinTextChars)
+                        return new PageProbeResult(PageProbeKind.Rendered, "rendered=" + Truncate(text, 200));
                     return new PageProbeResult(PageProbeKind.Absent, err.Length > 0 ? "err=" + Truncate(err, 200) : null);
                 }
                 finally { innerDoc?.Dispose(); }
@@ -545,6 +566,31 @@ public static class ShellLogic
                 if (line.Contains(marker, StringComparison.OrdinalIgnoreCase))
                     return marker;
             return MatchBadSignature(line, profile.ExtraLogSignatures);
+        }
+
+        /// <summary>插件归因子集（2026-08-25 事故回归）：BootErrorMarkers 中指向"模块/插件加载失败"
+        /// 的标记。命中这些的服务端崩溃应归因为插件嫌疑（路由安全模式），而非通用环境错误。</summary>
+        internal static readonly string[] PluginInvolvedMarkers =
+        {
+            "plugin load failed", "plugin fatal",
+            "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND",
+            "Cannot find module",
+        };
+
+        /// <summary>
+        /// 日志层证据是否携带插件归因签名（纯函数，契约测试锁定）。
+        /// 2026-08-25 事故：插件把 node 服务进程搞崩（exit=1），页面层从未渲染、无任何
+        /// 前端证据；唯一能证明"是插件"的文本证据是服务 stderr 里的加载失败堆栈——但
+        /// 分类闸门只认页面层坏签名，导致安全模式从未被询问。此函数补上日志层的归因通道。
+        /// 入参为证据的 Summary 与 Detail 拼接文本（不区分来源字段，包含匹配即可靠）。
+        /// </summary>
+        internal static bool LogEvidenceIndicatesPlugin(string? summaryAndDetail)
+        {
+            if (string.IsNullOrWhiteSpace(summaryAndDetail)) return false;
+            foreach (var marker in PluginInvolvedMarkers)
+                if (summaryAndDetail.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
     }
 
@@ -1008,6 +1054,36 @@ public static class ShellLogic
         }
     }
 
+    /// <summary>启动恢复询问路由策略（2026-08-25 事故回归，纯函数，契约测试锁定）：
+    /// failed 裁决后弹「安全模式」还是「重启服务」。规则：
+    /// 1. 有插件相关证据 → 安全模式（原语义）；
+    /// 2. 无插件证据但连续失败已达阈值（跨会话持久计数）→ 也升级安全模式——
+    ///    重启对确定性配置崩溃必然无效，「问重启」的死循环只会消耗用户耐心；
+    /// 3. 其余匿名失败 → 重启服务（2026-08 用户回归：无插件时弹安全模式是误导）。
+    /// </summary>
+    public static class BootRecoveryPolicy
+    {
+        /// <summary>连续匿名启动失败达到该次数后升级为安全模式询问（事故实测 3 次会话 4 次崩溃）。</summary>
+        public const int AnonymousFailureSafeModeThreshold = 3;
+
+        /// <summary>恢复动作：进入安全模式阶梯，或仅重启 dsh 服务。</summary>
+        public enum RecoveryAsk
+        {
+            /// <summary>询问进入安全模式（禁用第三方插件的隔离 profile 阶梯）。</summary>
+            AskSafeMode,
+            /// <summary>询问重启 dsh 服务（匿名单次失败的轻量恢复）。</summary>
+            AskRestartService,
+        }
+
+        /// <summary>路由决策。consecutiveFailures 为**含本次失败**在内的连续失败次数（≥1）。</summary>
+        public static RecoveryAsk Decide(bool pluginInvolved, int consecutiveFailures)
+        {
+            if (pluginInvolved) return RecoveryAsk.AskSafeMode;
+            if (consecutiveFailures >= AnonymousFailureSafeModeThreshold) return RecoveryAsk.AskSafeMode;
+            return RecoveryAsk.AskRestartService;
+        }
+    }
+
     /// <summary>生命周期插件配置：检测安装、解析/验证 serviceLifetime、解析有效模式。</summary>
     public static class PluginConfig
     {
@@ -1062,6 +1138,60 @@ public static class ShellLogic
                     catch { /* 单个 manifest 损坏跳过 */ }
                 }
                 return false;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// package.json 文本（dependencies / dsh.profile.bundles）是否声明了任何
+        /// **非 @deepseek-ai/** 的第三方或本地（file:/相对路径）插件（纯函数，契约测试锁定）。
+        /// 2026-08-25 事故回归：匿名服务进程崩溃 + 第三方插件在场 ⇒ 应优先按插件嫌疑处理
+        /// （询问安全模式），而不是让用户在注定无效的「重启服务」上循环。
+        /// 解析失败/空文本一律 false（安全默认：不凭损坏的清单归因插件）。
+        /// </summary>
+        internal static bool BundlesDeclareThirdParty(string? packageJsonText)
+        {
+            if (string.IsNullOrWhiteSpace(packageJsonText)) return false;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(packageJsonText);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+                if (root.TryGetProperty("dependencies", out var deps)
+                    && deps.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    foreach (var dep in deps.EnumerateObject())
+                        if (!dep.Name.StartsWith("@deepseek-ai/", StringComparison.Ordinal))
+                            return true;
+                }
+                if (root.TryGetProperty("dsh", out var dshSeg)
+                    && dshSeg.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && dshSeg.TryGetProperty("profile", out var profile)
+                    && profile.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && profile.TryGetProperty("bundles", out var bundles)
+                    && bundles.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var b in bundles.EnumerateArray())
+                    {
+                        if (b.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                        var name = b.GetString();
+                        if (!string.IsNullOrWhiteSpace(name)
+                            && !name.StartsWith("@deepseek-ai/", StringComparison.Ordinal))
+                            return true;
+                    }
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>读取用户 web profile 清单并判定是否声明第三方插件（文件缺失/损坏 → false）。</summary>
+        internal static bool ProfileHasThirdPartyBundles(string webPackageJsonPath)
+        {
+            try
+            {
+                if (!File.Exists(webPackageJsonPath)) return false;
+                return BundlesDeclareThirdParty(File.ReadAllText(webPackageJsonPath));
             }
             catch { return false; }
         }
@@ -1361,6 +1491,16 @@ public static class ShellLogic
             if (pid <= 0) return false;
             if (!IsLikelyDshService(pid))
             {
+                // 2026-08-25 事故回归：已崩溃退出的服务 pid（如 exit=1 后壳停止链再次停止）
+                // 此前被误报为 "not a dsh (node) service process"——GetProcessById 对死 pid 抛异常，
+                // catch 一律返回 false，与"活着但不是 node"的真防误杀场景混为一谈。
+                // 区分：pid 已不存在 = 目标已消失，无需再杀（Info + true，调用方走端口释放等待
+                // 并清理 pid 文件）；活着但不是 node = 真正的防复用误杀拒绝（Warn + false）。
+                if (!IsProcessAlive(pid))
+                {
+                    Logger.Info($"pid={pid} already exited; nothing to kill");
+                    return true;
+                }
                 Logger.Warn($"refusing to kill pid={pid}: not a dsh (node) service process");
                 return false;
             }
@@ -1437,7 +1577,9 @@ public static class ShellLogic
             return !IsProcessAlive(pid);
         }
 
-        private static bool IsProcessAlive(int pid)
+        /// <summary>pid 是否仍存活（死 pid/已被回收 → false；internal 供回归测试与
+        /// KillServiceProcess 的"已消失无需杀"分支区分"已消失"与"活着但不该杀"）。</summary>
+        internal static bool IsProcessAlive(int pid)
         {
             try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
             catch { return false; }

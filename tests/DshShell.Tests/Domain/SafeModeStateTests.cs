@@ -74,4 +74,73 @@ public class SafeModeStateTests
             if (File.Exists(file)) File.Delete(file);
         }
     }
+
+    // ==================== 连续失败计数（2026-08-25 事故回归） ====================
+
+    [Fact]
+    public void FailureStreak_Increments_Persists_AndResets()
+    {
+        var file = NewTempFile();
+        try
+        {
+            var s = new SafeModeState(file);
+            Assert.Equal(0, s.ConsecutiveBootFailures);
+
+            // RecordFailure（吸收态融合视图重写也走这里）不得推进计数——否则单次失败会被
+            // Http 层追加证据虚增 2~3 次，提前触发升级阈值（2026-08-25 事故里单会话追加了 3 次）
+            using (var doc = System.Text.Json.JsonDocument.Parse("{\"utc\":\"x\"}"))
+                s.RecordFailure(doc.RootElement);
+            Assert.Equal(0, s.ConsecutiveBootFailures);
+
+            s.RegisterBootFailure();
+            s.RegisterBootFailure();
+            Assert.Equal(2, s.ConsecutiveBootFailures);
+
+            // 跨会话：从磁盘重载必须保留计数（事故形态是"每次重开壳都崩"）
+            var reloaded = new SafeModeState(file);
+            Assert.Equal(2, reloaded.ConsecutiveBootFailures);
+
+            reloaded.ResetFailureStreak();
+            Assert.Equal(0, reloaded.ConsecutiveBootFailures);
+            Assert.Equal(0, new SafeModeState(file).ConsecutiveBootFailures);
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void FailureStreak_OldStateFileWithoutField_LoadsAsZero()
+    {
+        var file = NewTempFile();
+        try
+        {
+            // 旧版本 safe-mode.json 无 consecutiveBootFailures 字段 → 向后兼容按 0 处理
+            File.WriteAllText(file, "{\r\n  \"active\": false,\r\n  \"tier\": 1\r\n}");
+            var s = new SafeModeState(file);
+            Assert.Equal(0, s.ConsecutiveBootFailures);
+            Assert.False(s.IsActive);
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void ResetFailureStreak_Idempotent_AtZero()
+    {
+        var file = NewTempFile();
+        try
+        {
+            var s = new SafeModeState(file);
+            s.ResetFailureStreak(); // 计数为 0 时幂等短路，不产生 IO 也不抛
+            Assert.Equal(0, s.ConsecutiveBootFailures);
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
 }

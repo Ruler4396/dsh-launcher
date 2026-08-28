@@ -84,7 +84,8 @@ public sealed class RealProcessHandle : IBootProcessHandle
 /// - 日志层：就绪后增量日志命中签名表 → failed（附命中行）；只扫监控起点之后的增量。
 /// - HTTP 层：ready 后**连续 2 次**探测失败 → failed（单次抖动不判死）。
 /// - 页面层（主触发器）：NavigationCompleted 起，grace 后按间隔探针——坏签名一次 → failed；
-///   好符号 → Healthy（停止探针）；连续 absent_threshold 次缺席 → failed。
+///   好符号 → Healthy（停止探针）；页面已渲染（Rendered，如 dsh 配置等待界面）→ Healthy（停止探针）；
+///   连续 absent_threshold 次缺席 → failed。
 /// - 探针自身异常（ExecuteScript 抛错/返回无效）→ 只 Warn，绝不判 failed。
 /// - failed 吸收：后续各层证据继续追加（融合视图），但不再重复触发/重复询问。
 ///
@@ -181,9 +182,11 @@ public sealed class BootHealthMonitor : IDisposable
             }
             catch (Exception ex)
             {
-                // PID 已被回收等：预期内操作失败 → 证据化，不抛出（监控绝不弄崩壳）
-                Logger.Warn($"[boot-monitor] process attach failed pid={pid}: {ex.Message}");
-                Report(BootLayer.Process, $"进程 attach 失败（pid={pid} 不存在）", ex.Message, ErrorCodes.E2007);
+                // PID 已被回收/残留（best-effort 解析的 pid 可能已死）等：预期内操作失败，监控绝不弄崩壳。
+                // [E2007/E2008 误报根治] 仅 Warn，**不** Report 判死——attach 是监视接线失败，不是崩溃裁决
+                // （此前残留 pid 会把整监控打成 E2007 并弹窗：用户实测证据 "进程 attach 失败（pid=4708 不存在）"）。
+                // 服务真死由 HTTP 层（E2004 / 连续 2 次 miss）与页面层（缺席阈值 E2008）兜底，检测不丢。
+                Logger.Warn($"[boot-monitor] process attach failed pid={pid}: {ex.Message} (monitoring continues via http/page layers)");
             }
         });
     }
@@ -374,6 +377,11 @@ public sealed class BootHealthMonitor : IDisposable
             {
                 case ShellLogic.BootGuard.PageProbeKind.GoodSymbol:
                     MarkHealthy("页面探针确认好符号（__DSH_BOOT__ 就绪）");
+                    return;
+                case ShellLogic.BootGuard.PageProbeKind.Rendered:
+                    // [E2008 误报根治] 页面已渲染出 dsh 自身界面（boot 链未完成，如未配置 API key 的
+                    // 欢迎/配置界面）→ 视同健康，停止探针，不判 E2008。
+                    MarkHealthy("页面探针确认已渲染（dsh 自带流程/配置等待界面；boot 链未完成不判死）");
                     return;
                 case ShellLogic.BootGuard.PageProbeKind.BadSignature:
                     Report(BootLayer.Page, $"页面坏签名命中（前端启动失败）", result.Detail, ErrorCodes.E2008);

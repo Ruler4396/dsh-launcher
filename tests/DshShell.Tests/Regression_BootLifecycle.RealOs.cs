@@ -110,4 +110,52 @@ public class Regression_BootLifecycle_RealOs
             try { if (!proc.HasExited) proc.Kill(true); } catch { }
         }
     }
+
+    // ==================== 2026-08-25 事故回归：死 PID 与活非 node 的区分 ====================
+
+    [Fact]
+    public void RealOs_KillServiceProcess_DeadPid_ReportsSuccess_NothingToKill()
+    {
+        // 事故日志形态：服务已 exit=1，壳停止链再次停止同一 pid → GetProcessById 抛异常被
+        // 归因为 "not a dsh service process"（Warn+false），pid 文件滞留、日志噪音误导排障。
+        // 修复语义：pid 已不存在 = 目标已消失 → Info + true。
+        var psi = new ProcessStartInfo("cmd.exe", "/c exit 0")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var p = Process.Start(psi)!;
+        Assert.True(p.WaitForExit(5000), "trivial cmd must exit immediately");
+        int deadPid = p.Id;
+        Assert.False(ShellLogic.ProcessManagement.IsProcessAlive(deadPid),
+            "setup: pid must be gone (guards against PID reuse flakiness)");
+
+        bool result = ShellLogic.ProcessManagement.KillServiceProcess(deadPid, FreePort());
+        _out.WriteLine($"KillServiceProcess(deadPid={deadPid}) => {result}");
+        Assert.True(result, "dead pid means nothing to kill; must not be reported as refusal");
+    }
+
+    [Fact]
+    public void RealOs_KillServiceProcess_LiveNonNodeProcess_StillRefused()
+    {
+        // 修复不得削弱防误杀：活着但不是 node 的进程必须照旧拒绝
+        var psi = new ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 -w 500")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var p = Process.Start(psi)!;
+        try
+        {
+            Assert.True(ShellLogic.ProcessManagement.IsLikelyDshService(p.Id) == false,
+                "setup: cmd.exe is not a node service");
+            bool result = ShellLogic.ProcessManagement.KillServiceProcess(p.Id, 0);
+            Assert.False(result, "live non-node process must be refused (no mis-kill)");
+            Assert.False(p.HasExited, "refused target must remain alive");
+        }
+        finally
+        {
+            try { if (!p.HasExited) p.Kill(true); } catch { }
+        }
+    }
 }
