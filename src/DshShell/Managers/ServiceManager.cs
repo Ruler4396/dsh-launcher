@@ -66,12 +66,24 @@ public sealed class ServiceManager : IServiceManager
     /// 生产级就绪裁决轮询（自 Program.WaitServiceReady 下沉，逻辑逐位保留）：
     /// TCP+HTTP 探测 + 统一日志错误标志三态（15s 宽限防良性告警误判）+ e2e 20s 上限
     /// + NpxCache 网络回退预算放宽。返回 "ready"/"canceled"/"logerror"/"timeout"。
+    /// 【F2 修复】错误标志检查改为**增量扫描**：只判定 PollReadiness 入口之后新增的字节，
+    /// 且跳过壳自写行（"code":"E####" JSONL）——历史日志中的良性网络词（ECONNRESET 等
+    /// dsh 运行期合法输出）不再跨会话污染，消除"慢启动 >15s 即误判 E2003 并误杀服务"。
+    /// 【F26 可测试性】休眠/检查间隔/宽限全部由虚拟时钟驱动（累加注入 delay 的步长），
+    /// 测试注入 no-op delay 即压缩到毫秒级；生产缺省 delay=Thread.Sleep、间隔 5s、宽限
+    /// 15s，行为与旧实现等价（e2e 20 轮预算下宽限按比例缩到 2s，保证 logerror 在 e2e
+    /// 预算内可达）。
     /// </summary>
-    public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode)
+    public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode,
+        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15)
     {
-        var lastLogCheck = DateTime.MinValue;
+        var delaySync = delay ?? (static d => Thread.Sleep(d));
+        var graceMs = (e2eMode ? 2 : logErrorGraceSeconds) * 1000;
+        var checkEveryMs = logCheckIntervalSeconds * 1000.0;
+        var lastLogCheckMs = double.NegativeInfinity;
         var logErrorSeen = false;
-        var logErrorSince = DateTime.MinValue;
+        var logErrorSinceMs = 0.0;
+        var virtualMs = 0.0;
         using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         // 首次运行（dsh 未安装，服务只能经网络下载启动）放宽等待预算 180s → 360s；
         // SelfContained/全局安装维持 180s。
@@ -79,36 +91,41 @@ public sealed class ServiceManager : IServiceManager
             == DshWeb.Domain.DshSource.NpxCache;
         var pollBudget = ShellLogic.ServiceReadiness.GetPollBudgetSeconds(networkFallback);
         Logger.Info($"poll: networkDownloadFallback={networkFallback}, budget={pollBudget}s");
+        // [F2] 增量扫描起点：入口时已存在的字节（历史/上一会话内容）永不参与判定
+        var mainOffset = InitialLogLength(logPath);
+        var fallbackPath = Logger.FallbackPath;
+        var fallbackOffset = string.IsNullOrEmpty(fallbackPath) ? -1 : InitialLogLength(fallbackPath);
         for (var i = 0; i < (e2eMode ? 20 : pollBudget); i++)
         {
             if (token.IsCancellationRequested) return "canceled";
-            if ((DateTime.UtcNow - lastLogCheck).TotalSeconds >= 5)
+            if (virtualMs - lastLogCheckMs >= checkEveryMs)
             {
-                lastLogCheck = DateTime.UtcNow;
-                // 主日志被锁时读取 fallback 日志，错误标志检查不失效——两者任一出现启动错误
-                // 标志都会触发 15s 宽限期提前退出（诊断盲区消除）。
-                var content = ReadTextShared(logPath);
-                if (string.IsNullOrWhiteSpace(content)
-                    && !string.Equals(logPath, Logger.FallbackPath, StringComparison.OrdinalIgnoreCase))
+                lastLogCheckMs = virtualMs;
+                // [F2] 增量读（FileShare.ReadWrite 共享读）；主日志无新增时回退日志同样增量兜底——
+                // 两者任一在**本轮新增**内容中出现启动错误标志都会触发宽限期提前退出。
+                var (content, next) = ReadLogIncrementShared(logPath, mainOffset);
+                mainOffset = next;
+                if (string.IsNullOrWhiteSpace(content) && fallbackOffset >= 0
+                    && !string.Equals(logPath, fallbackPath, StringComparison.OrdinalIgnoreCase))
                 {
-                    var fb = ReadTextShared(Logger.FallbackPath);
-                    if (!string.IsNullOrWhiteSpace(fb)) content = fb;
+                    var (fb, fbNext) = ReadLogIncrementShared(fallbackPath!, fallbackOffset);
+                    fallbackOffset = fbNext;
+                    content = fb;
                 }
-                if (ShellLogic.ServiceReadiness.LogShowsStartupError(content))
+                // 壳自写行（E#### JSONL）不参与判定（与 BootHealthMonitor 日志层同一契约）
+                if (content is not null && ShowsStartupErrorIncrement(content))
                 {
                     if (!logErrorSeen)
                     {
                         logErrorSeen = true;
-                        logErrorSince = DateTime.UtcNow;
+                        logErrorSinceMs = virtualMs;
                         // 日志出现错误标志：不立即判死——启动过程中的良性告警也会命中，
-                        // 给 15 秒宽限期；只有持续失败才判定启动出错。
-                        Logger.Info("poll: log shows error markers, grace 15s");
+                        // 宽限窗口（生产 15s）内持续存在才判定启动出错。
+                        Logger.Info("poll: log shows error markers, grace started");
                     }
                 }
-                else
-                {
-                    logErrorSeen = false; // 日志恢复干净，重置记时
-                }
+                // [F2] 旧实现的"日志恢复干净则重置记时"分支随全量扫描一并移除：统一日志为
+                // 追加型，历史标志永不消失，增量语义下"seen 即宽限起点"与旧行为等价。
             }
             if (_tcpProbeSync("127.0.0.1", port))
             {
@@ -119,29 +136,55 @@ public sealed class ServiceManager : IServiceManager
                 }
                 // HTTP 尚未就绪（前端还在启动），继续等
             }
-            if (logErrorSeen && DateTime.UtcNow - logErrorSince >= TimeSpan.FromSeconds(15))
+            if (logErrorSeen && virtualMs - logErrorSinceMs >= graceMs)
             {
-                Logger.Info("poll: log error markers persisted 15s, giving up");
+                Logger.Info("poll: log error markers persisted grace, giving up");
                 return "logerror";
             }
-            // 启动延迟优化：前 8 次快速轮询（200ms），之后 1s 粒度。
-            Thread.Sleep(i < 8 ? 200 : 1000);
+            // 启动延迟优化：前 8 次快速轮询（200ms），之后 1s 粒度（虚拟时钟累加）。
+            var stepMs = i < 8 ? 200 : 1000;
+            delaySync(TimeSpan.FromMilliseconds(stepMs));
+            virtualMs += stepMs;
         }
         Logger.Info($"poll: timeout after {pollBudget}s");
         return "timeout";
     }
 
-    /// <summary>容错读文本（FileShare.ReadWrite——日志可能被服务/cmd 追加句柄锁定）。</summary>
-    private static string? ReadTextShared(string path)
+    /// <summary>本轮新增内容是否命中启动错误标志（逐行；跳过壳自写行——F2：壳的 E1012 等错误
+    /// 文案内嵌 npm tail，整文件/整段匹配会误伤）。任何单行读取失败按无标志处理。</summary>
+    private static bool ShowsStartupErrorIncrement(string content)
+        => content.Split('\n')
+            .Select(l => l.TrimEnd('\r'))
+            .Any(l => l.Length > 0
+                      && !ShellLogic.BootGuard.IsShellAuthoredLogEntry(l)
+                      && ShellLogic.ServiceReadiness.LogShowsStartupError(l));
+
+    private static long InitialLogLength(string? path)
+    {
+        try { return path is not null && File.Exists(path) ? new FileInfo(path).Length : 0; }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// 日志增量读取（共享读，F2 配套）：只返回 fromOffset 之后的新增文本，无新增返回 null；
+    /// 文件被截断/轮转（长度小于起点）时回退从头读——本轮新增内容仍参与判定。
+    /// 偏移以 UTF-8 字节数推进（ReadToEnd 全量消费，往返字节数精确）。
+    /// </summary>
+    internal static (string? Text, long NextOffset) ReadLogIncrementShared(string path, long fromOffset)
     {
         try
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path)) return (null, fromOffset);
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            var start = fromOffset;
+            if (fs.Length < start) start = 0; // 截断/轮转：从头读（内容仍是本轮会话的新增）
+            if (fs.Length <= start) return (null, start);
+            fs.Seek(start, SeekOrigin.Begin);
             using var reader = new StreamReader(fs, System.Text.Encoding.UTF8);
-            return reader.ReadToEnd();
+            var text = reader.ReadToEnd();
+            return (text, start + System.Text.Encoding.UTF8.GetByteCount(text));
         }
-        catch { return null; }
+        catch { return (null, fromOffset); }
     }
 
     /// <summary>

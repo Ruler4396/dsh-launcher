@@ -1,0 +1,3 @@
+[12:00:01.000] [dsh] [warn] upstream api retry: ECONNRESET after 3 attempts, backing off
+[12:00:01.500] [dsh] [warn] upstream api retry: ECONNREFUSED, will retry in 5s
+[12:00:02.000] [dsh] web listening on http://127.0.0.1:3080

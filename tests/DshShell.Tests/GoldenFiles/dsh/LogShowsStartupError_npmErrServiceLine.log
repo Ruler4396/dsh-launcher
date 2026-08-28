@@ -1,0 +1,3 @@
+[10:00:00.123] [dsh] npm ERR! code EACCES
+[10:00:00.124] [dsh] npm ERR! syscall mkdir C:\Users\x\.dsh
+[10:00:00.125] [dsh] npm ERR! The operation was rejected by your operating system

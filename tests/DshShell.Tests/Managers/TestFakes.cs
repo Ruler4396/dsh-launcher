@@ -96,7 +96,8 @@ public sealed class FakeService : IServiceManager
         return StartResult;
     }
 
-    public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode)
+    public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode,
+        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15)
         => Ready ? "ready" : "timeout";
 
     public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)

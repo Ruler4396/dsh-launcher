@@ -44,8 +44,11 @@ public interface IServiceManager
     /// <summary>
     /// 生产级就绪裁决轮询：TCP+HTTP + 统一日志错误标志三态（ready/canceled/logerror/timeout），
     /// 含首装网络回退预算与快速轮询曲线。由组合根经 ReadinessProbe 注入 LauncherApp。
+    /// 【F2/F26】错误标志判定为**增量扫描**（只看入口后新增字节 + 跳过壳自写行）；
+    /// delay/间隔/宽限可注入（虚拟时钟驱动），缺省值保持生产行为（Thread.Sleep/5s/15s）。
     /// </summary>
-    string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode);
+    string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode,
+        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15);
 
     /// <summary>端口三重验证（TCP + 进程身份 + 快速 HTTP）：区分健康/僵尸/被占用，供启动决策。</summary>
     ShellLogic.ServicePortState ProbePort(int port, string url);
