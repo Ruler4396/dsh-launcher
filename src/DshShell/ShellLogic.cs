@@ -769,6 +769,77 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 语义化版本比较（全系统唯一实现，契约测试锁定）。
+    /// 规则（SemVer 2.0.0 宽松化）：v/V 前缀剥离；build metadata（+ 后缀）不参与比较（F10）；
+    /// MAJOR.MINOR.PATCH 数值比较（缺失段补 0，第四段宽松忽略）；核心非法 → 0.0.0（fail-open，
+    /// 不产生"有新版本"误报、不阻断启动）；prerelease：无 prerelease &gt; 有 prerelease，
+    /// 分段比较——纯数字段按数值、字母数字段按字典序、数字段 &lt; 字母段、段多者大。
+    /// 消费方：UpdateChecker（更新检测）与 DshDiscovery（SelfContained 运行时挑选）必须同源——
+    /// 严禁再出现"两套比较器"（F1 回归根因：发现层用序数比较致 rc.10 &lt; rc.9 判反，
+    /// "更新成功但永远启动旧版"）。
+    /// </summary>
+    public static class VersionPolicy
+    {
+        public static int CompareVersions(string? a, string? b)
+        {
+            var va = Parse(a);
+            var vb = Parse(b);
+            for (var i = 0; i < 3; i++)
+            {
+                var c = va.Num[i].CompareTo(vb.Num[i]);
+                if (c != 0) return c;
+            }
+            // 核心相等 → 比较 prerelease：无 prerelease > 有 prerelease
+            if (va.Pre.Length == 0 && vb.Pre.Length == 0) return 0;
+            if (va.Pre.Length == 0) return 1;
+            if (vb.Pre.Length == 0) return -1;
+            var n = Math.Min(va.Pre.Length, vb.Pre.Length);
+            for (var i = 0; i < n; i++)
+            {
+                var c = ComparePrePart(va.Pre[i], vb.Pre[i]);
+                if (c != 0) return c;
+            }
+            return va.Pre.Length.CompareTo(vb.Pre.Length); // 段多者更大（1.0.0-rc.1 < 1.0.0-rc.1.1）
+        }
+
+        private readonly record struct SemVer(int[] Num, string[] Pre);
+
+        private static SemVer Parse(string? raw)
+        {
+            var s = (raw ?? "").Trim().TrimStart('v', 'V');
+            var plus = s.IndexOf('+');
+            if (plus >= 0) s = s[..plus]; // build metadata 不参与比较（F10）
+            var dash = s.IndexOf('-');
+            var core = dash >= 0 ? s[..dash] : s;
+            var pre = dash >= 0 ? s[(dash + 1)..] : "";
+
+            var parts = core.Split('.');
+            var nums = new int[3];
+            var valid = false;
+            for (var i = 0; i < Math.Min(parts.Length, 3); i++)
+            {
+                if (int.TryParse(parts[i], out var n)) { nums[i] = n; valid = true; }
+            }
+            if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
+            if (parts.Length == 1 && parts[0].Length == 0) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
+            var preParts = pre.Length == 0
+                ? Array.Empty<string>()
+                : pre.Split('.').Where(p => p.Length > 0).ToArray();
+            return new SemVer(nums, preParts);
+        }
+
+        private static int ComparePrePart(string a, string b)
+        {
+            var aNum = int.TryParse(a, out var ai);
+            var bNum = int.TryParse(b, out var bi);
+            if (aNum && bNum) return ai.CompareTo(bi);          // 纯数字段 → 数值比较
+            if (aNum) return -1;                                 // 数字段 < 字母数字段（SemVer 规则）
+            if (bNum) return 1;
+            return string.CompareOrdinal(a, b);                  // 字母数字段 → 字典序
+        }
+    }
+
+    /// <summary>
     /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
     /// [2026-08 用户回归] npmjs 直连不稳且慢（HEAD 2055ms、undici 连接反复被重置），
     /// npmmirror 快且稳（264ms）。策略：优先走最快的源，失败才降级——
