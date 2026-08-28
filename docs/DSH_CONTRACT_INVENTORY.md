@@ -22,8 +22,8 @@
 
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
-| 3 | `dsh --version` stdout 版本号 | 弱（含`.`且有数字即收）⚠️ 已知缺陷：整段输出当版本号（F3） | `DshDiscovery.ProbeVersionOutput` | 中 | 3s 超时杀树；失败→null（版本未知仍可启动，fail-open） | `DshDiscoveryProbeTests`（RealOS）；**golden 样本缺** |
-| 4 | 启动错误标志关键字（npm ERR/EACCES/ECONNRESET…） | 弱包含 | `ShellLogic.ServiceReadiness.StartupErrorMarkers` × `ServiceManager.PollReadiness` | **高（F2：全量历史日志扫描，跨会话污染）** | 15s 宽限 + 超时兜底 | **golden 样本缺**（修复 F2 时必须补） |
+| 3 | `dsh --version` stdout 版本号 | 弱（含`.`且有数字即收）⚠️ 已知缺陷：整段输出当版本号（F3，整改批次 3） | `DshDiscovery.ProbeVersionOutput` | 中 | 3s 超时杀树；失败→null（版本未知仍可启动，fail-open） | `DshDiscoveryProbeTests`（RealOS）；golden 样本批次 3 补 |
+| 4 | 启动错误标志关键字（npm ERR/EACCES/ECONNRESET…） | 弱包含 | `ShellLogic.ServiceReadiness.StartupErrorMarkers` × `ServiceManager.PollReadiness` | 低（**F2 已修复**：增量扫描只看入口后新增字节 + 壳行过滤 + 虚拟时钟宽限） | 15s 宽限 + 超时兜底 | `PollReadinessTests`（F2 回归门禁）+ `GoldenDshLogTests` |
 | 5 | 运行期 boot 错误签名（plugin fatal / MODULE_NOT_FOUND…） | 弱包含 | `ShellLogic.BootGuard.BootErrorMarkers` × `BootHealthMonitor` 日志层 | 中（F6） | 增量扫描 + 壳行跳过（`IsShellAuthoredLogEntry`）+ `DSH_BOOT_SIGNATURES` 整表覆盖 | **golden 样本缺** |
 | 6 | 前端好符号：`window.__DSH_BOOT__.version` ‖ `__ModuleLoader__.mode==="live"`【标红：dsh 前端内部符号】 | 强（JS 表达式） | `BootGuard.BootProfile.GoodSymbol` | **高（F5）** | Rendered 豁免（innerText≥60）+ AbsentThreshold 计票 + env 整体覆盖 | `BootGuardContractTests.DefaultGoodSymbol_CoversLegacyAndModernBootChains` |
 | 7 | 前端坏签名文案（bootstrap facade is missing / dsh-boot-failed）【标红】 | 弱包含 | `BootProfile.BadSignatures` × `EvaluatePageProbe` | 中 | 改版失效=漏报不误杀；坏签名优先于好符号（S22 教训） | `BootGuardContractTests` 矩阵 |
@@ -94,3 +94,4 @@
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-08-28 | 初版建表（33 项契约，摘自深度审查批次一） | docs/reviews/2026-08-28-quality-review.md §1.4 |
+| 2026-08-28 | #4 启动错误标志：F2 已修复（增量扫描+壳行过滤），哨兵补 PollReadinessTests/GoldenDshLogTests | remediation 分支批次 2 |

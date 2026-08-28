@@ -1,0 +1,5 @@
+{"ts":"2026-08-28T12:00:00.000Z","level":"Info","message":"lifecycle: Running"}
+[12:00:01.000] [dsh] [warn] upstream api retry: ETIMEDOUT, attempt 1
+[12:00:01.200] [dsh] [warn] upstream api retry: ECONNRESET, attempt 2
+[12:00:02.000] [dsh] web listening on http://127.0.0.1:3080
+{"ts":"2026-08-28T12:00:03.000Z","level":"Warn","code":"E2011","message":"settings.json serviceLifetime ignored (lifetime plugin missing); purging stale value"}

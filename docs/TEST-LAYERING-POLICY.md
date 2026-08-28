@@ -36,15 +36,16 @@
 
 ## 4. 测试缺口登记（与审查发现联动）
 
-| 缺口 | 对应发现 | 补测层 | 触发时机 |
+| 缺口 | 对应发现 | 补测层 | 状态 |
 |---|---|---|---|
-| dsh 输出解析器 golden 样本（StartupErrorMarkers / BootErrorMarkers / IsShellAuthoredLogEntry / ProbeVersionOutput / EvaluatePageProbe 输入） | F31（核心缺口）、F2/F3/F6 门禁 | L3 | 修复 F2/F3 时**必须**同步补 |
-| `DshDiscovery.CompareVersions` Theory（rc.10>rc.9 等） | F1 门禁 | L1 | 修复 F1 时 |
-| 双实例并发启动（mutex/E1009） | F21 | L3（跨进程） | 统一整改期 |
-| `PollReadiness` 直接测试（当前零覆盖：不可压缩的硬编码 sleep 所致） | F26 | L2（注入 delay 后补） | 修复 F2/F26 时 |
-| "用户自己的 node 监听 3080 不被 Zombie 误杀" | F4 | L3 | 修复 F4 时 |
-| Apply 中断于 Move/ClearPending 之间 | F23 | L3 | 修复 F23 时 |
-| `VerifySha256Async`（校验失败/官方源优先） | — | L2 | 统一整改期（可选） |
+| ~~`DshDiscovery.CompareVersions` Theory（rc.10>rc.9 等）~~ | F1 | L1 | ✅ 批次 1（`ShellLogicVersionPolicyContractTests` 24 例） |
+| 就绪轮询日志判定（陈旧标志不污染/新增标志宽限后判死）+ 时间注入 | F2/F26 | L2+L3 | ✅ 批次 2（`PollReadinessTests` ×6，虚拟时钟毫秒级） |
+| golden 样本：StartupErrorMarkers / IsShellAuthoredLogEntry | F31（部分） | L3 | ✅ 批次 2（`GoldenDshLogTests` ×6）；其余解析器批次 6 补齐 |
+| dsh 输出解析器 golden 其余（MatchBootErrorSignature / EvaluatePageProbe / ProbeVersionOutput） | F31 | L3 | ⏳ 批次 6 |
+| "用户自己的 node 监听 3080 不被 Zombie 误杀" | F4 | L3 | ⏳ 批次 5 |
+| 双实例并发启动（mutex/E1009） | F21 | L1/L3 | ⏳ 批次 5 |
+| Apply 中断于 Move/ClearPending 之间 | F23 | L3 | ⏳ 批次 8 |
+| `VerifySha256Async`（校验失败/官方源优先） | — | L2 | ⏳ 统一整改期（可选） |
 
 **建议合并/删除**：删除死契约面而非测试它（`SafeProfileBuilder.BuildSafeProfileArguments`、`StagedUpdate.Package`、`Program` 的 DSH_PROFILE 读写）；`V030FeaturesTests`（37 例）按域拆归位是组织性改进，非紧急。
 

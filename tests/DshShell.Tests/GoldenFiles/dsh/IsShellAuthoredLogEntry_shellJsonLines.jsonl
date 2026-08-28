@@ -1,0 +1,3 @@
+{"ts":"2026-08-28T10:00:00.000Z","level":"Error","code":"E1012","message":"npm 全局安装失败（所有镜像源均不可用或共享预算耗尽）。\n最后错误：\nnpm ERR! network request failed"}
+{"ts":"2026-08-28T10:00:01.000Z","level":"Info","code":"E2001","message":"dsh 服务启动失败（http://127.0.0.1:3080）。请查看统一日志。"}
+{"ts":"2026-08-28T10:00:02.000Z","level":"Warn","code":"E2002","ctx":{"port":3080}}
