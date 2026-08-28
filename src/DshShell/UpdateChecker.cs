@@ -105,64 +105,12 @@ public static class UpdateChecker
     ///
     /// v0.4.0 修复：dsh 实际以 SemVer prerelease 发布（如 0.1.0-rc.7），旧实现用 Version.TryParse
     /// 对含 '-' 的版本解析失败 → 双方都落成 0.0.0 → 永远检测不到 rc7 更新（rc6→rc7 无提示的根因）。
-    /// 现按 SemVer 2.0.0 规则比较：MAJOR.MINOR.PATCH 数值比较，相等时再比较 prerelease（无
-    /// prerelease &gt; 有 prerelease；分段比较：纯数字段按数值、字母数字段按字典序、数字段 &lt; 字母段）。
+    /// 【F1 统一】v0.4.x 起委托 ShellLogic.VersionPolicy 全系统唯一实现——历史教训：
+    /// 本方法修复 prerelease 比较时，DshDiscovery（发现层）仍持旧序数比较器，
+    /// "更新检测判对了、运行时挑选仍判反"，两套比较器漂移即"更新成功但永远启动旧版"。
     /// </summary>
     public static int CompareVersions(string? a, string? b)
-    {
-        var va = ParseSemVer(a);
-        var vb = ParseSemVer(b);
-        for (var i = 0; i < 3; i++)
-        {
-            var c = va.Num[i].CompareTo(vb.Num[i]);
-            if (c != 0) return c;
-        }
-        // 主版本相等 → 比较 prerelease：无 prerelease > 有 prerelease
-        if (va.Pre.Length == 0 && vb.Pre.Length == 0) return 0;
-        if (va.Pre.Length == 0) return 1;
-        if (vb.Pre.Length == 0) return -1;
-        var n = Math.Min(va.Pre.Length, vb.Pre.Length);
-        for (var i = 0; i < n; i++)
-        {
-            var c = ComparePrePart(va.Pre[i], vb.Pre[i]);
-            if (c != 0) return c;
-        }
-        return va.Pre.Length.CompareTo(vb.Pre.Length); // 段多者更大（1.0.0-rc.1 < 1.0.0-rc.1.1）
-    }
-
-    private static int ComparePrePart(string a, string b)
-    {
-        var aNum = int.TryParse(a, out var ai);
-        var bNum = int.TryParse(b, out var bi);
-        if (aNum && bNum) return ai.CompareTo(bi);          // 纯数字段 → 数值比较
-        if (aNum) return -1;                                 // 数字段 < 字母数字段（SemVer 规则）
-        if (bNum) return 1;
-        return string.CompareOrdinal(a, b);                  // 字母数字段 → 字典序
-    }
-
-    private readonly record struct SemVer(int[] Num, string[] Pre);
-
-    private static SemVer ParseSemVer(string? raw)
-    {
-        var s = (raw ?? "").Trim().TrimStart('v', 'V');
-        var dash = s.IndexOf('-');
-        var core = dash >= 0 ? s[..dash] : s;
-        var pre = dash >= 0 ? s[(dash + 1)..] : "";
-
-        var parts = core.Split('.');
-        var nums = new int[3];
-        var valid = false;
-        for (var i = 0; i < Math.Min(parts.Length, 3); i++)
-        {
-            if (int.TryParse(parts[i], out var n)) { nums[i] = n; valid = true; }
-        }
-        if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>()); // 非法 → 0.0.0
-        if (parts.Length == 1 && parts[0].Length == 0) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
-        var preParts = pre.Length == 0
-            ? Array.Empty<string>()
-            : pre.Split('.').Where(p => p.Length > 0).ToArray();
-        return new SemVer(nums, preParts);
-    }
+        => ShellLogic.VersionPolicy.CompareVersions(a, b);
 
     /// <summary>
     /// 本地 dsh 版本：委托 DshDiscovery 统一发现（与启动链同源，ADR-024）。

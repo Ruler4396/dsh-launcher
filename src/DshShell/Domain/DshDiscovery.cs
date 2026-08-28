@@ -182,29 +182,15 @@ public static class DshDiscovery
         return Path.Combine(dshHome, "dsh-launcher");
     }
 
+    /// <summary>
+    /// 版本比较（F1 修复）：委托 ShellLogic.VersionPolicy 全系统唯一实现。
+    /// 历史教训：本方法曾用 string.CompareOrdinal 比较 prerelease——'1' &lt; '9' 使
+    /// 0.1.0-rc.10 被判小于 0.1.0-rc.9，runtimes\ 多版本共存时（apply 不删旧目录，
+    /// 共存是常态）发现层永远选中旧版，"更新进度 100%、重启后版本没变"。
+    /// 与 UpdateChecker（更新检测）必须同源，严禁再出现两套比较器。
+    /// </summary>
     internal static int CompareVersions(string? a, string? b)
-    {
-        var sa = (a ?? "").Trim().TrimStart('v');
-        var sb = (b ?? "").Trim().TrimStart('v');
-        var da = sa.IndexOf('-');
-        var db = sb.IndexOf('-');
-        var coreA = da >= 0 ? sa[..da] : sa;
-        var coreB = db >= 0 ? sb[..db] : sb;
-        var partsA = coreA.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
-        var partsB = coreB.Split('.').Select(p => int.TryParse(p, out var n) ? n : 0).ToArray();
-        for (var i = 0; i < Math.Max(partsA.Length, partsB.Length); i++)
-        {
-            var va = i < partsA.Length ? partsA[i] : 0;
-            var vb = i < partsB.Length ? partsB[i] : 0;
-            if (va != vb) return va.CompareTo(vb);
-        }
-        var preA = da >= 0 ? sa[(da + 1)..] : "";
-        var preB = db >= 0 ? sb[(db + 1)..] : "";
-        if (preA.Length == 0 && preB.Length == 0) return 0;
-        if (preA.Length == 0) return 1;
-        if (preB.Length == 0) return -1;
-        return string.CompareOrdinal(preA, preB);
-    }
+        => ShellLogic.VersionPolicy.CompareVersions(a, b);
 
     private static string? FindOnPath(string fileName)
     {
