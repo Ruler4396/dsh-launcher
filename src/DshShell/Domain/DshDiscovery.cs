@@ -167,7 +167,12 @@ public static class DshDiscovery
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // [F24] bin 入口解析失败（package.json 损坏/schema 变更）留痕：否则下游只见
+            // 笼统 E2001，"为什么解析不到入口"无从归因。
+            Logger.Warn($"bin entry resolve failed for {runtimeDir}: {ex.Message}");
+        }
         return null;
     }
 
@@ -219,7 +224,7 @@ public static class DshDiscovery
         {
             // 尝试找到 node.exe 和 dsh 的 JS 入口
             var nodeExe = FindNodeExe();
-            var dshEntryJs = ResolvePackageEntry("@deepseek-ai/dsh");
+            var dshEntryJs = ResolvePackageEntry(PackageName);
 
             string fileName;
             string arguments;

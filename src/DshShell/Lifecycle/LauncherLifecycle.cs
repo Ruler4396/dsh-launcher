@@ -77,7 +77,11 @@ public sealed class LauncherLifecycle
         [(LifecycleState.ShuttingDown, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown, // 幂等：收尾可再次确认
     };
 
-    /// <summary>触发一次转移；Fatal 为任意非终结态的全局逃生口（→ Failed），非法转移抛错（Fail-fast）。</summary>
+    /// <summary>
+    /// 触发一次转移；Fatal 为任意非终结态的全局逃生口（→ Failed），非法转移抛错（Fail-fast）。
+    /// [F17] 转移日志补全四要素中的三要素：旧状态 → 触发源 → 新状态（时间戳由 Logger 补）。
+    /// 旧实现只记新状态，排障时无法回答"谁把它变成 Running/ShuttingDown"。
+    /// </summary>
     public void Fire(LifecycleTrigger trigger)
     {
         if (trigger == LifecycleTrigger.Fatal)
@@ -85,7 +89,9 @@ public sealed class LauncherLifecycle
             // 全局逃生口：任意非终结态 → Failed；已终结（Failed/ShuttingDown）则幂等忽略
             if (_state is not (LifecycleState.Failed or LifecycleState.ShuttingDown))
             {
+                var fatalFrom = _state;
                 _state = LifecycleState.Failed;
+                Logger.Info($"lifecycle: {fatalFrom} --Fatal--> Failed");
                 StateChanged?.Invoke(this, _state);
             }
             return;
@@ -94,7 +100,9 @@ public sealed class LauncherLifecycle
             throw new InvalidOperationException(
                 $"非法生命周期转移: {_state} + {trigger}");
 
+        var from = _state;
         _state = next;
+        Logger.Info($"lifecycle: {from} --{trigger}--> {next}");
         StateChanged?.Invoke(this, _state);
     }
 }

@@ -11,6 +11,10 @@ namespace DshWeb.Domain;
 /// </summary>
 public sealed class SafeModeState
 {
+    // [F18] 并发写保护：RecordFailure（吸收态 VerdictUpdated 线程）与 RegisterBootFailure
+    // （Failed 裁决线程）可并发到达——固定 .tmp 路径互踩会让 Save 抛 IOException（被吞）
+    // 且 lastFailure/计数可能互相覆盖旧值。序列化后语义：后到者的整体状态即最新真相。
+    private readonly object _sync = new();
     private readonly string _storePath;
 
     /// <summary>当前是否处于安全模式。</summary>
@@ -45,16 +49,13 @@ public sealed class SafeModeState
     /// <summary>进入安全模式（记录梯级并落盘，崩溃/重启后仍可识别）。</summary>
     public void Activate(SafeProfileTier tier)
     {
-        IsActive = true;
-        Tier = tier;
-        Save();
+        lock (_sync) { IsActive = true; Tier = tier; Save(); }
     }
 
     /// <summary>退出安全模式（落盘；两级阶梯均失败或用户恢复正常模式时调用）。</summary>
     public void Deactivate()
     {
-        IsActive = false;
-        Save();
+        lock (_sync) { IsActive = false; Save(); }
     }
 
     /// <summary>记录启动失败证据（融合视图原文；VerdictUpdated 追加证据时整体重写）。
@@ -62,23 +63,24 @@ public sealed class SafeModeState
     /// 计数由 <see cref="RegisterBootFailure"/> 在 Failed 恰好一次的路径上显式推进。</summary>
     public void RecordFailure(JsonElement failure)
     {
-        LastFailure = failure.Clone();
-        Save();
+        lock (_sync) { LastFailure = failure.Clone(); Save(); }
     }
 
     /// <summary>推进连续启动失败计数并落盘（组合根在 Failed 裁决处理路径恰好调用一次）。</summary>
     public void RegisterBootFailure()
     {
-        ConsecutiveBootFailures++;
-        Save();
+        lock (_sync) { ConsecutiveBootFailures++; Save(); }
     }
 
     /// <summary>好符号确认健康 → 清零连续失败计数并落盘（幂等：已为 0 时不产生 IO）。</summary>
     public void ResetFailureStreak()
     {
-        if (ConsecutiveBootFailures == 0) return;
-        ConsecutiveBootFailures = 0;
-        Save();
+        lock (_sync)
+        {
+            if (ConsecutiveBootFailures == 0) return;
+            ConsecutiveBootFailures = 0;
+            Save();
+        }
     }
 
     private void Load()
@@ -107,6 +109,7 @@ public sealed class SafeModeState
 
     private void Save()
     {
+        // 注意：调用方持有 _sync 锁（读-改-写与落盘须原子）；Save 内部不做二次加锁。
         try
         {
             var dir = Path.GetDirectoryName(_storePath);

@@ -415,9 +415,12 @@ public sealed class ServiceManager : IServiceManager
                     {
                         Thread.Sleep(20); // 预期内瞬时冲突：短退避后重试
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
-                        return; // 持续冲突/路径级失败：放弃该行（非诊断关键路径），绝不反压子进程
+                        // [F24] 持续冲突/路径级失败：放弃该行（绝不反压子进程），但必须留痕——
+                        // 丢的可能是服务崩溃堆栈（插件归因证据源，LogEvidenceIndicatesPlugin 依赖）。
+                        Logger.Warn($"dropped service log line after retries (evidence loss): {rendered} ({ex.Message})");
+                        return;
                     }
                 }
             }

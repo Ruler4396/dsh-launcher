@@ -12,8 +12,6 @@ namespace DshWeb;
 /// </summary>
 public static class StagedUpdate
 {
-    public const string Package = "@deepseek-ai/dsh";
-
     /// <summary>应用失败达到该次数后，启动气泡降级为仅日志（仍保留手动 npm 命令提示）。</summary>
     public const int MaxNotifyFailures = 2;
 
