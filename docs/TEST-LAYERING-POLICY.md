@@ -43,7 +43,8 @@
 | golden 样本：StartupErrorMarkers / IsShellAuthoredLogEntry | F31（部分） | L3 | ✅ 批次 2（`GoldenDshLogTests` ×6）；其余解析器批次 6 补齐 |
 | dsh 输出解析器 golden 其余（MatchBootErrorSignature / EvaluatePageProbe / ProbeVersionOutput） | F31 | L3 | ⏳ 批次 6 |
 | "用户自己的 node 监听 3080 不被 Zombie 误杀" | F4 | L3 | ⏳ 批次 5 |
-| 双实例并发启动（mutex/E1009） | F21 | L1/L3 | ⏳ 批次 5 |
+| ~~双实例并发启动（mutex/E1009）~~ | F21 | L1/L3 | ⏳ 批次 5 |
+| 会话生命周期汇入状态机（RequestShutdown/WebViewCrashed/关机不拦截） | F13/F14/F15 | L1/L2 | ✅ 批次 4（LauncherLifecycleTests ×2 + LauncherAppScenarioTests ×3 + ShellLogicTests Theory ×5） |
 | Apply 中断于 Move/ClearPending 之间 | F23 | L3 | ⏳ 批次 8 |
 | `VerifySha256Async`（校验失败/官方源优先） | — | L2 | ⏳ 统一整改期（可选） |
 

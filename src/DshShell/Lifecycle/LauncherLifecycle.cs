@@ -63,6 +63,9 @@ public sealed class LauncherLifecycle
         [(LifecycleState.WaitingForReadiness, LifecycleTrigger.ReadinessTimedOut)] = LifecycleState.ShuttingDown,
 
         [(LifecycleState.InitializingUI, LifecycleTrigger.UIInitialized)] = LifecycleState.Running,
+        // WebView 渲染崩溃发生在 UI 初始化完成前（CoreWebView2 已建立、UIInitialized 未触发）：
+        // 与 Running 同语义——崩溃被壳拦截自愈，不是终结事件（F13 接线时的合法事件面收敛）。
+        [(LifecycleState.InitializingUI, LifecycleTrigger.WebViewCrashed)] = LifecycleState.InitializingUI,
 
         [(LifecycleState.Running, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
         [(LifecycleState.Running, LifecycleTrigger.Fatal)] = LifecycleState.Failed,
