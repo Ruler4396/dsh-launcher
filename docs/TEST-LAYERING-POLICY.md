@@ -46,8 +46,9 @@
 | "用户自己的 node 监听 3080 不被 Zombie 误杀" | F4 | L3 | ⏳ 批次 5 |
 | ~~双实例并发启动（mutex/E1009）~~ | F21 | L1/L3 | ⏳ 批次 5 |
 | 会话生命周期汇入状态机（RequestShutdown/WebViewCrashed/关机不拦截） | F13/F14/F15 | L1/L2 | ✅ 批次 4（LauncherLifecycleTests ×2 + LauncherAppScenarioTests ×3 + ShellLogicTests Theory ×5） |
-| Apply 中断于 Move/ClearPending 之间 | F23 | L3 | ⏳ 批次 8 |
-| `VerifySha256Async`（校验失败/官方源优先） | — | L2 | ⏳ 统一整改期（可选） |
+| ~~Apply 中断于 Move/ClearPending 之间~~ | F23 | L3 | ✅ 批次 8（清账前移；收敛语义由既有 UpdateOutcomes 覆盖） |
+| ~~`VerifySha256Async`（校验失败/官方源优先）~~ | — | L2 | ⏳ 统一整改期（可选，未执行） |
+| 无账本孤儿服务兜底认领（node+HTTP 健康） | F19 | L3 | ✅ 批次 8（TryAdoptOrphanService 无账本分支） |
 
 **建议合并/删除**：删除死契约面而非测试它（`SafeProfileBuilder.BuildSafeProfileArguments`、`StagedUpdate.Package`、`Program` 的 DSH_PROFILE 读写）；`V030FeaturesTests`（37 例）按域拆归位是组织性改进，非紧急。
 

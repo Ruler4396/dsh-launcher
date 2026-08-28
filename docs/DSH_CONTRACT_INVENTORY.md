@@ -23,8 +23,8 @@
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
 | 3 | `dsh --version` stdout 版本号 | 弱（首个版本形态行：v 可选、2-4 段数字、可带 -pre/+meta；F3 已修复） | `DshDiscovery.ProbeVersionOutput` → `ExtractVersionLine` | 低 | 3s 超时杀树；找不到匹配行→null（fail-open，版本未知仍可启动） | `VersionProbeContractTests` + `DshDiscoveryProbeTests`（RealOS）+ golden ×2 |
-| 4 | 启动错误标志关键字（npm ERR/EACCES/ECONNRESET…） | 弱包含 | `ShellLogic.ServiceReadiness.StartupErrorMarkers` × `ServiceManager.PollReadiness` | 低（**F2 已修复**：增量扫描只看入口后新增字节 + 壳行过滤 + 虚拟时钟宽限） | 15s 宽限 + 超时兜底 | `PollReadinessTests`（F2 回归门禁）+ `GoldenDshLogTests` |
-| 5 | 运行期 boot 错误签名（plugin fatal / MODULE_NOT_FOUND…） | 弱包含 | `ShellLogic.BootGuard.BootErrorMarkers` × `BootHealthMonitor` 日志层 | 中（F6） | 增量扫描 + 壳行跳过（`IsShellAuthoredLogEntry`）+ `DSH_BOOT_SIGNATURES` 整表覆盖 | **golden 样本缺** |
+| 4 | 启动错误标志关键字（npm ERR/EACCES/ECONNRESET…） | 弱包含，**仅限 `[dsh]` 管道行**（F6） | `ShellLogic.ServiceReadiness.StartupErrorMarkers` × `ServiceManager.PollReadiness` | 低（**F2 已修复**：增量扫描只看入口后新增字节 + 壳行过滤 + 虚拟时钟宽限） | 15s 宽限 + 超时兜底 | `PollReadinessTests`（F2 回归门禁）+ `GoldenDshLogTests` |
+| 5 | 运行期 boot 错误签名（plugin fatal / MODULE_NOT_FOUND…） | 弱包含，**仅限 `[dsh]` 管道行**（F6） | `ShellLogic.BootGuard.BootErrorMarkers` × `BootHealthMonitor` 日志层 | 低 | 增量扫描 + 壳行跳过（`IsShellAuthoredLogEntry`）+ 管道前缀过滤（`IsServicePipedLogLine`）+ `DSH_BOOT_SIGNATURES` 整表覆盖 | `GoldenBootGuardTests`（含良性 ECONNRESET 管道行不误判样本） |
 | 6 | 前端好符号：`window.__DSH_BOOT__.version` ‖ `__ModuleLoader__.mode==="live"`【标红：dsh 前端内部符号】 | 强（JS 表达式） | `BootGuard.BootProfile.GoodSymbol` | **高（F5）** | Rendered 豁免（innerText≥60）+ AbsentThreshold 计票 + env 整体覆盖 | `BootGuardContractTests.DefaultGoodSymbol_CoversLegacyAndModernBootChains` |
 | 7 | 前端坏签名文案（bootstrap facade is missing / dsh-boot-failed）【标红】 | 弱包含 | `BootProfile.BadSignatures` × `EvaluatePageProbe` | 中 | 改版失效=漏报不误杀；坏签名优先于好符号（S22 教训） | `BootGuardContractTests` 矩阵 |
 | 8 | 前端→壳 postMessage 致命消息关键字【标红】 | 弱包含 ⚠️ 匹配过宽（F16） | `WebViewManager.InitializeAsync` WebMessageReceived | 中 | 失效→仅少一条安全模式触发通道 | 无（缺口） |
@@ -43,7 +43,7 @@
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
 | 13 | 就绪信号 = `GET http://127.0.0.1:{port}/` 任意应答（含 4xx/5xx） | 弱 | `ServiceReadiness.IsHttpReady`（C3/ADR-005） | 低 | TCP 300ms + 预算 180s/360s + e2e 20s | `ContractTests.IsHttpReady_*` |
-| 14 | 端口占用者进程名=node ⇒ 是 dsh | 弱且**过宽**（F4：会误伤用户自己的 node 程序） | `IsLikelyDshService` × `ServiceManager.ProbePort` | **高** | 端口归属双校验（仅防 PID 复用） | `ContractTests.IsLikelyDshService_*`；误伤场景无哨兵（缺口） |
+| 14 | 端口占用者进程名=node ⇒ 是 dsh | 弱，**账本优先**（F4 已修复：账本外 node 判 Foreign 绝不强杀） | `IsLikelyDshService` × `ServiceManager.ProbePort`（knownServicePid 账本注入） | 低 | 端口归属双校验（防 PID 复用）+ 身份账本（`IsKnownDshServicePid`：本会话拉起 ∪ pid 文件 ∪ 无账本健康认领） | `ServiceIdentityGuardTests`（F4 三态） |
 | 15 | 3s HTTP 窗口内的"僵尸"判定 | 强（时序假设） | `ProbePort` | 中（慢启动健康服务可能被误杀） | Zombie→杀树重启自愈 | `ServiceManagerTests.ProbePort_*` |
 
 ## HTTP / 包管理
@@ -96,3 +96,4 @@
 | 2026-08-28 | 初版建表（33 项契约，摘自深度审查批次一） | docs/reviews/2026-08-28-quality-review.md §1.4 |
 | 2026-08-28 | #4 启动错误标志：F2 已修复（增量扫描+壳行过滤），哨兵补 PollReadinessTests/GoldenDshLogTests | remediation 分支批次 2 |
 | 2026-08-28 | #3 dsh --version：F3 已修复（首个版本形态行，golden ×2） | remediation 分支批次 3 |
+| 2026-08-28 | #4/#5 错误签名限定 `[dsh]` 管道行（F6）；#14 端口身份账本优先（F4）；整改全部落地（F1-F31，commit 序列见审查留档执行记录） | remediation 分支批次 5-8 |
