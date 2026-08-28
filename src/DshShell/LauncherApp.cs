@@ -320,9 +320,37 @@ public sealed class LauncherApp
 
     /// <summary>
     /// WebView 渲染崩溃事件入口：状态机自转移（Running→Running）广播"崩溃已被拦截并触发重载"，
-    /// 而非让应用整体崩溃。WebViewManager.ProcessFailed → 本方法由组合根接线。
+    /// 而非让应用整体崩溃。WebViewManager.ProcessFailed → 本方法由组合根接线（F13）。
+    /// 终结/关停态（ShuttingDown/Failed）下崩溃事件无意义——记日志吸收，不触发转移
+    /// （避免向状态机投递非法转移触发其 Fail-Fast）。
     /// </summary>
-    public void HandleWebViewCrashed() => _lifecycle.Fire(LifecycleTrigger.WebViewCrashed);
+    public void HandleWebViewCrashed()
+    {
+        var state = _lifecycle.State;
+        if (state is LifecycleState.Running or LifecycleState.InitializingUI)
+            _lifecycle.Fire(LifecycleTrigger.WebViewCrashed);
+        else
+            Logger.Info($"webview crash while {state}; state machine self-transition skipped");
+    }
+
+    /// <summary>
+    /// [F13] 运行期关停请求进入状态机：Running → ShuttingDown（组合根 BeginShutdownAsync 首行调用）。
+    /// 此前退出编排完全绕过状态机（ShutdownRequested 触发器零调用），Running 期会话状态由
+    /// Program 静态字段组表达——本方法是"关停汇入集中转移入口"的接线点。
+    /// 非 Running 态（Splash 流水线中途的罕见退出请求）不转移、仅记日志：状态机 Fail-Fast
+    /// 语义保留给编程错误，运行期正常关停不应令退出编排自身崩溃。
+    /// </summary>
+    public bool RequestShutdown()
+    {
+        var state = _lifecycle.State;
+        if (state != LifecycleState.Running)
+        {
+            Logger.Info($"shutdown requested while {state}; state machine transition skipped");
+            return false;
+        }
+        _lifecycle.Fire(LifecycleTrigger.ShutdownRequested);
+        return true;
+    }
 
     private bool TryReadTestDelay(out int ms)
     {

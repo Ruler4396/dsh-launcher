@@ -49,6 +49,42 @@ namespace DshShell.Tests.Managers;
             states);
     }
 
+    // ---------------- 场景 1b：运行期关停汇入状态机（F13） ----------------
+
+    [Fact]
+    public async Task RequestShutdown_AfterRunning_TransitionsToShuttingDown_F13()
+    {
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        var states = Trace(app);
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Running, app.State);
+
+        // 退出编排首行的关停请求必须产生 Running→ShuttingDown 转移（此前全程旁路状态机）。
+        Assert.True(app.RequestShutdown());
+        Assert.Equal(LifecycleState.ShuttingDown, app.State);
+        Assert.Contains(LifecycleState.ShuttingDown, states);
+    }
+
+    [Fact]
+    public async Task RequestShutdown_Twice_IsIdempotentTransition()
+    {
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        await app.RunStartupAsync();
+        Assert.True(app.RequestShutdown());
+        // ShuttingDown 下再次请求：RequestShutdown 检测非 Running 不再 Fire（幂等，防非法转移）
+        Assert.False(app.RequestShutdown());
+        Assert.Equal(LifecycleState.ShuttingDown, app.State);
+    }
+
+    [Fact]
+    public void HandleWebViewCrashed_FromIdle_IsAbsorbedWithoutThrow()
+    {
+        // 终结/未启动态收到崩溃事件：只记日志吸收，绝不向状态机投递非法转移（Fail-Fast 保留给编程错误）。
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        app.HandleWebViewCrashed();
+        Assert.Equal(LifecycleState.Idle, app.State);
+    }
+
     // ---------------- 场景 2：Runtime Failure（E1004 校验和不匹配） ----------------
 
     [Fact]

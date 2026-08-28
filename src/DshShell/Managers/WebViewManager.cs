@@ -55,6 +55,13 @@ public sealed class WebViewManager : IWebViewManager
     public static event Action<string>? CdpExceptionCaptured;
 
     /// <summary>
+    /// [F13] 主窗 WebView2 渲染/GPU 进程崩溃事件（仅主窗实例触发；弹窗不触发）。
+    /// 组合根接线到 LauncherApp.HandleWebViewCrashed，使 Running 期崩溃进入状态机
+    /// 自转移广播——此前该触发器零调用，崩溃自愈完全绕过状态机。
+    /// </summary>
+    public static event Action? MainWebCrashed;
+
+    /// <summary>
     /// 在主窗 WebView2 的 UI 线程执行脚本并返回原始 JSON 结果（ADR-023 页面层探针执行器）。
     /// 控件不可用/已释放 → null（调用方按"探针无效"处理，绝不判死）；线程封送经 Control.BeginInvoke。
     /// [INVARIANT] CoreWebView2 属性访问本身要求 UI 线程——守卫只能摸 IsDisposed/IsHandleCreated，
@@ -242,6 +249,11 @@ public sealed class WebViewManager : IWebViewManager
                 else
                     Interlocked.Increment(ref _crashCount);
                 Interlocked.Exchange(ref _lastCrashTick, now);
+
+                // [F13] 主窗崩溃广播进状态机（Running→Running 自转移；幂等安全——
+                // 事件处理器内部对非 Running/InitializingUI 态只记日志）。
+                try { MainWebCrashed?.Invoke(); }
+                catch (Exception ex) { Logger.Warn("main-web crashed broadcast failed: " + ex.Message); }
 
                 if (Volatile.Read(ref _crashCount) >= 3)
                 {

@@ -59,6 +59,36 @@ public class LauncherLifecycleTests
     }
 
     [Fact]
+    public void ShutdownRequested_FromRunning_TransitionsToShuttingDown_F13()
+    {
+        // F13 回归锁定：运行期关停请求必须汇入状态机（此前 ShutdownRequested 触发器
+        // 零调用，退出编排完全旁路）。组合根 BeginShutdownAsync 首行经
+        // LauncherApp.RequestShutdown 触发本转移。
+        var fs = new LauncherLifecycle();
+        DriveToRunning(fs);
+        Assert.Equal(LifecycleState.Running, fs.State);
+        fs.Fire(LifecycleTrigger.ShutdownRequested);
+        Assert.Equal(LifecycleState.ShuttingDown, fs.State);
+    }
+
+    [Fact]
+    public void WebViewCrash_FromInitializingUI_IsAbsorbed()
+    {
+        // 崩溃事件到达于 UIInitialized 之前（CoreWebView2 已建立、主窗初始化未完成）：
+        // 与 Running 同语义吸收——这是合法事件面而非编程错误（F13 接线配套；
+        // Idle 等未启动态仍 Fail-Fast，见 WebViewCrash_FromNonRunning_Throws）。
+        var fs = new LauncherLifecycle();
+        fs.Fire(LifecycleTrigger.StartRequested);
+        fs.Fire(LifecycleTrigger.InstanceConfirmed);
+        fs.Fire(LifecycleTrigger.RuntimeResolved);
+        fs.Fire(LifecycleTrigger.ServiceStarted);
+        fs.Fire(LifecycleTrigger.ServiceReady);
+        Assert.Equal(LifecycleState.InitializingUI, fs.State);
+        fs.Fire(LifecycleTrigger.WebViewCrashed);
+        Assert.Equal(LifecycleState.InitializingUI, fs.State);
+    }
+
+    [Fact]
     public void RuntimeFailed_TransitionsToFailed()
     {
         var fs = new LauncherLifecycle();

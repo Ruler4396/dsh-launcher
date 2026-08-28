@@ -454,4 +454,15 @@ public class ShellLogicTests
         Assert.False(ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.AlwaysOn, false));
         Assert.False(ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(ShellLogic.ServiceLifetime.FollowWindow, false));
     }
+
+    [Theory]
+    [InlineData(ShellLogic.ServiceLifetime.Tray, false, true, false)]  // F15：系统关机/注销 → 永不拦截（防阻塞关机）
+    [InlineData(ShellLogic.ServiceLifetime.Tray, true, true, false)]   // 托盘退出 + 关机 → 放行
+    [InlineData(ShellLogic.ServiceLifetime.FollowWindow, false, true, false)]
+    [InlineData(ShellLogic.ServiceLifetime.AlwaysOn, false, true, false)]
+    [InlineData(ShellLogic.ServiceLifetime.Tray, false, false, true)]  // 非关机路径维持原语义
+    public void ShouldInterceptCloseToTray_SystemSessionEnding_NeverIntercepts_F15(
+        ShellLogic.ServiceLifetime mode, bool trayExit, bool systemEnding, bool expected)
+        => Assert.Equal(expected, ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(
+            mode, trayExit, systemEnding));
 }

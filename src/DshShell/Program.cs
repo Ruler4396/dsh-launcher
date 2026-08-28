@@ -443,6 +443,8 @@ internal static class Program
         WindowManager.Instance.ShowWindowAction = ShowWindowNative;
         WindowManager.Instance.TraceAction = Trace;
         WebViewManager.DownloadNotifyAction = NotifyDownloadComplete;
+        // [F13] 主窗渲染崩溃汇入状态机（Running→Running 自转移广播；非 Running 态内部吸收）。
+        WebViewManager.MainWebCrashed += () => SessionApp?.HandleWebViewCrashed();
         ApplyThemeIcon(form);
         form.HandleCreated += (_, _) => ApplyThemeIcon(form);
         WindowManager.Instance.RegisterThemeWatcher(form);
@@ -454,12 +456,18 @@ internal static class Program
             // 放行关闭，绝不拦截/重复清理。
             if (_shutdownInitiated) return;
 
+            // [F15] 系统会话终止（关机/注销均映射 WindowsShutDown）：永不拦截——把窗口藏进
+            // 托盘等于阻塞系统关机（OS 弹"阻止关机"或超时强杀，且强杀不走任何清理）。
+            // FollowWindow 由下方 BeginShutdownAsync 正常停服；Tray 模式关机时也直接走退出编排。
+            var systemSessionEnding = e.CloseReason == CloseReason.WindowsShutDown;
+
             var mode = ReadLifetimeMode();
             // Tray 模式：关闭窗口隐藏到托盘（插件控制，壳读取配置）。
             // [Regression_TrayResidentSwitchAtRuntime] 图标可能尚未创建（启动时非 Tray、
             // 运行中才切到托盘驻留）：先按需补建再拦截；补建失败（NotifyIcon 异常）
             // 则放行真实关闭——fail-open，绝不把用户困在无托盘可唤起的隐藏窗口里。
-            if (ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(mode, WindowManager.Instance.TrayExitRequested)
+            if (ShellLogic.LifecycleDecisions.ShouldInterceptCloseToTray(
+                    mode, WindowManager.Instance.TrayExitRequested, systemSessionEnding)
                 && !_isBuildInProgress)
             {
                 WindowManager.Instance.EnsureTrayIcon(form);
@@ -915,8 +923,9 @@ internal static class Program
         _firstRunProvisionProgress = s => textProgress.Report(s);
         try
         {
-            var ok = await app.RunStartupAsync(textProgress, ct);
-            return new SplashForm.Outcome(
+        var ok = await app.RunStartupAsync(textProgress, ct);
+        SessionApp = app; // [F13] 持有到会话结束：运行期关停/崩溃事件经此汇入状态机
+        return new SplashForm.Outcome(
                 ok,
                 app.WaitResult,
                 app.ServiceStartedByShell,
@@ -990,6 +999,20 @@ internal static class Program
     /// <summary>本会话的更新引擎引用（CreateLauncherApp 装配；供主窗流程复用同一实例，
     /// 保证 PreApplyIdentityVersion/回滚武装等会话状态一致）。Headless/测试可为 null。</summary>
     internal static IDshUpdateManager? SessionUpdates { get; private set; }
+
+    /// <summary>
+    /// [F13] 本会话的启动编排实例（RunLauncherAppPipelineAsync 装配后持有）：
+    /// 使运行期事件（关停请求/WebView 崩溃）能够汇入 LauncherLifecycle 状态机——
+    /// 此前 app 是局部量，启动完成后无人持有，状态机失联、退出全程旁路。
+    /// </summary>
+    internal static LauncherApp? SessionApp { get; private set; }
+
+    /// <summary>
+    /// [F14] 会话级取消源：退出编排（BeginShutdownAsync）触发 Cancel，安全模式阶梯/
+    /// 重启服务/更新重拉三组后台 Task 在关键边界检查，杜绝"窗口已退出、后台还在
+    /// 停服/拉起/装 npm"的未定义交错。
+    /// </summary>
+    private static readonly CancellationTokenSource SessionCts = new();
 
     /// <summary>阶段 0 后台维护 IO（原 Main 同步项：日志轮转/数据迁移/自启落地等，由 LauncherApp 后台驱动）。
     /// v0.4.0：延迟更新应用也在此执行——属耗时 IO（30-60s），放阶段 0 后用户看到的
@@ -1083,9 +1106,12 @@ internal static class Program
     private static bool WaitSafeModeVerified()
     {
         // 阶段一：readiness（快探经 ServiceLifecycleOps——HTTP 原语已迁出组合根文件）
+        // [F14] 退出编排启动后立即放弃等待（验证已无意义，且不与收尾争抢停启链路）。
         var deadline = DateTime.UtcNow.AddSeconds(60);
-        while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
+        while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
+               && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
             Task.Delay(500).Wait();
+        if (SessionCts.IsCancellationRequested) return false;
         if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
         {
             Logger.Error("safe mode verification: service not ready within 60s", ErrorCodes.E1011);
@@ -1095,7 +1121,7 @@ internal static class Program
         // 阶段二：崩溃签名消失（观察窗口 5s 内无新的插件崩溃消息）
         var baseline = WebViewManager.LastPluginCrashUtc;
         var observeDeadline = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < observeDeadline)
+        while (DateTime.UtcNow < observeDeadline && !SessionCts.IsCancellationRequested)
         {
             if (WebViewManager.LastPluginCrashUtc > baseline)
             {
@@ -1117,6 +1143,12 @@ internal static class Program
     {
         try
         {
+            // [F14] 退出编排已启动：终止本次梯级尝试（Build 幂等、无残留副作用）。
+            if (SessionCts.IsCancellationRequested)
+            {
+                Trace("SAFEMODE(bg): session shutting down; tier attempt skipped");
+                return false;
+            }
             Trace($"SAFEMODE(bg): building tier {tier}");
             if (!SafeProfile.Build(tier))
             {
@@ -1137,6 +1169,15 @@ internal static class Program
             Trace("SAFEMODE(bg): stopping service");
             StopShellService();
             Trace("SAFEMODE(bg): StopShellService returned");
+            // [F14] 停服后、拉起前发现退出编排已启动：不再重启服务（否则壳退出后
+            // 反而拉起一个无人管理的新 dsh 进程）。
+            if (SessionCts.IsCancellationRequested)
+            {
+                BootMonitor?.Stop();
+                SafeMode.Deactivate();
+                Trace("SAFEMODE(bg): session shutting down; service restart skipped");
+                return false;
+            }
             var restartOk = StartDshServiceViaIdentity();
             Trace($"SAFEMODE(bg): identity-driven start returned {restartOk}");
             if (!restartOk)
@@ -1302,6 +1343,15 @@ internal static class Program
     {
         try
         {
+            // [F14] 会话已进入退出编排：证据照常落盘留痕，但不再弹询问/自动重启
+            //（与收尾链路争抢停启动作属 F14 未定义交错）。
+            if (SessionCts.IsCancellationRequested)
+            {
+                PersistBootFailureEvidence(verdict);
+                Trace("boot-monitor: failure handled during shutdown; asks/restarts skipped");
+                return;
+            }
+
             // 0) [update-guard/E4003] 回滚闸门：当前运行的是"已应用、未确认健康"的更新版本，
             //    启动自检失败极可能由新版自身或其数据迁移导致 → 不进安全模式/手动重启询问，
             //    直接自动回滚（还原共享数据 + 隔离新运行时）并用旧版重启服务。
@@ -1557,9 +1607,21 @@ internal static class Program
             {
                 try
                 {
+                    // [F14] 会话已进入退出编排：不再重启服务（避免退出后拉起无主服务）。
+                    if (SessionCts.IsCancellationRequested)
+                    {
+                        Trace("restart-service(bg): session shutting down; restart skipped");
+                        return;
+                    }
                     BootMonitor?.Suspend();
                     Trace("restart-service(bg): stopping service");
                     StopShellService();
+                    if (SessionCts.IsCancellationRequested)
+                    {
+                        BootMonitor?.Stop();
+                        Trace("restart-service(bg): session shutting down; service restart skipped");
+                        return;
+                    }
                     var startOk = StartDshServiceViaIdentity();
                     Trace($"restart-service(bg): identity-driven start returned {startOk}");
                     if (!startOk)
@@ -1570,7 +1632,8 @@ internal static class Program
                         return;
                     }
                     var deadline = DateTime.UtcNow.AddSeconds(60);
-                    while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
+                    while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
+                           && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                         await Task.Delay(500);
                     if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
                     {
@@ -1715,6 +1778,13 @@ internal static class Program
     {
         _ = Task.Run(() =>
         {
+            // [F14] 会话已进入退出编排：不再启动安全模式阶梯（避免"窗口已退出、后台还
+            // 在停服/拉起"的未定义交错）。
+            if (SessionCts.IsCancellationRequested)
+            {
+                Trace("SAFEMODE(bg): session shutting down; ladder skipped");
+                return;
+            }
             try
             {
                 var ok = TryStartSafeMode(form, DshWeb.Domain.SafeProfileTier.Tier1KeepDeepSeekCore); // L1
@@ -2046,6 +2116,12 @@ internal static class Program
             }
             _ = Task.Run(async () =>
             {
+                // [F14] 会话已进入退出编排：放弃"立即重启应用"（pending 保留，下次启动按决策处理）。
+                if (SessionCts.IsCancellationRequested)
+                {
+                    Logger.Info("apply-restart: session shutting down; apply skipped (pending kept)");
+                    return;
+                }
                 StopShellService(); // 停当前服务（含接管/本次拉起的）
                 // 重启即应用路径同样优先本地 tarball（不 npx 现场拉主包）；tarball 缺失回退线上
                 var pending = StagedUpdate.ReadPending();
@@ -2056,8 +2132,13 @@ internal static class Program
                 var applySources = Managers.ProcessRunner.GetNpmRegistrySources();
                 if (Managers.ProcessRunner.TryNpmOverRegistries(applySources, srcIdx => Managers.ProcessRunner.RunNpmCommand(
                         $"install -g \"{installSpec}\" --no-audit --no-fund" + applySources[srcIdx],
-                        out applyErrorTail), "apply-restart", out _))
+                        out applyErrorTail, SessionCts.Token), "apply-restart", out _))
                 {
+                    if (SessionCts.IsCancellationRequested)
+                    {
+                        Logger.Info("apply-restart: session shutting down after install; service restart skipped");
+                        return;
+                    }
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
                     StartDshServiceViaIdentity(); // 按身份直启新版本服务（ADR-024）
@@ -2458,6 +2539,12 @@ internal static class Program
     {
         if (_shutdownInitiated) return;
         _shutdownInitiated = true;
+        // [F14] 通知全部后台 Task（安全模式阶梯/重启服务/更新重拉）：会话正在收尾。
+        try { SessionCts.Cancel(); } catch { /* 预期不会失败 */ }
+        // [F13] 关停汇入状态机（Running → ShuttingDown）；非 Running 态由 RequestShutdown
+        // 记日志吸收，绝不令退出编排自身失败。
+        try { SessionApp?.RequestShutdown(); }
+        catch (Exception ex) { Logger.Warn("shutdown: state machine transition failed: " + ex.Message); }
         try
         {
             if (mainForm is { IsDisposed: false })

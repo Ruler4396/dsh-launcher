@@ -1094,7 +1094,15 @@ public static class ShellLogic
         /// [INVARIANT] This MUST be called BEFORE WebView2 disposal. See ADR-002 (ORDER-INVARIANT).
         /// </summary>
         internal static bool ShouldInterceptCloseToTray(ServiceLifetime mode, bool trayExitRequested)
-            => mode == ServiceLifetime.Tray && !trayExitRequested;
+            => ShouldInterceptCloseToTray(mode, trayExitRequested, systemSessionEnding: false);
+
+        /// <summary>
+        /// FormClosing 托盘拦截决策（矩阵 L1 + F15）：系统会话终止（关机/注销）时**永不拦截**——
+        /// 此时把窗口藏进托盘等于阻塞系统关机（OS 弹"阻止关机"或超时强杀，且强杀不走任何清理）。
+        /// systemSessionEnding 由组合根从 CloseReason.WindowsShutDown/SessionEnding 归一传入。
+        /// </summary>
+        internal static bool ShouldInterceptCloseToTray(ServiceLifetime mode, bool trayExitRequested, bool systemSessionEnding)
+            => mode == ServiceLifetime.Tray && !trayExitRequested && !systemSessionEnding;
 
         /// <summary>
         /// 关窗/托盘退出时**是否停止 dsh 服务**决策（矩阵 M1）：
