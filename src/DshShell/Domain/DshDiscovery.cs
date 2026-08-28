@@ -243,9 +243,11 @@ public static class DshDiscovery
     }
 
     /// <summary>
-    /// 有界版本探测（内部可测）：启动子进程采集 stdout 首个非空行为版本号。
+    /// 有界版本探测（内部可测）：启动子进程采集 stdout 中的版本号。
     /// 三必须合规：stdout/stderr 异步排空（防管道缓冲满死锁）、WaitForExit(timeout)、
     /// 超时 Kill(entireProcessTree) 并回收。超时/启动失败返回 null。
+    /// 【F3】版本提取委托 <see cref="ExtractVersionLine"/>（旧行为把整段 stdout 当版本号，
+    /// dsh 输出任何 banner/提示行即产生脏版本）。
     /// </summary>
     internal static string? ProbeVersionOutput(string fileName, string arguments, int timeoutMs)
     {
@@ -274,16 +276,37 @@ public static class DshDiscovery
                 return ProbeMemo[memoKey] = null; // 失败同样记忆：防会话内反复 3s 空转
             }
             var output = outputTask.Result; // 进程已退出（WaitForExit=true）→ 管道已关闭，任务必已完成
-            var version = string.IsNullOrWhiteSpace(output) ? null : output.Trim();
-            if (version is not null && version.Contains('.') && version.Any(char.IsDigit))
-                return ProbeMemo[memoKey] = version;
-            return ProbeMemo[memoKey] = null;
+            return ProbeMemo[memoKey] = ExtractVersionLine(output);
         }
         catch (Exception ex)
         {
             Logger.Warn($"version probe failed for {fileName}: {ex.Message}");
             return ProbeMemo[memoKey] = null;
         }
+    }
+
+    /// <summary>
+    /// 【F3】从版本探测 stdout 提取版本号：按行扫描，返回首个"看起来像版本号"的行
+    /// （v 前缀可选、2-4 段数字、可带 -prerelease/+metadata）。旧行为把整段 stdout
+    /// 当版本号——dsh 输出任何 banner/升级提示行即产生脏版本，更新比较退化为
+    /// 0.0.0 误报循环。找不到匹配行返回 null（fail-open：版本未知不阻断启动，
+    /// 更新检测按"本地未知"处理）。刻意不做松散 token 搜索：避免把 "requires
+    /// node >= 18.0.0" 之类的提示行误认成 dsh 版本。
+    /// </summary>
+    internal static readonly System.Text.RegularExpressions.Regex VersionLineRegex = new(
+        @"^v?\d+(\.\d+){1,3}([-+].*)?$",
+        System.Text.RegularExpressions.RegexOptions.Compiled
+        | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    internal static string? ExtractVersionLine(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length > 0 && VersionLineRegex.IsMatch(line)) return line;
+        }
+        return null;
     }
 
     /// <summary>查找 node.exe 绝对路径。</summary>
