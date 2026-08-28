@@ -98,11 +98,9 @@ public sealed class LauncherApp
         Url = url;
         Port = port;
         ServerManagedExternally = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DSH_WEB_URL"));
-        _lifecycle.StateChanged += (_, s) =>
-        {
-            Logger.Info($"lifecycle: {s}");
-            StateChanged?.Invoke(this, s);
-        };
+        // [F17] 转移轨迹（旧态→触发源→新态）由 LauncherLifecycle.Fire 内统一记录，
+        // 此处不再重复记单要素日志。
+        _lifecycle.StateChanged += (_, s) => StateChanged?.Invoke(this, s);
     }
 
     // 五个 Manager 的读取表面（供外部/测试校验装配完整性）

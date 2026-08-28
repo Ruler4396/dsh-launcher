@@ -13,18 +13,22 @@ internal static class ServiceLifecycleOps
     /// <summary>壳托管服务的 PID 记录文件（按端口隔离）：崩溃/异常退出后残留的服务可被下次启动接管管理。</summary>
     internal static string PidFilePath(string dataDir, int port) => Path.Combine(dataDir, $"service-pid-{port}.txt");
 
-    /// <summary>记录本次壳拉起的服务 PID（服务就绪后调用），供下次启动接管残留服务。</summary>
+    /// <summary>记录本次壳拉起的服务 PID（服务就绪后调用），供下次启动接管残留服务。
+    /// [F22] 原子写（.tmp + File.Move）——半截 pid 文件会让接管判定误入"损坏清账"分支；
+    /// [F24] 失败不再静默：接管链路依赖此账本，失败必须留痕。</summary>
     internal static void RecordServicePid(string dataDir, int port)
     {
         try
         {
             var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
             if (pid > 0)
-                File.WriteAllText(PidFilePath(dataDir, port), pid.ToString());
+                ShellLogic.FileSystemPolicy.AtomicWrite(PidFilePath(dataDir, port), pid.ToString());
         }
-        catch
+        catch (Exception ex)
         {
-            // 记录失败不影响启动
+            // [F24] 记录失败不影响启动，但下次启动将无法接管残留服务（服务可能永久无主）——必须留痕。
+            Logger.Warn($"record service pid failed (next start cannot adopt orphan service): {ex.Message}",
+                ErrorCodes.E2005, new { port });
         }
     }
 
@@ -32,6 +36,9 @@ internal static class ServiceLifecycleOps
     /// 端口已开但本实例没拉起服务时调用：若监听进程正是壳上次拉起的残留服务
     /// （PID 记录在账本），则校验健康后接管管理，避免崩溃/异常退出后服务永久残留。
     /// v0.3.0 健康校验：HTTP 就绪才算可接管；坏状态/旧版本进程不得带病运行。
+    /// [F19/F8g] 无账本兜底：壳可能崩溃于 RecordServicePid 之前（就绪前窗口）——端口
+    /// 占用者确为 node 且 HTTP 健康 → 同样认领并补写账本（此后 F4 账本判定把
+    /// 它视为"我们自己家"的服务，关停链路与 FollowWindow 语义随之生效）。
     /// 返回被接管的 PID（>0），否则 0。
     /// </summary>
     internal static int TryAdoptOrphanService(string dataDir, int port, string url)
@@ -39,8 +46,26 @@ internal static class ServiceLifecycleOps
         try
         {
             var pidFile = PidFilePath(dataDir, port);
-            if (!File.Exists(pidFile)) return 0;
-            if (!int.TryParse(File.ReadAllText(pidFile).Trim(), out var pid) || pid <= 0) return 0;
+            var ledgerPid = 0;
+            var hasLedger = File.Exists(pidFile)
+                            && int.TryParse(File.ReadAllText(pidFile).Trim(), out ledgerPid)
+                            && ledgerPid > 0;
+            if (!hasLedger)
+            {
+                var owner = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
+                if (owner > 0
+                    && ShellLogic.ProcessManagement.IsLikelyDshService(owner)
+                    && IsReady(port, url))
+                {
+                    Logger.Info($"adopted healthy service pid={owner} without ledger (pre-record crash window)");
+                    try { ShellLogic.FileSystemPolicy.AtomicWrite(pidFile, owner.ToString()); }
+                    catch (Exception ex) { Logger.Warn($"ledger backfill failed for pid={owner}: {ex.Message}"); }
+                    return owner;
+                }
+                return 0;
+            }
+
+            var pid = ledgerPid;
             if (ShellLogic.ProcessManagement.GetProcessIdByPort(port) == pid)
             {
                 if (IsReady(port, url))

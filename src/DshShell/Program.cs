@@ -1068,14 +1068,19 @@ internal static class Program
 
     /// <summary>
     /// 读取当前 dsh 版本：委托 DshDiscovery 统一发现（与 UpdateChecker 同源，ADR-024）。
-    /// 会话级缓存：避免重复探测。
+    /// 会话级缓存：避免重复探测。[F20] 已加载标志替代 "unset" 魔法哨兵——local 为 null
+    /// （版本未知）是合法缓存值，不能与"未缓存"混用。
     /// </summary>
-    private static string? _cachedGlobalDshVersion = "unset";
+    private static string? _cachedGlobalDshVersion;
+    private static bool _cachedGlobalDshVersionLoaded;
 
     private static string? ReadGlobalDshVersion()
     {
-        if (_cachedGlobalDshVersion != "unset") return _cachedGlobalDshVersion;
-        _cachedGlobalDshVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version;
+        if (!_cachedGlobalDshVersionLoaded)
+        {
+            _cachedGlobalDshVersion = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version;
+            _cachedGlobalDshVersionLoaded = true;
+        }
         return _cachedGlobalDshVersion;
     }
 
@@ -1161,10 +1166,10 @@ internal static class Program
             SafeMode.Activate(tier);
             Trace($"SAFEMODE: activated tier {tier}, safe profile={SafeProfile.SafeProfileDir}");
 
-            // 关键：安全模式用隔离 profile 启动。设置 DSH_PROFILE 环境变量，使
-            // start-dsh.vbs 回退路径也走 `--profile .dsh-safe`（根级，替代 web 子命令）。
-            // SelfContained 分支由 SafeMode.IsActive 已切换为 --profile。两路一致。
-            Environment.SetEnvironmentVariable("DSH_PROFILE", DshWeb.Domain.SafeProfileBuilder.SafeProfileName);
+            // 安全模式用隔离 profile 启动：SafeMode.IsActive → Identity.WithProfile(.dsh-safe)，
+            // 启动命令由 ServiceLaunch.BuildArgs 注入根级 --profile（ADR-022/024）。
+            // [F8] 旧 DSH_PROFILE 环境变量已删除——唯一读者 start-dsh.vbs 随 ADR-024 退出启动链，
+            // 只写不读的死契约只会误导维护者。
 
             // ADR-023：壳主动重启服务 = 判定挂起窗口（进程退出/HTTP 断链/日志错误都不判 failed）
             BootMonitor?.Suspend();
@@ -1197,7 +1202,6 @@ internal static class Program
                 // 安全模式未真正生效：退出安全状态、恢复窗口原样（不谎报成功）
                 BootMonitor?.Stop(); // 两级阶梯都失败 → 不再有受监视的健康服务
                 SafeMode.Deactivate();
-                Environment.SetEnvironmentVariable("DSH_PROFILE", null);
                 try
                 {
                     form.BeginInvoke(() =>
@@ -1493,7 +1497,7 @@ internal static class Program
                     Managers.ProcessRunner.TryNpmOverRegistries(
                         sources,
                         srcIdx => Managers.ProcessRunner.RunNpmCommand(
-                            $"install -g \"@deepseek-ai/dsh@{_preApplyIdentityVersion}\" --prefer-offline --no-audit --no-fund"
+                            $"install -g \"{DshWeb.Domain.DshDiscovery.PackageName}@{_preApplyIdentityVersion}\" --prefer-offline --no-audit --no-fund"
                             + sources[srcIdx],
                             out _, default, null),
                         "rollback-downgrade", out _);
@@ -1681,8 +1685,7 @@ internal static class Program
                 if (SafeMode.IsActive)
                 {
                     SafeMode.Deactivate();
-                    Environment.SetEnvironmentVariable("DSH_PROFILE", null);
-                    Trace("SAFEMODE: user declined; deactivated sticky safe-mode and cleared DSH_PROFILE");
+                    Trace("SAFEMODE: user declined; deactivated sticky safe-mode");
                 }
                 return;
             }
@@ -2129,7 +2132,7 @@ internal static class Program
                 // 重启即应用路径同样优先本地 tarball（不 npx 现场拉主包）；tarball 缺失回退线上
                 var pending = StagedUpdate.ReadPending();
                 var localTarball = StagedUpdate.LocateTarball(pending.Version, pending.Tarball);
-                var installSpec = localTarball ?? $"@deepseek-ai/dsh@{version}";
+                var installSpec = localTarball ?? $"{DshWeb.Domain.DshDiscovery.PackageName}@{version}";
                 // 任务二一致性：--no-audit --no-fund；快源优先、失败沿源序列降级
                 string applyErrorTail = "";
                 var applySources = Managers.ProcessRunner.GetNpmRegistrySources();
@@ -2219,7 +2222,7 @@ internal static class Program
             string errorTail = "";
             var regSources = Managers.ProcessRunner.GetNpmRegistrySources();
             var ok = Managers.ProcessRunner.TryNpmOverRegistries(regSources, srcIdx => Managers.ProcessRunner.RunNpmCommand(
-                $"pack @deepseek-ai/dsh@{latest} --pack-destination \"" + buildDir + "\""
+                $"pack {DshWeb.Domain.DshDiscovery.PackageName}@{latest} --pack-destination \"" + buildDir + "\""
                     + regSources[srcIdx],
                 out errorTail), "download-tarball", out var packSourceIdx);
             // tarball 下载完成，进度更新由 pnpm 检测后统一处理

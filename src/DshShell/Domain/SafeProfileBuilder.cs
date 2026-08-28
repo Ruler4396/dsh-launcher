@@ -135,10 +135,6 @@ public sealed class SafeProfileBuilder
         return merged;
     }
 
-    /// <summary>为安全模式构造 dsh 启动参数（根级 --profile，web 子命令与 --profile 互斥）。</summary>
-    public static string[] BuildSafeProfileArguments(string profileName, int port, string host = "127.0.0.1")
-        => new[] { "--profile", profileName, "--port", port.ToString(), "--host", host };
-
     /// <summary>对用户 profiles 目录做递归哈希快照（零污染证据）。安全 profile 自身排除。</summary>
     public static Dictionary<string, byte[]> CaptureUserProfilesHash(string userProfilesDir)
     {

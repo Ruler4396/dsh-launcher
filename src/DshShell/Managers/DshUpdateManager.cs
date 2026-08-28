@@ -281,10 +281,16 @@ public sealed class DshUpdateManager : IDshUpdateManager
                 // [Evidence-3] 切换成功（AlreadyApplied 视为重复应用同版本，同样成功收尾）
                 Logger.Info($"[Apply] Result: atomic swap success (prepare={prepareAction}), Duration={sw.ElapsedMilliseconds}ms, target={targetDir}");
 
+                // [F23] 立即清账：Move 成功与 ClearPending 之间是崩溃窗口——旧顺序下窗口内
+                // 崩溃会让下次启动把 pending.runtimeDir 判为失效而重跑 npm install（对已
+                // 应用版本做一次 1-2 分钟的无谓网络安装）。清账前移后窗口收窄到微秒级；
+                // 回滚观察期不受影响（update-guard 的跨会话武装基于快照 manifest，与
+                // pending 文件无关）。
+                StagedUpdate.ClearPending();
+
                 // [update-guard] 武装回滚闸门：新版启动自检失败 → 自动还原数据 + 隔离运行时
                 UpdateApplied?.Invoke(version);
 
-                StagedUpdate.ClearPending();
                 CleanupStagingCache();
 
                 // [Evidence-4] 清理确认

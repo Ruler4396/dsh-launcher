@@ -20,7 +20,7 @@
 | 你将要做什么 | 必须先满足 |
 |---|---|
 | 改 `Program.cs` | 只允许组合根 + UI 消息泵；业务逻辑下沉到 `Managers/`/`Lifecycle/`/`ShellLogic.cs` |
-| 调用外部进程（npm/node/wscript/taskkill） | `cmd.exe /c` 包装 + 重定向 stdout/stderr + 超时 + 超时 `Kill(entireProcessTree)` |
+| 调用外部进程（npm/node/taskkill） | **node.exe 直启 .js 入口**（ADR-021：严禁 `cmd.exe` / `.cmd` shim 中间层——引号剥离/GBK 乱码/Kill 不干净三类陷阱；System32 原生 exe 如 taskkill/netstat 可直启）；三必须不变：重定向 stdout/stderr + 异步排空 + 限时等待 + 超时 `Kill(entireProcessTree)` |
 | 读可能被锁的日志文件 | `FileShare.ReadWrite` |
 | 写核心状态文件 | `ShellLogic.AtomicWrite`（`.tmp` + `File.Move`），禁止裸 `File.WriteAllText` |
 | 调用 npm/node | 用 `RuntimeManager` 解析的绝对路径，禁止盲目依赖 PATH |

@@ -154,7 +154,9 @@ internal static class AppEnvironment
         }
     }
 
-    /// <summary>settings.json 的 serviceLifetime 字段抹除（插件缺失降级；只改字段不动其他内容）。</summary>
+    /// <summary>settings.json 的 serviceLifetime 字段抹除（插件缺失降级；只改字段不动其他内容）。
+    /// [F22] 原子写（.tmp + File.Move）——settings.json 属壳核心状态文件，裸写半截 JSON
+    /// 会让配置降级路径每启动必走。</summary>
     internal static void PurgeServiceLifetime(string path)
     {
         try
@@ -171,7 +173,7 @@ internal static class AppEnvironment
                     if (!prop.NameEquals("serviceLifetime")) prop.WriteTo(writer);
                 writer.WriteEndObject();
             }
-            File.WriteAllText(path, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
+            ShellLogic.FileSystemPolicy.AtomicWrite(path, System.Text.Encoding.UTF8.GetString(stream.ToArray()));
         }
         catch { /* 抹除失败幂等：下次启动再判 */ }
     }
