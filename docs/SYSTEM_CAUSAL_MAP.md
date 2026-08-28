@@ -286,6 +286,49 @@ graph TD
 
 ---
 
+## 6. 2026-08-25 插件致崩 × 安全模式失灵（五处修复点）
+
+> 事故：4 个第三方插件（dsh-launcher-lifetime / dsh-notification / dsh-web-search-anysearch /
+> dsh-zh-guide）+ cordis.patch.yml 的 `id: web → searchProvider: anysearch` 补丁把 node 服务进程
+> 搞崩（就绪后 ~0.5s exit=1）。BootHealthMonitor 三次会话全部判死成功并落盘，但安全模式
+> 从未被询问——用户被迫手工改 package.json 与补丁才恢复。取证：`safe-mode.json` lastFailure、
+> diagnostics/boot-failure-20260825-05*.zip ×4、dsh.log（三次 restart-service ask，零次 safe-mode ask）。
+
+| # | 节点（§5 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点5** | Report(Process E2007) → HandleBootHealthFailed → 分类闸门 | `VerdictIndicatesPluginInvolvement` 只认页面层坏签名与插件 WebMessage；服务端崩溃无前端证据 ⇒ 永远路由"重启服务" | 归因通道扩展：日志层插件签名命中（`BootGuard.LogEvidenceIndicatesPlugin`）+ 第三方插件在场且进程层崩溃（`PluginConfig.ProfileHasThirdPartyBundles`）；路由决策下沉纯函数 `ShellLogic.BootRecoveryPolicy.Decide` | `BootFailureRoutingContractTests`、`Outcomes/BootFailureRoutingOutcomes` |
+| **修复点6** | ServiceManager.Start（§2 服务启动链 N 的直启构件） | `using var p` 在 Start 返回即 Dispose 进程对象 → stdout/stderr 异步排空失效，服务输出从未落统一日志，日志层全程失明（连健康启动的 `dsh web:` 都消失） | 进程对象改静态追踪（`TrackServiceProcess`），下次启动替换时才释放旧对象；Dispose 不杀进程语义不变 | `Regression_ServiceOutputPipe.RealOs.RealOs_ServiceStdoutAndStderr_ArePipedToUnifiedLog` |
+| **修复点7** | HandleBootHealthFailed 分支询问出口 | 匿名失败重复 N 次仍只问同一个无效的"重启吗"；事故形态是每次重开壳再崩，会话内闸门抓不住 | `SafeModeState.ConsecutiveBootFailures` 跨会话持久计数（Failed 恰好一次路径 `RegisterBootFailure` 推进，吸收态 VerdictUpdated 重写不推进；`HealthyDetected` 接线 `ResetFailureStreak` 复位）；连续 ≥3 次匿名失败升级安全模式询问 | `SafeModeStateTests.FailureStreak_*`、`Outcome_AnonymousCrashLoop_Escalates…` |
+| **修复点8** | §3 进程终止链 KillServiceProcess 身份校验分支 | 已崩溃 pid 再次停止时 GetProcessById 抛异常被归因为 "not a dsh service process"（Warn+false），pid 文件滞留 | 区分"已消失无需杀"（Info+true，调用方走端口释放等待并清 pid 文件）与"活着但不是 node"（真防误杀拒绝不变） | `RealOs_KillServiceProcess_DeadPid_ReportsSuccess_NothingToKill`、`…_LiveNonNodeProcess_StillRefused` |
+| **修复点9** | else 分支弹窗文案 | 无插件证据分支硬编码 E2008 文案（"页面启动自检未通过"），进程层崩溃也显示该文案误导排障 | headline 改为按裁决 ErrorCode 动态生成（`ErrorCodes.Describe(verdict.ErrorCode)`） | 弹窗文案属 UI 路径，由 TestHook E2E 覆盖（后续） |
+
+**身份一致性检查**：修复点6 只改变进程对象生命周期，启动命令仍由
+`Identity.NodeExePath × DshEntryJsPath` 经 `BuildArgs` 唯一拼装（ADR-024 不变）；
+修复点7 的持久化文件仍是 safe-mode.json（原子写），安全模式激活/粘滞解除语义（修复点4）不变。
+
+---
+
+## 7. 2026-11 [E2007/E2008 误报根治]：配置等待态不判死 + 残留 pid attach 不判死
+
+用户实测形态：未配置 API key 启动 → dsh 渲染出自己的欢迎/配置界面（boot 链未完成，
+`__ModuleLoader__.mode` 不为 `"live"`）→ 页面层好符号持续缺席被误判 E2008；弹窗证据同时出现
+`[Process] 进程 attach 失败（pid=4708 不存在）`（残留 pid 被当成进程崩溃证据），点"重启"后循环复发
+（重启询问不受每会话一次闸门约束）。『页面其实是好的，只有真 failed 才该报错』。
+
+| # | 节点（§5 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点10** | AttachProcess catch（进程层接线） | 残留/失效 pid 使 `RealProcessHandle` 构造（GetProcessById）抛错，却被 `Report(Process, E2007)` 判死整监控并弹窗——attach 是 best-effort 监视接线，不是崩溃裁决 | catch 仅 `Logger.Warn`，不再 Report（无错误码 → 无状态转移）；服务真死由 HTTP 层（E2004 连续 miss）与页面层（缺席阈值 E2008）兜底 | `BootHealthMonitorTests.ProcessLayer_AttachFactoryThrows_WarnsOnly_NeverFails`、`Regression_StalePidAttachTests.RealOs`、`Outcomes.ConfigurationWaitingState…` |
+| **修复点11** | `EvaluatePageProbe` 缺席分支（页面层主触发器） | 好符号判定只认 boot 链完成（mode==="live"）；页面已渲染出 dsh 自身 UI（配置/欢迎界面）但 boot 链未完成 → 连续 `absent_threshold` 次缺席 → E2008 误报 | 新增 `Rendered` 分类：err 坏签名一票 / DOM 坏签名计票 / good 优先序不变，其后 `innerText ≥ RenderedMinTextChars(默认60，DSH_BOOT_SIGNATURES.rendered_min_text_chars 可覆盖)` 且无坏签名 → `Rendered` → Healthy；空白/纯加载页仍走缺席计票（慢启动保护不削弱） | `BootGuardContractTests.*Rendered*`、`BootHealthMonitorTests.PageLayer_RenderedContent_Healthy_ProbesStop`、`…_ShortTextBelowRenderedThreshold_StillAbsent…`、`Outcomes.ConfigWaitingStateOutcomes` |
+
+**决策权衡**：渲染豁免采用代理特征（innerText 长度）而非精确 UI 断言——探针协议不变、向后兼容；
+坏签名优先级置于豁免之上（err 一票 / DOM 计票），真崩溃错误 UI 不会被豁免；阈值默认 60 且可由
+`DSH_BOOT_SIGNATURES` 校准，避免空页面被豁免。
+**身份一致性检查**：修复点11 只调整探针求值语义，探针脚本形状（{good,text,err}）与
+`BuildProbeScript` 不变；`HealthyDetected` 的 `ResetFailureStreak` 接线（修复点7）复用，配置等待态
+计入"健康"不推进失败计数。修复点10 不触碰 `OnProcessExited` 的 Exited 事件路径（真崩溃 E2007 仍在）。
+
+---
+
 ## 如何使用本地图
 
 ### 修 Bug 流程

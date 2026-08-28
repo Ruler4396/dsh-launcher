@@ -263,13 +263,19 @@ public sealed class ServiceManager : IServiceManager
                 StandardErrorEncoding = System.Text.Encoding.UTF8,
             };
             ApplyServiceEnvironment(psi, port, logPath);
-            using var p = System.Diagnostics.Process.Start(psi);
+            // 【2026-08-25 P0 回归修复】此前为 `using var p`：Start 返回时立即 Dispose 进程对象，
+            // PipeServiceOutputToUnifiedLog 刚挂上的 stdout/stderr 异步排空随句柄释放而失效——
+            // 服务输出从此从未落统一日志（连健康启动的 "dsh web: ..." 都消失），日志层签名表
+            // 全程失明，插件崩溃堆栈丢失，安全模式归因链断裂。Dispose 只释放本地句柄、绝不杀
+            // 进程，故改为静态追踪：下次启动替换时才释放旧对象。
+            var p = System.Diagnostics.Process.Start(psi);
             if (p is null)
             {
                 Logger.Error("service process failed to start (null)", ErrorCodes.E2001);
                 return false;
             }
             PipeServiceOutputToUnifiedLog(p, logPath, identity);
+            TrackServiceProcess(p);
             Logger.Info(identity.IsSafeProfile
                 ? $"service start via identity (SAFE profile): node.exe {launchArgs}"
                 : $"service start via identity: node.exe {launchArgs}");
@@ -291,10 +297,35 @@ public sealed class ServiceManager : IServiceManager
             psi.EnvironmentVariables["DSH_LOG"] = logPath;
     }
 
+    // ---- 服务进程对象追踪（2026-08-25 P0 修复的构件，见 Start 内注释）----
+    private static readonly object ServiceProcessGate = new();
+    private static System.Diagnostics.Process? _trackedServiceProcess;
+
+    /// <summary>
+    /// 追踪本次拉起的服务进程对象，替换并释放上一个（Dispose 不杀进程，仅释放句柄；
+    /// 若旧进程仍在跑，其输出排空本就该随替换终止）。线程安全。
+    /// </summary>
+    private static void TrackServiceProcess(System.Diagnostics.Process p)
+    {
+        lock (ServiceProcessGate)
+        {
+            var old = _trackedServiceProcess;
+            _trackedServiceProcess = p;
+            if (old is null) return;
+            try { old.Dispose(); }
+            catch { /* 句柄已失效：释放失败可安全忽略（预期内操作失败） */ }
+        }
+    }
+
     /// <summary>
     /// 服务 stdout/stderr 异步排空并追加到统一日志（替代旧 vbs 的 `cmd >>` 重定向）。
-    /// 追加用 FileShare.ReadWrite 打开，与壳 Logger 及读侧探针共存；logPath 为 null 时仅排空丢弃。
+    /// 追加用共享打开（FileShare.ReadWrite）与壳 Logger 及读侧探针共存；logPath 为 null 时仅排空丢弃。
+    /// 【2026-08-25 回归加固】两路管道线程可能同时到达成串输出（崩溃堆栈正是如此）：
+    /// 此前裸 File.AppendAllText（share=Read，第二写者必失败）并发即丢行且无重试——
+    /// 现以写锁串行化 + 共享写打开 + 有界重试，杜绝同刻多行互踩。
     /// </summary>
+    private static readonly object UnifiedLogAppendGate = new();
+
     private static void PipeServiceOutputToUnifiedLog(
         System.Diagnostics.Process process, string? logPath, DshWeb.Domain.DshRuntimeIdentity identity)
     {
@@ -302,15 +333,34 @@ public sealed class ServiceManager : IServiceManager
         {
             if (string.IsNullOrEmpty(line)) return;
             if (logPath is null) return;
-            try
+            var rendered = $"[{DateTime.Now:HH:mm:ss.fff}] [dsh] {line}";
+            lock (UnifiedLogAppendGate)
             {
-                var dir = Path.GetDirectoryName(logPath);
-                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] [dsh] {line}\n");
-            }
-            catch
-            {
-                // 日志句柄瞬时冲突：丢弃该行（服务输出非诊断关键路径），绝不反压子进程
+                try
+                {
+                    var dir = Path.GetDirectoryName(logPath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                }
+                catch { /* 目录创建失败由下方写入重试路径统一处理 */ }
+                // 有界重试：与壳 Logger / 读侧探针的瞬时句柄冲突不再永久丢行
+                for (var attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        using var fs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                        using var writer = new StreamWriter(fs);
+                        writer.WriteLine(rendered);
+                        return;
+                    }
+                    catch (IOException) when (attempt < 9)
+                    {
+                        Thread.Sleep(20); // 预期内瞬时冲突：短退避后重试
+                    }
+                    catch (Exception)
+                    {
+                        return; // 持续冲突/路径级失败：放弃该行（非诊断关键路径），绝不反压子进程
+                    }
+                }
             }
         }
         process.OutputDataReceived += (_, e) => Append(e.Data);

@@ -22,6 +22,16 @@ public sealed class SafeModeState
     /// <summary>最近一次启动失败证据（safe-mode.json lastFailure 原文；无失败为 null）。</summary>
     public JsonElement? LastFailure { get; private set; }
 
+    /// <summary>
+    /// 连续启动失败计数（跨会话持久化；2026-08-25 事故回归新增）。
+    /// 每次进入 Failed 裁决时 +1（<see cref="RegisterBootFailure"/>，由组合根在
+    /// HandleBootHealthFailed 恰好调用一次——吸收态证据追加的 VerdictUpdated 重写不计数）；
+    /// 好符号确认健康时清零（<see cref="ResetFailureStreak"/>）。达到
+    /// ShellLogic.BootRecoveryPolicy.AnonymousFailureSafeModeThreshold 后，匿名失败也升级为
+    /// 安全模式询问，打破"问重启→再崩→再问重启"的跨会话死循环。
+    /// </summary>
+    public int ConsecutiveBootFailures { get; private set; }
+
     /// <summary>默认存储路径：DSH_HOME\dsh-launcher\safe-mode.json。</summary>
     public static string DefaultStorePath(string dshHome)
         => Path.Combine(dshHome, "dsh-launcher", "safe-mode.json");
@@ -47,10 +57,27 @@ public sealed class SafeModeState
         Save();
     }
 
-    /// <summary>记录启动失败证据（融合视图原文；VerdictUpdated 追加证据时整体重写）。</summary>
+    /// <summary>记录启动失败证据（融合视图原文；VerdictUpdated 追加证据时整体重写）。
+    /// 注意：本方法**不**推进连续失败计数——吸收态证据追加也会走这里，重复调用属常态；
+    /// 计数由 <see cref="RegisterBootFailure"/> 在 Failed 恰好一次的路径上显式推进。</summary>
     public void RecordFailure(JsonElement failure)
     {
         LastFailure = failure.Clone();
+        Save();
+    }
+
+    /// <summary>推进连续启动失败计数并落盘（组合根在 Failed 裁决处理路径恰好调用一次）。</summary>
+    public void RegisterBootFailure()
+    {
+        ConsecutiveBootFailures++;
+        Save();
+    }
+
+    /// <summary>好符号确认健康 → 清零连续失败计数并落盘（幂等：已为 0 时不产生 IO）。</summary>
+    public void ResetFailureStreak()
+    {
+        if (ConsecutiveBootFailures == 0) return;
+        ConsecutiveBootFailures = 0;
         Save();
     }
 
@@ -66,6 +93,10 @@ public sealed class SafeModeState
                 Tier = tier.GetInt32() != 2 ? SafeProfileTier.Tier1KeepDeepSeekCore : SafeProfileTier.Tier2Minimal;
             if (doc.RootElement.TryGetProperty("lastFailure", out var lf) && lf.ValueKind == JsonValueKind.Object)
                 LastFailure = lf.Clone();
+            if (doc.RootElement.TryGetProperty("consecutiveBootFailures", out var streak)
+                && streak.ValueKind == JsonValueKind.Number
+                && streak.TryGetInt32(out var n) && n > 0)
+                ConsecutiveBootFailures = n;
         }
         catch
         {
@@ -88,6 +119,7 @@ public sealed class SafeModeState
                     writer.WriteStartObject();
                     writer.WriteBoolean("active", IsActive);
                     writer.WriteNumber("tier", (int)Tier);
+                    writer.WriteNumber("consecutiveBootFailures", ConsecutiveBootFailures);
                     if (LastFailure is { } failure)
                     {
                         writer.WritePropertyName("lastFailure");

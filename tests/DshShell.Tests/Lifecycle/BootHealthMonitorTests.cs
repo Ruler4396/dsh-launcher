@@ -88,6 +88,22 @@ public class BootHealthMonitorTests
         Assert.Contains("3", verdict.Evidence.First(e => e.Layer == BootLayer.Process).Detail);
     }
 
+    [Fact]
+    public async Task ProcessLayer_AttachFactoryThrows_WarnsOnly_NeverFails()
+    {
+        // [E2007/E2008 误报根治] 残留/失效 pid（RealProcessHandle 构造时 GetProcessById 抛错）＝
+        // attach 监视接线失败，不再是崩溃裁决：绝不触发 Failed（此前会以 E2007 判死并弹窗——
+        // 用户实测证据 "进程 attach 失败（pid=4708 不存在）"）。服务真死由 HTTP/页面层兜底。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            processHandleFactory: _ => throw new ArgumentException("no process with id 4708"));
+        var failedFired = new TaskCompletionSource();
+        m.Failed += _ => failedFired.TrySetResult();
+        m.AttachProcess(4708);
+        await Task.Delay(250);
+        Assert.False(failedFired.Task.IsCompleted, "attach failure must NEVER judge failed");
+        Assert.Equal(BootHealthState.Pending, m.State);
+    }
+
     // ---------------- 日志层 ----------------
 
     [Fact]
@@ -243,6 +259,46 @@ public class BootHealthMonitorTests
         Assert.Equal("E2008", verdict.ErrorCode);
         Assert.Contains("缺席", verdict.Summary);
         Assert.Contains("3", verdict.Summary); // 阈值=FastProfile.AbsentThreshold
+    }
+
+    [Fact]
+    public async Task PageLayer_RenderedContent_Healthy_ProbesStop()
+    {
+        // [E2008 误报根治] 页面已渲染出 dsh 自身界面（good=false，boot 链未完成，如未配置 API key 的
+        // 欢迎/配置界面）→ Rendered → Healthy，探针停止，绝不 E2008 弹窗。
+        var calls = 0;
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1", _ =>
+        {
+            calls++;
+            return Task.FromResult(
+                "{\"good\":false,\"text\":\"欢迎使用 DeepSeek Harness —— 请先配置你的模型提供方 API Key 后即可开始使用。设置入口在右上角齿轮图标，也可以从这里打开帮助文档与示例。\",\"err\":\"\"}");
+        });
+        var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        m.HealthyDetected += () => healthy.TrySetResult();
+        var failedFired = new TaskCompletionSource();
+        m.Failed += _ => failedFired.TrySetResult();
+        m.OnNavigationCompleted();
+        Assert.True(await Task.WhenAny(healthy.Task, Task.Delay(4000)) == healthy.Task,
+            "rendered config-waiting page should turn Healthy");
+        Assert.Equal(BootHealthState.Healthy, m.State);
+        Assert.False(failedFired.Task.IsCompleted);
+        var callsAtHealthy = Volatile.Read(ref calls);
+        await Task.Delay(150);
+        Assert.Equal(callsAtHealthy, Volatile.Read(ref calls)); // Healthy 后探针停止
+    }
+
+    [Fact]
+    public async Task PageLayer_ShortTextBelowRenderedThreshold_StillAbsent_FailsAfterThreshold()
+    {
+        // 渲染豁免不削弱慢启动/白屏保护：innerText 低于 RenderedMinTextChars（空白/纯加载页）
+        // 仍计票缺席 → E2008。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => Task.FromResult("{\"good\":false,\"text\":\"Loading...\",\"err\":\"\"}"));
+        var failedTask = WaitFailedAsync(m);
+        m.OnNavigationCompleted();
+        var verdict = await failedTask;
+        Assert.Equal("E2008", verdict.ErrorCode);
+        Assert.Contains("缺席", verdict.Summary);
     }
 
     [Fact]
