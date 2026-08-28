@@ -47,6 +47,21 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    public void ProbeVersionOutput_MultilineBannerChild_ExtractsVersionLine_RealOS()
+    {
+        // F3 端到端：真实子进程先打 banner 行再打版本行——旧行为会返回多行脏版本，
+        // 新契约取首个版本形态行。唯一临时路径天然绕过探测记忆。
+        var node = FindNodeExeOrSkip();
+        if (node is null) return; // skip
+        using var tmp = new TempDir();
+        var script = System.IO.Path.Combine(tmp.Path, "probe-multi.js");
+        File.WriteAllText(script,
+            "console.log('DeepSeek Harness CLI');\nconsole.log('0.1.1-rc.8');\n");
+        var v = DshDiscovery.ProbeVersionOutput(node!, $"\"{script}\"", timeoutMs: 5000);
+        Assert.Equal("0.1.1-rc.8", v);
+    }
+
+    [Fact]
     public void ProbeVersionOutput_HangingChild_KilledWithinBound_RealOS()
     {
         // 零 Mock 回归：子进程持有 stdout 不关（旧实现会在此无限 ReadToEnd 阻塞），

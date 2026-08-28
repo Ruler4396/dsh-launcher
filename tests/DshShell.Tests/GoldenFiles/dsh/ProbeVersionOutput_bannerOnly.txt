@@ -1,0 +1,4 @@
+DeepSeek Harness CLI
+dsh command line interface, see `dsh --help` for usage.
+
+(no version info in this hypothetical future output)
