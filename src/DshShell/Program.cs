@@ -274,7 +274,8 @@ internal static class Program
     /// <summary>Stage 4: Single-instance mutex + old version cleanup + orphan shortcut cleanup. Returns false if not first instance.</summary>
     private static bool EnsureSingleInstanceAndAutostart()
     {
-        using var mutex = new Mutex(true, $@"Local\DshWeb.SingleInstance.{Target.Port}", out var firstInstance);
+        // [F21] mutex 名由纯函数产出（契约测试锁定格式）；按端口隔离实例组。
+        using var mutex = new Mutex(true, ShellLogic.LifecycleDecisions.SingleInstanceMutexName(Target.Port), out var firstInstance);
         if (!firstInstance)
         {
             // [静默失败收口] 主窗等待从 20s 收紧到 5s，且找不到不再无声退出——给出 [E1009]
@@ -962,7 +963,9 @@ internal static class Program
         updates.UpdateApplied += v => _updateRollbackArmedVersion = v;
         SessionUpdates = updates;
 
-        var service = new ServiceManager();
+        // [F4] 注入服务身份账本：ProbePort 对 HTTP 不通的 node 占用者，账本内才判 Zombie
+        //（自愈清理），账本外判 Foreign 绝不强杀——用户自己的 node 程序不再被误杀。
+        var service = new ServiceManager(knownServicePid: IsKnownDshServicePid);
         return new LauncherApp(
             runtime: new RuntimeManager(confirmDownload: () =>
                 // 自动化环境不打断（原 EnsureNodeForStartupAsync 顶部语义）
@@ -2487,6 +2490,29 @@ internal static class Program
     {
         Managers.ServiceLifecycleOps.RecordServicePid(DataDir, Target.Port);
         _servicePid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port); // 内存缓存同步（原语义）
+    }
+
+    /// <summary>
+    /// [F4] 服务身份账本查询（组合根注入 ServiceManager）："我们拉起过的 dsh"= 本会话
+    /// 内存缓存的 PID ∪ 历史 pid 文件账本（崩溃/接管后依然有效）。仅账本内的 node 进程
+    /// 才允许被 Zombie 清理——账本外的 node（用户自己的程序）绝不强杀。
+    /// </summary>
+    private static bool IsKnownDshServicePid(int pid, int port)
+    {
+        if (pid <= 0) return false;
+        if (pid == _servicePid) return true;
+        try
+        {
+            var f = Managers.ServiceLifecycleOps.PidFilePath(DataDir, port);
+            return File.Exists(f)
+                   && int.TryParse(File.ReadAllText(f).Trim(), out var recorded)
+                   && recorded == pid;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"known-pid lookup failed for pid={pid} port={port}: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>

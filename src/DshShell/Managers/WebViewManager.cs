@@ -319,10 +319,9 @@ public sealed class WebViewManager : IWebViewManager
                 try
                 {
                     var msg = e.WebMessageAsJson ?? "";
-                    // 捕获 dsh 本体发送的致命错误消息（JSON 字符串，含特定错误标志）
-                    if (msg.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
-                        || msg.Contains("ModuleLoader", StringComparison.OrdinalIgnoreCase)
-                        || msg.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase))
+                    // [F16] 致命错误判定收敛为纯函数（精确短语 + 结构化标志）——不再对整条
+                    // JSON 做 "ModuleLoader" 松散 contains（任何普通前端消息提及即误报）。
+                    if (ShellLogic.WebViewPolicy.IsPluginCrashMessage(msg))
                     {
                         Logger.Error($"plugin crash detected via webview message: {msg}",
                             ErrorCodes.E1008, new { source = "webview-message" });

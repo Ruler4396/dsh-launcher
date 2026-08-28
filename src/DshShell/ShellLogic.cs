@@ -153,6 +153,22 @@ public static class ShellLogic
         }
 
         /// <summary>
+        /// [F16] 插件致命错误消息判定（dsh 前端 → 壳 WebMessageReceived 契约，纯函数）。
+        /// 只匹配**精确致命短语**："bootstrap facade is missing"/"plugin fatal"/"dsh-boot-failed"
+        /// 与结构化标志 "pluginFatal"。旧行为对整条 WebMessageAsJson 做 contains "ModuleLoader"
+        /// 大小写不敏感匹配——前端任何普通消息仅提及该词即误触发 E1008+安全模式询问（每会话
+        /// 一次闸门），且 LastPluginCrashUtc 置位后本会话所有失败裁决都被路由向安全模式。
+        /// </summary>
+        internal static bool IsPluginCrashMessage(string? webMessageJson)
+        {
+            if (string.IsNullOrWhiteSpace(webMessageJson)) return false;
+            return webMessageJson.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
+                || webMessageJson.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase)
+                || webMessageJson.Contains("dsh-boot-failed", StringComparison.OrdinalIgnoreCase)
+                || webMessageJson.Contains("\"pluginFatal\"", StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// 下载完成后是否可以直接用默认程序打开：仅无害扩展名（图片/文本/pdf 等）自动打开，
         /// 其余（.html/.svg/.hta/.exe/.js 等可执行代码面）落盘后只提示不自动执行，
         /// 防止任意被加载页面触发下载后自动执行本地代码（S2 修复）。
@@ -1113,6 +1129,13 @@ public static class ShellLogic
         /// </summary>
         internal static bool ShouldStopServiceOnClose(ServiceLifetime mode, bool externallyManaged, bool shellManaged)
             => mode == ServiceLifetime.FollowWindow && shellManaged && !externallyManaged;
+
+        /// <summary>
+        /// [F21] 单实例 mutex 名：绑定目标服务端口——同端口即同实例组，不同端口
+        /// （DSH_WEB_PORT 覆盖）互不干扰。字符串漂移曾无门禁，契约测试锁定格式
+        /// （Program 的 FindWindow 主窗定位逻辑依赖与此互恰的窗口标题约定）。
+        /// </summary>
+        internal static string SingleInstanceMutexName(int port) => $@"Local\DshWeb.SingleInstance.{port}";
 
         /// <summary>
         /// 启动早期"待应用更新"处理决策（矩阵 U2）：

@@ -235,7 +235,8 @@ public sealed class LauncherApp
             Logger.Error($"port {Port} is occupied by a non-dsh process; aborting startup",
                 ErrorCodes.E2004, new { port = Port, pid = foreignPid, url = Url });
             LastErrorCode = ErrorCodes.E2004;
-            LastErrorDetail = $"端口 {Port} 已被其他程序占用（PID {(foreignPid > 0 ? foreignPid.ToString() : "未知")}），且无 dsh HTTP 响应。请释放该端口后重试。";
+            // [F4] Foreign 现含两类：非 node 程序占用 / 账本外的 node（绝不误杀，明确告知用户）。
+            LastErrorDetail = $"端口 {Port} 已被其他程序占用（PID {(foreignPid > 0 ? foreignPid.ToString() : "未知")}），且无 dsh HTTP 响应。请释放该端口后重试；若该端口被您自己的 Node.js 程序占用，请先退出它。";
             _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
             return false;
         }

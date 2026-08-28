@@ -13,6 +13,7 @@ public sealed class ServiceManager : IServiceManager
     private readonly Func<string, System.Net.Http.HttpClient, bool> _httpProbe;
     private readonly Func<int, int> _pidLookup;
     private readonly Func<int, bool> _identityCheck;
+    private readonly Func<int, int, bool> _knownServicePid;
     private readonly Func<int, bool> _killProcessTree;
     private readonly Func<int, System.Collections.Generic.List<int>> _ancestors;
     private readonly TimeSpan _pollDelay;
@@ -27,7 +28,8 @@ public sealed class ServiceManager : IServiceManager
         Func<int, bool>? identityCheck = null,
         Func<int, bool>? killProcessTree = null,
         Func<int, System.Collections.Generic.List<int>>? ancestors = null,
-        TimeSpan? portReleaseTimeout = null)
+        TimeSpan? portReleaseTimeout = null,
+        Func<int, int, bool>? knownServicePid = null)
     {
         _tcpProbeSync = tcpProbe ?? ShellLogic.ServiceReadiness.PortOpen;
         // 显式注入同步探针时保持其语义（Headless 测试/旧契约）；否则走异步 ConnectAsync，
@@ -39,6 +41,9 @@ public sealed class ServiceManager : IServiceManager
         _pollDelay = pollDelay ?? TimeSpan.FromSeconds(1);
         _pidLookup = pidLookup ?? ShellLogic.ProcessManagement.GetProcessIdByPort;
         _identityCheck = identityCheck ?? ShellLogic.ProcessManagement.IsLikelyDshService;
+        // [F4] 服务身份账本（组合根注入：本会话拉起 + pid 文件账本）。缺省恒 true = 旧行为
+        // （凡 node 皆可管理）；生产注入真实账本后，"账本外的 node"不再被判 Zombie 强杀。
+        _knownServicePid = knownServicePid ?? new Func<int, int, bool>((_, _) => true);
         _killProcessTree = killProcessTree ?? ShellLogic.ProcessManagement.KillProcessTree;
         _ancestors = ancestors ?? ShellLogic.ProcessManagement.GetAncestorPids;
         _portReleaseTimeout = portReleaseTimeout ?? TimeSpan.FromSeconds(2);
@@ -193,6 +198,11 @@ public sealed class ServiceManager : IServiceManager
     /// - TCP 通但占用进程不是 dsh（node）→ Foreign（端口被其他程序占用，快速失败）；
     /// - TCP 通、进程是 node 且 HTTP 就绪 → Healthy（健康运行，跳过拉起）；
     /// - TCP 通、进程是 node 但 HTTP 不通 → Zombie（僵尸服务，清理后重启）。
+    /// [F4 账本优先] HTTP 不通时先查服务身份账本（组合根注入：本会话拉起 + pid 文件）：
+    /// 账本内 → Zombie（自愈清理，仅杀我们自己记录过的服务）；**账本外 → Foreign**
+    /// （绝不强杀用户自己的 node 程序——旧行为凡 node 即杀，误杀面实测在案）。
+    /// 注：账本外但 HTTP 就绪的 node 仍判 Healthy——健康服务不杀也不动（无账本的
+    /// 健康残留属 F19 场景，由启动链 TryAdoptOrphanService 兜底认领）。
     /// </summary>
     public ShellLogic.ServicePortState ProbePort(int port, string url)
     {
@@ -206,10 +216,15 @@ public sealed class ServiceManager : IServiceManager
 
         // 快速 HTTP 探测（短超时 3s）：能应答 = 健康；否则判定为僵尸
         using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        if (_httpProbe(url, http))
-            return ShellLogic.ServicePortState.Healthy;
-
-        return ShellLogic.ServicePortState.Zombie;
+        var httpOk = _httpProbe(url, http);
+        if (!httpOk && !_knownServicePid(pid, port))
+        {
+            Logger.Warn($"port {port} occupied by unknown node pid={pid} without dsh HTTP; treating as foreign (not killing)", ErrorCodes.E2004, new { pid, port });
+            return ShellLogic.ServicePortState.Foreign;
+        }
+        return httpOk
+            ? ShellLogic.ServicePortState.Healthy
+            : ShellLogic.ServicePortState.Zombie;
     }
 
     /// <summary>
