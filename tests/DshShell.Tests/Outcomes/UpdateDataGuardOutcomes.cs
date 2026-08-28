@@ -207,4 +207,60 @@ public class UpdateDataGuardOutcomes
         Assert.DoesNotContain(remaining, n => n!.Contains("0.1.0-rc.6")); // 最旧的被修剪
         Assert.NotNull(UpdateDataGuard.UnconfirmedSnapshotVersion(TargetVersion));
     }
+
+    // ==================== [F7] 顶层小文件兜底快照 ====================
+
+    /// <summary>
+    /// F7 Outcome：dsh 下次单向迁移别的顶层配置文件（如 settings.yaml）时，回滚不再
+    /// 残缺——首拍按字节捕获顶层小文件，回滚时白名单之外同样还原，污染件留档追责。
+    /// </summary>
+    [Fact]
+    public void TopLevelConfigFile_PoisonedByNewVersion_RestoredOnRollback_F7()
+    {
+        using var tmp = new TempDir();
+        var settingsPath = System.IO.Path.Combine(tmp.DshHome, "settings.yaml");
+        const string flat = "ui-theme:\n  preference: light\n";
+        File.WriteAllText(settingsPath, flat);
+        File.WriteAllText(System.IO.Path.Combine(tmp.DshHome, ".credentials.yaml"), FlatCredentials);
+        UpdateDataGuard.Init(System.IO.Path.Combine(tmp.Path, "dsh-launcher"), tmp.DshHome);
+
+        Assert.True(UpdateDataGuard.SnapshotBeforeApply(TargetVersion));
+
+        // 新版"迁移"两个文件（白名单内 + 白名单外顶层配置）
+        File.WriteAllText(System.IO.Path.Combine(tmp.DshHome, ".credentials.yaml"), MigratedCredentials);
+        File.WriteAllText(settingsPath, "version: 1\nrefs:\n  preference: dark\n");
+
+        var result = UpdateDataGuard.RollbackAfterFailedUpdate(TargetVersion, "boot self-check failed [E2008]");
+
+        Assert.True(result.DataRestored);
+        Assert.Contains(".credentials.yaml", result.RestoredFiles);
+        Assert.Contains("settings.yaml", result.RestoredFiles); // F7 兜底还原生效
+        Assert.Equal(flat, File.ReadAllText(settingsPath)); // 按字节还原（旧版解析器可读）
+        // 污染件留档追责
+        Assert.NotEmpty(Directory.GetFiles(tmp.DshHome, "settings.yaml.rollback-bak-*"));
+    }
+
+    /// <summary>F7 体积边界：超限顶层文件跳过快照（响亮留痕由日志承担），回滚不触碰。</summary>
+    [Fact]
+    public void OversizedTopLevelFile_SkippedFromSnapshot_F7()
+    {
+        using var tmp = new TempDir();
+        var bigPath = System.IO.Path.Combine(tmp.DshHome, "big.yaml");
+        File.WriteAllText(bigPath, new string('#', (int)UpdateDataGuard.MaxTopLevelSnapshotFileBytes + 1));
+        UpdateDataGuard.Init(System.IO.Path.Combine(tmp.Path, "dsh-launcher"), tmp.DshHome);
+
+        UpdateDataGuard.SnapshotBeforeApply(TargetVersion);
+
+        var snapRoot = System.IO.Path.Combine(tmp.Path, "dsh-launcher", "update-guard", "snapshots");
+        var snapDir = Directory.GetDirectories(snapRoot).Single();
+        Assert.DoesNotContain(Directory.GetFiles(snapDir).Select(System.IO.Path.GetFileName),
+            n => n == "big.yaml");
+        // 目录（profiles 等）绝不进入快照
+        Directory.CreateDirectory(System.IO.Path.Combine(tmp.DshHome, "profiles", "web"));
+        File.WriteAllText(System.IO.Path.Combine(tmp.DshHome, "profiles", "web", "package.json"), "{}");
+        UpdateDataGuard.SnapshotBeforeApply("0.1.0-rc.9");
+        var snapDir2 = Directory.GetDirectories(snapRoot).Single(d => System.IO.Path.GetFileName(d).Contains("0.1.0-rc.9"));
+        Assert.DoesNotContain(Directory.GetFiles(snapDir2, "*", System.IO.SearchOption.AllDirectories),
+            f => f.Contains("profiles"));
+    }
 }

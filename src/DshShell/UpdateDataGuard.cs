@@ -44,10 +44,41 @@ public static class UpdateDataGuard
     /// </summary>
     public static readonly string[] ProtectedRelativeFiles = { ".credentials.yaml" };
 
+    /// <summary>
+    /// [F7] 顶层小文件快照扩展：白名单之外的 DSH_HOME **顶层**配置文件（yaml/yml/json，
+    /// 单文件 ≤ <see cref="MaxTopLevelSnapshotFileBytes"/>）随首拍一并捕获。动因：dsh 是
+    /// 外部系统，跨版本单向迁移的共享文件不止 .credentials.yaml（settings.yaml 等）——
+    /// 白名单追不上 dsh 的演化面，回滚至少能按字节还原顶层配置。目录（profiles/、
+    /// node_modules/ 等）绝不进入快照（体积与属主边界）。
+    /// </summary>
+    public static readonly string[] TopLevelSnapshotExtensions = { ".yaml", ".yml", ".json" };
+
+    /// <summary>[F7] 单文件快照上限：超限大文件跳过并响亮留痕（体积异常本身值得记录）。</summary>
+    public const long MaxTopLevelSnapshotFileBytes = 1024 * 1024;
+
     /// <summary>快照保留上限（跨所有版本合计；超出按目录名时间序删最旧）。</summary>
     private const int MaxSnapshots = 3;
 
     private static bool IsReady => _dataDir.Length > 0 && _dshHome.Length > 0;
+
+    private static bool IsTopLevelSnapshotExtension(string fileName)
+    {
+        var ext = Path.GetExtension(fileName);
+        return Array.IndexOf(TopLevelSnapshotExtensions, ext) >= 0;
+    }
+
+    private static void WarnIfOversizedTopLevelFile(string fullPath, string name)
+    {
+        try
+        {
+            if (!IsTopLevelSnapshotExtension(name)) return;
+            var size = new FileInfo(fullPath).Length;
+            if (size > MaxTopLevelSnapshotFileBytes)
+                Logger.Warn($"[update-guard] top-level file exceeds snapshot cap; skipped: {name}",
+                    ctx: new { size, cap = MaxTopLevelSnapshotFileBytes });
+        }
+        catch { /* 体积探查失败不阻断快照主流程 */ }
+    }
 
     /// <summary>守卫根目录：DSH_HOME\dsh-launcher\update-guard\。</summary>
     public static string GuardRoot => Path.Combine(_dataDir, "update-guard");
@@ -109,6 +140,36 @@ public static class UpdateDataGuard
                     if (!File.Exists(src)) continue;
                     File.Copy(src, Path.Combine(snapDir, rel), overwrite: false);
                     captured.Add(rel);
+                }
+
+                // [F7] 顶层小文件兜底快照（白名单之外；去重避免与白名单重复捕获）
+                var capturedSet = new HashSet<string>(captured, StringComparer.OrdinalIgnoreCase);
+                foreach (var topLevelFile in Directory.EnumerateFiles(_dshHome, "*", SearchOption.TopDirectoryOnly))
+                {
+                    var name = Path.GetFileName(topLevelFile);
+                    if (capturedSet.Contains(name)) continue;
+                    if (!IsTopLevelSnapshotExtension(name))
+                    {
+                        WarnIfOversizedTopLevelFile(topLevelFile, name);
+                        continue;
+                    }
+                    try
+                    {
+                        var size = new FileInfo(topLevelFile).Length;
+                        if (size > MaxTopLevelSnapshotFileBytes)
+                        {
+                            Logger.Warn($"[update-guard] top-level file exceeds snapshot cap; skipped: {name}",
+                                ctx: new { size, cap = MaxTopLevelSnapshotFileBytes });
+                            continue;
+                        }
+                        File.Copy(topLevelFile, Path.Combine(snapDir, name), overwrite: false);
+                        captured.Add(name);
+                        capturedSet.Add(name);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"[update-guard] top-level snapshot failed for '{name}': {ex.Message}");
+                    }
                 }
 
                 var entries = LoadManifest();
@@ -249,6 +310,31 @@ public static class UpdateDataGuard
                         {
                             warnings.Add($"restore failed for '{rel}': {ex.Message}");
                             Logger.Error($"[update-guard] restore failed for '{rel}': {ex.Message}", ErrorCodes.E4003);
+                        }
+                    }
+
+                    // [F7] 白名单之外的顶层小文件兜底还原（首拍扩展捕获的；现存文件先另存追责）
+                    foreach (var snapFile in Directory.EnumerateFiles(snapDir, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        var name = Path.GetFileName(snapFile);
+                        if (ProtectedRelativeFiles.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+                        var target = Path.Combine(_dshHome, name);
+                        if (restored.Contains(name)) continue; // 白名单路径已还原的同名文件
+                        try
+                        {
+                            if (File.Exists(target))
+                            {
+                                var poisonedCopy = target + ".rollback-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                                File.Copy(target, poisonedCopy, overwrite: false);
+                                Logger.Warn($"[update-guard] poisoned file kept for forensics: {poisonedCopy}");
+                            }
+                            ShellLogic.FileSystemPolicy.AtomicWrite(target, File.ReadAllText(snapFile));
+                            restored.Add(name);
+                        }
+                        catch (Exception ex)
+                        {
+                            warnings.Add($"restore failed for '{name}': {ex.Message}");
+                            Logger.Error($"[update-guard] restore failed for '{name}': {ex.Message}", ErrorCodes.E4003);
                         }
                     }
                 }
