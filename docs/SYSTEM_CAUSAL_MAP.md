@@ -329,6 +329,30 @@ graph TD
 
 ---
 
+## 8. 2026-08-29 [token 栅栏]：dsh ≥0.1.2 根路径鉴权 → 壳 WebView 401 挂死（两处修复点）
+
+实测形态（沙盒：官方源码构建的 0.1.2-alpha.1 SelfContained 运行时 × 真壳冷启动）：服务级链路全绿
+（发现层选中新版、node 直启、tcp+http 6s 就绪、更新检查不误报），但启动横幅从 0.1.1 的
+`dsh web: http://127.0.0.1:P` 变为 `dsh web: http://127.0.0.1:P/?token=…`（web-startup 新增根路径
+token 信任栅栏，`--trusted-host` 只放宽 /api 不放宽根路径）。壳 WebView 导航裸 `Target.Url` →
+401 错误页（E2004）→ 页面探针 `ExecuteScriptAsync` 永久挂起（派发后再无任何日志）→ 页面层瘫痪：
+无 Failed 判定、无恢复询问、HTTP 层又"健康"故 update-guard 回滚也不触发——用户对着死窗口无解。
+对照实验：0.1.1-rc.2 根路径 200（无 token），0.1.2-alpha.1 根路径 401。
+
+| # | 节点（§2/§5 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点12** | 服务输出管道 → 壳 WebView 导航（§2 尾部） | 管道只把横幅渲染进统一日志，无人消费其中的 token URL；导航恒用裸 `Target.Url`；且 4 处服务重启后的 `Reload()` 停留旧地址（新进程新 token，Reload 必 401） | 新增纯函数 `ShellLogic.ServiceOutput.TryExtractTokenUrl`（宽进严出：http(s)+回环主机+端口匹配+token 非空，防伪造 stdout 劫持导航）；`ServiceManager` 管道逐行解析命中后经**静态**事件 `ServiceTokenUrlObserved` 上抛（identity/DSH_SERVICE_CMD 两条路径分属不同实例，通道必须类级；DSH_SERVICE_CMD 路径同时补齐管道对齐）；组合根记 `_serviceTokenUrl` 并在初始导航、安全模式/回滚/重启/apply 四处刷新点统一走 `NavigateMainWebToCurrentServiceUrl()`（导航替代 Reload） | `ServiceOutputContractTests`、`Regression_WebTokenAuthFence.RealOs`（真实 node 进程全链路） |
+| **修复点13** | `PageLoopAsync` 探针轮（§5 页面层） | `await probe(script)` 无界——ExecuteScriptAsync 在 401 错误页永久不返回，单点挂起瘫痪整个页面层且无任何判定 | 每轮 `Task.WhenAny(probeTask, Task.Delay(pageProbeTimeout))`（默认 5s，ctor 可注入）；单次超时只 Warn 不判死（误报防护铁律不破）；**连续**超时达阈值（默认 10，ctor 可注入）→ E2008 判死（页面持续不可用的强证据）；任何成功往返清零连击；Stop() 经取消分支立即返回（挂起探针由 OnlyOnFaulted 续体吸收） | `BootHealthMonitorTests.PageProbe_HangingRounds_TimeoutStreakConvergesToFailed`、`…_TimeoutThenGoodSymbol_StreakReset_Healthy`、`…_HangingForever_StopReturnsPromptly_NoDeadlock` |
+
+**决策权衡**：token 跟随选择"解析服务自报 URL"而非上游加关鉴权旗标——实测 `--trusted-host` 只作用于
+/api 栅栏，且解析纯函数带回环+端口双校验后，伪造 stdout 无法把壳 WebView 引出本机。探针超时判死阈值
+（10）高于缺席阈值（默认 5）——超时证据弱于缺席（可能只是渲染进程卡顿），宁可晚判不可误杀。
+**身份一致性检查**：两修复点均不触碰发现层/身份比较（DshRuntimeIdentity 语义不变）；token URL 仅作
+WebView 导航目标，`Target.Port`/就绪探测/健康监控仍用裸 `Target.Url`（401 对 tcp+http 就绪判定无影响，
+与沙盒实测一致）。
+
+---
+
 ## 如何使用本地图
 
 ### 修 Bug 流程

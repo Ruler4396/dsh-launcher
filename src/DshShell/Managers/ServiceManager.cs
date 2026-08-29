@@ -284,9 +284,21 @@ public sealed class ServiceManager : IServiceManager
                     {
                         UseShellExecute = false,
                         CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = System.Text.Encoding.UTF8,
+                        StandardErrorEncoding = System.Text.Encoding.UTF8,
                     };
                     ApplyServiceEnvironment(psi, port, logPath);
-                    System.Diagnostics.Process.Start(psi);
+                    var p = System.Diagnostics.Process.Start(psi);
+                    if (p is null)
+                    {
+                        Logger.Warn("DSH_SERVICE_CMD process failed to start (null)");
+                        return false;
+                    }
+                    // 与 identity 路径同构：输出进统一日志 + token 横幅解析（沙盒/E2E 行为对齐生产）
+                    PipeServiceOutputToUnifiedLog(p, logPath, identity, port);
+                    TrackServiceProcess(p);
                     Logger.Info($"service start via DSH_SERVICE_CMD: {split.Value.Exe} {split.Value.Args}");
                     return true;
                 }
@@ -333,7 +345,7 @@ public sealed class ServiceManager : IServiceManager
                 Logger.Error("service process failed to start (null)", ErrorCodes.E2001);
                 return false;
             }
-            PipeServiceOutputToUnifiedLog(p, logPath, identity);
+            PipeServiceOutputToUnifiedLog(p, logPath, identity, port);
             TrackServiceProcess(p);
             Logger.Info(identity.IsSafeProfile
                 ? $"service start via identity (SAFE profile): node.exe {launchArgs}"
@@ -382,15 +394,38 @@ public sealed class ServiceManager : IServiceManager
     /// 【2026-08-25 回归加固】两路管道线程可能同时到达成串输出（崩溃堆栈正是如此）：
     /// 此前裸 File.AppendAllText（share=Read，第二写者必失败）并发即丢行且无重试——
     /// 现以写锁串行化 + 共享写打开 + 有界重试，杜绝同刻多行互踩。
+    /// 【2026-08-29 token 栅栏】逐行经 ShellLogic.ServiceOutput 解析 dsh ≥0.1.2 的
+    /// `dsh web: …/?token=…` 启动横幅，命中经 <see cref="ServiceTokenUrlObserved"/> 上抛
+    /// （组合根跟随导航；本类不碰 UI）。注意事件为静态：Start 的两条路径（identity /
+    /// DSH_SERVICE_CMD）分属不同实例，通道必须类级才能全量覆盖。
     /// </summary>
     private static readonly object UnifiedLogAppendGate = new();
 
+    /// <summary>观察到位移：解析出带 token 的 web URL（dsh ≥0.1.2 信任栅栏；0.1.1 无此横幅不触发）。</summary>
+    public static event Action<string>? ServiceTokenUrlObserved;
+
+    private static void RaiseServiceTokenUrl(string url)
+    {
+        try { ServiceTokenUrlObserved?.Invoke(url); }
+        catch (Exception ex)
+        {
+            // 订阅方（组合根）异常绝不反压管道排空线程
+            Logger.Warn($"service token url observer threw: {ex.Message}");
+        }
+    }
+
     private static void PipeServiceOutputToUnifiedLog(
-        System.Diagnostics.Process process, string? logPath, DshWeb.Domain.DshRuntimeIdentity identity)
+        System.Diagnostics.Process process, string? logPath,
+        DshWeb.Domain.DshRuntimeIdentity identity, int port)
     {
         void Append(string line)
         {
             if (string.IsNullOrEmpty(line)) return;
+            if (ShellLogic.ServiceOutput.TryExtractTokenUrl(line, port, out var tokenUrl))
+            {
+                Logger.Info($"service token url observed (web trust fence): {tokenUrl}");
+                RaiseServiceTokenUrl(tokenUrl);
+            }
             if (logPath is null) return;
             var rendered = $"[{DateTime.Now:HH:mm:ss.fff}] [dsh] {line}";
             lock (UnifiedLogAppendGate)
