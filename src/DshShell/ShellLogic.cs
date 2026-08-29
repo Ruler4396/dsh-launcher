@@ -899,6 +899,29 @@ public static class ShellLogic
         /// <summary>兜底/默认首选镜像：阿里 npmmirror。</summary>
         public const string FallbackMirror = "https://registry.npmmirror.com";
 
+        /// <summary>
+        /// [2026-08-29 安全通知可达性] 从用户 .npmrc 文本解析 registry=（首个非注释命中）。
+        /// 版本检查 HTTP 端此前硬编码 registry.npmjs.org，大陆网络直连不可达 → 更新检查永远
+        /// 静默失败；现在跟随用户真实 npm 配置。非 http(s) 值（file: 等）忽略。
+        /// </summary>
+        public static string? ParseNpmrcRegistry(string? npmrcText)
+        {
+            foreach (var rawLine in (npmrcText ?? "").Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (line.Length == 0 || line.StartsWith(';') || line.StartsWith('#')) continue;
+                // npmrc 允许 "registry = url"（等号两侧可有空白）：取首个 = 拆分
+                var eq = line.IndexOf('=');
+                if (eq <= 0) continue;
+                var key = line[..eq].Trim();
+                if (!string.Equals(key, "registry", StringComparison.OrdinalIgnoreCase)) continue;
+                var value = line[(eq + 1)..].Trim();
+                if (value.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    return value.TrimEnd('/');
+            }
+            return null;
+        }
+
         /// <summary>按优先级返回 --registry 参数序列（含末尾的官方源空参）。永不重复
         /// （URL 按忽略大小写、忽略尾斜杠归一后判重）。</summary>
         public static string[] RegistrySources(string? dshNpmMirror)
@@ -950,6 +973,59 @@ public static class ShellLogic
         {
             var bootMode = safeProfileName is null ? "web" : "--profile " + safeProfileName;
             return $"\"{binJs}\" {bootMode} --host 127.0.0.1 --port {port} --no-open";
+        }
+    }
+
+    /// <summary>
+    /// 更新检查的网络出口策略（2026-08-29 安全通知可达性回归，纯函数 + 本机探测）。
+    ///
+    /// 实测：launcher 安全更新检查走 api.github.com、dsh 版本检查走 registry.npmjs.org——
+    /// 大陆网络直连均不可达 → 更新检查静默失败，安全更新通知永远不到达。
+    /// 策略：直连/系统代理失败后，探测常见本地代理端口（Clash 7890 / Clash Verge Rev 7897 /
+    /// v2rayN 10809 / Privoxy 8118），存活者作为 HTTP 出口重试；会话级粘住首个成功出口。
+    /// </summary>
+    public static class UpdateProxyPolicy
+    {
+        /// <summary>本地代理端口连通性判定超时（毫秒）。回环连接毫秒级，400ms 足够。</summary>
+        public const int ProxyProbeTimeoutMs = 400;
+
+        /// <summary>常见本地 HTTP 代理候选（按国内占有率排序）。去重由调用方负责。</summary>
+        public static IReadOnlyList<string> LocalProxyCandidates()
+            => new[]
+            {
+                "http://127.0.0.1:7890",   // Clash / Clash for Windows
+                "http://127.0.0.1:7897",   // Clash Verge Rev
+                "http://127.0.0.1:10809",  // v2rayN (HTTP)
+                "http://127.0.0.1:8118",   // Privoxy
+            };
+
+        /// <summary>本地代理端口连通性探测（TcpClient，400ms 硬超时）。仅回环地址。</summary>
+        public static bool LocalProxyAlive(string proxyUri)
+        {
+            try
+            {
+                var uri = new Uri(proxyUri);
+                if (uri.Scheme is not ("http" or "https")) return false;
+                using var c = new System.Net.Sockets.TcpClient();
+                var task = c.ConnectAsync(uri.Host, uri.Port);
+                return task.Wait(ProxyProbeTimeoutMs) && c.Connected;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>从环境变量与本地代理候选中给出更新检查的出口序（含直连）。env 代理（
+        /// http_proxy/https_proxy）优先于端口探测——用户显式配置最可信。直连键为 ""。</summary>
+        public static IReadOnlyList<string> ExitCandidates(string? envHttpProxy)
+        {
+            var list = new List<string> { "" }; // 直连/系统代理兜底最先
+            if (!string.IsNullOrWhiteSpace(envHttpProxy)) list.Add(envHttpProxy.Trim());
+            foreach (var p in LocalProxyCandidates())
+                if (!list.Contains(p, StringComparer.OrdinalIgnoreCase))
+                    list.Add(p);
+            return list;
         }
     }
 
@@ -1011,6 +1087,34 @@ public static class ShellLogic
         /// DSH_SANDBOX=1 时禁用自启/数据清理/首装真实网络安装等副作用。</summary>
         internal static bool IsSandboxMode =>
             string.Equals(Environment.GetEnvironmentVariable("DSH_SANDBOX"), "1", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// [2026-08-29 便携版通知分流] 判定安装形态：便携 ZIP（解压即用）vs MSI（Program Files）。
+        /// MSI 安装到 Program Files（含 X86），其更新通知走系统 Toast/托盘气泡；便携版无快捷方式、
+        /// 系统通知平台可能拒发 Toast（实测 0x80070490）——便携版更新通知改用模态弹窗兜底。
+        /// 判定为纯函数：注入 ProgramFiles 基址可测。清单限制（如 MSI 装到自定义目录）会判为
+        /// 便携——弹窗同样可达，仅通知形态不同，无功能损失。
+        /// </summary>
+        internal static bool IsPortableInstall(string? baseDirectory, string programFiles, string programFilesX86)
+        {
+            if (string.IsNullOrWhiteSpace(baseDirectory)) return true;
+            var b = baseDirectory.TrimEnd('/').TrimEnd('\\');
+            bool Under(string? pf)
+            {
+                if (string.IsNullOrEmpty(pf)) return false;
+                var root = pf.TrimEnd('/', '\\');
+                // 路径段边界：根目录本身或 根+分隔符 前缀（防 "Program Files_bak" 前缀误判）
+                return string.Equals(b, root, StringComparison.OrdinalIgnoreCase)
+                    || b.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    || b.StartsWith(root + '/', StringComparison.OrdinalIgnoreCase);
+            }
+            return !Under(programFiles) && !Under(programFilesX86);
+        }
+
+        internal static bool IsPortableInstall() => IsPortableInstall(
+            AppContext.BaseDirectory,
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
         /// <summary>
         /// 解析目标服务地址与端口。空值/非法值/非 http(s) 一律回退默认 3080。
         /// 供 DSH_WEB_URL / DSH_WEB_PORT 环境变量覆盖目标地址/端口（免重建）时使用。
