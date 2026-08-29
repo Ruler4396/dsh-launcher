@@ -199,6 +199,14 @@ internal static class SystemToast
     /// <summary>尽力显示系统 Toast。返回是否成功（失败仅 Warn，绝不抛出）。</summary>
     internal static bool TryShow(Form? uiOwner, string title, string body, TimeSpan expireAfter, Action? onClick)
     {
+        // [DSH_TEST_FORCE_TOAST_FAIL=1] 强制走失败分支：验证 NotifyPending 的
+        // Toast→托盘气泡→标题驻留 回退链（2026-08-29 通知回归验收通道三）。
+        if (string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_FORCE_TOAST_FAIL"), "1",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Logger.Warn("system toast forced-failed (DSH_TEST_FORCE_TOAST_FAIL)");
+            return false;
+        }
         try
         {
             EnsureAumidRegistered();

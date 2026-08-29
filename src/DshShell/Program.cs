@@ -2090,6 +2090,42 @@ internal static class Program
         {
             try
             {
+                // [DSH_TEST_UPDATE_SIGNAL] 假信号注入：替代整段真实检查，但**下游与真实信号
+                // 逐字节相同**（同一 NotifyPending / NotifyPendingApply 分支、同一 UI 编组、
+                // 同一回退链）。格式：launcher:<v>（模拟安全更新）| dsh:<v>（模拟 dsh 新版）。
+                // 用途：离线验证通知通道 + 与真实信号效果一致性对照（2026-08-29 通知回归验收）。
+                var signal = Environment.GetEnvironmentVariable("DSH_TEST_UPDATE_SIGNAL");
+                if (!string.IsNullOrWhiteSpace(signal))
+                {
+                    Trace($"update signal (test hook): {signal}");
+                    if (signal.StartsWith("launcher:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var ver = signal["launcher:".Length..].Trim().TrimStart('v');
+                        var lr = new UpdateChecker.LauncherRelease(ver, IsSecurity: true);
+                        if (UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                            form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
+                                UpdateChecker.CurrentLauncherVersion ?? "?"));
+                        else
+                            Trace($"update signal: launcher {ver} not newer than current; skip");
+                    }
+                    else if (signal.StartsWith("dsh:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var ver = signal["dsh:".Length..].Trim();
+                        var localVer = UpdateChecker.ResolveLocalDshVersion();
+                        if (string.IsNullOrWhiteSpace(localVer) || UpdateChecker.CompareVersions(ver, localVer) > 0)
+                            form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, ver, localVer ?? "?"));
+                        else
+                            Trace($"update signal: dsh {ver} not newer than local; skip");
+                    }
+                    else if (signal.StartsWith("pending", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 不返回：走下方真实 pending-update.json 文件路径（信号由真实文件承载）
+                        Trace("update signal: pending — falling through to real pending-update.json check");
+                    }
+                    if (!signal.StartsWith("pending", StringComparison.OrdinalIgnoreCase))
+                        return; // 假信号替换真实检查（pending 分支仍走上方真实文件路径）
+                }
+
                 // 质量治理 P1-6：存在"已下载待应用"的 dsh 更新（pending-update.json 未被清除
                 // = 服务健康跳过应用或应用失败）→ 气泡提示一次（不打断会话），重启后生效。
                 // 不依赖网络，先于 GitHub/npm 检查执行。
@@ -2187,9 +2223,9 @@ internal static class Program
         // [2026-08-29 便携版分流] 便携 ZIP：无开始菜单快捷方式/AUMID 关联，系统 Toast 在部分
         // 环境被拒（实测 0x80070490）→ 直接模态弹窗保证可达；MSI（Program Files）保持
         // Toast → 托盘气泡 → 标题驻留链。
-        if (ShellLogic.RuntimeConfig.IsPortableInstall())
+        if (ShellLogic.RuntimeConfig.IsPortableInstallWithTestOverride())
         {
-            ShowPortableUpdateDialog(title, body, type);
+            ShowPortableUpdateDialog(title, body, type, latest);
             return;
         }
         // [v0.4.1] 系统 Toast 替代托盘气泡：通知不再依赖托盘图标（此前非 tray 常驻模式下
@@ -2241,20 +2277,37 @@ internal static class Program
 
     /// <summary>
     /// [2026-08-29 便携版通知兜底] 模态弹窗告知更新（便携 ZIP 无系统通知可靠渠道时的唯一
-    /// 保证可达通道）。点"是"打开 GitHub Releases 下载页（点"否"仅本次跳过，下次启动再检查）。
+    /// 保证可达通道），按类型分流动作：
+    /// - LauncherSecurity：点"是"打开启动器 GitHub Releases 下载页（点"否"仅本次跳过）；
+    /// - Dsh：与 PromptDshUpdate 完全同构——确认后经 <see cref="DownloadDshUpdateStaged"/>
+    ///   在后台下载、下次重启安装（dsh 更新不引导去下载启动器；拒绝则跳过该版本）。
     /// NotifyPending 经 UI 线程调用，此处可直接 MessageBox；绝不抛出。
     /// </summary>
-    private static void ShowPortableUpdateDialog(string title, string body, PendingUpdate type)
+    private static void ShowPortableUpdateDialog(string title, string body, PendingUpdate type, string latest)
     {
         try
         {
             var form = _pendingForm;
             try { form?.Activate(); } catch { /* 窗体已关闭则忽略 */ }
-            var r = MessageBox.Show(form,
+            if (type == PendingUpdate.Dsh)
+            {
+                var r = MessageBox.Show(form,
+                    $"检测到 dsh 新版本 {latest}（当前 {_pendingLocal}）。\n是否在后台静默下载，下次重启时自动安装？",
+                    "dsh 更新", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                Trace($"portable dsh update ask answered: {r}");
+                if (r != DialogResult.Yes)
+                {
+                    StagedUpdate.MarkSkippedDshVersion(latest); // 与 PromptDshUpdate 拒绝语义一致
+                    return;
+                }
+                _ = Task.Run(() => DownloadDshUpdateStaged(form, latest));
+                return;
+            }
+            var r2 = MessageBox.Show(form,
                 title + "\n\n" + body + "\n\n便携版需手动下载更新：\nhttps://github.com/Ruler4396/dsh-launcher/releases/latest\n\n是否打开下载页？",
                 title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            Trace($"portable update ask answered: {r}");
-            if (r == DialogResult.Yes)
+            Trace($"portable update ask answered: {r2}");
+            if (r2 == DialogResult.Yes)
                 Managers.WebRuntimeInstaller.OpenExternally("https://github.com/Ruler4396/dsh-launcher/releases/latest");
             _pendingUpdate = PendingUpdate.None;
         }

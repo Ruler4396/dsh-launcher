@@ -1115,6 +1115,16 @@ public static class ShellLogic
             AppContext.BaseDirectory,
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+
+        /// <summary>[DSH_TEST_INSTALL_MODE] 测试覆盖：portable/msi 强制指定安装形态（沙盒/回归验证
+        /// 通知分流与回退链用）；未设置走真实路径判定。</summary>
+        internal static bool IsPortableInstallWithTestOverride() =>
+            Environment.GetEnvironmentVariable("DSH_TEST_INSTALL_MODE") switch
+            {
+                "portable" => true,
+                "msi" => false,
+                _ => IsPortableInstall(),
+            };
         /// <summary>
         /// 解析目标服务地址与端口。空值/非法值/非 http(s) 一律回退默认 3080。
         /// 供 DSH_WEB_URL / DSH_WEB_PORT 环境变量覆盖目标地址/端口（免重建）时使用。
