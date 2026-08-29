@@ -360,6 +360,20 @@ public static class ShellLogic
             /// <summary>日志层附加签名（在内置表之上追加；沙盒注入假签名用）。</summary>
             public IReadOnlyList<string> ExtraLogSignatures { get; init; } = Array.Empty<string>();
 
+            /// <summary>
+            /// 插件致命面板签名（2026-08-29 实机回归新增）：dsh 客户端引导遇到加载失败的
+            /// 插件模块时，渲染 "Failed to load plugins / failed to import loader entry …"
+            /// 错误面板**替代整个应用 UI**——但失败面板页面仍带着 ModuleLoader 门面，
+            /// 好符号照常命中，若只走 DOM 坏签名（优先级在 good 之后）则永远判不死。
+            /// 本表在好符号判定**之前**匹配 body 文本，命中即 E2008 一票判死 + dom[ 证据
+            /// （→ 插件归因 → 安全模式询问）。默认签名取面板稳定技术文案；DSH_BOOT_SIGNATURES
+            /// 的 fatal_panel_signatures 可整体覆盖，跟进 dsh 未来文案变化。
+            /// </summary>
+            public IReadOnlyList<string> FatalPanelSignatures { get; init; } = new[]
+            {
+                "failed to import loader entry",
+            };
+
             /// <summary>由 good_symbol 组装的单点页面探针脚本：返回 JSON {good,text,err}。
             /// err 取 window.__dshLastError（WebViewManager 在文档创建时注入的错误收集器），
             /// 用于"捕获异常原文"。脚本自身 try/catch——探针永不因页面异常而抛错。</summary>
@@ -388,6 +402,7 @@ public static class ShellLogic
                 if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return p;
                 if (TryGetString(root, "good_symbol", out var gs)) p = p with { GoodSymbol = gs };
                 if (TryGetStringArray(root, "bad_signatures", out var bad)) p = p with { BadSignatures = bad };
+                if (TryGetStringArray(root, "fatal_panel_signatures", out var fatal)) p = p with { FatalPanelSignatures = fatal };
                 if (TryGetInt(root, "grace_ms", out var grace)) p = p with { GraceMs = grace };
                 if (TryGetInt(root, "probe_interval_ms", out var interval)) p = p with { ProbeIntervalMs = interval };
                 if (TryGetInt(root, "absent_threshold", out var threshold)) p = p with { AbsentThreshold = threshold };
@@ -489,6 +504,12 @@ public static class ShellLogic
                     var err = root.TryGetProperty("err", out var e) && e.ValueKind == System.Text.Json.JsonValueKind.String
                         ? e.GetString() ?? "" : "";
 
+                    // [2026-08-29 插件致命面板] 最先匹配：失败面板页面仍带着 ModuleLoader 门面
+                    // （good 照常为真），若排在 good 之后永远轮不到——面板本身即"应用被插件
+                    // 打断"的确定性证据，一票判死 + dom[ 证据（→ 插件归因 → 安全模式）。
+                    if (MatchBadSignature(text, profile.FatalPanelSignatures) is { } hitPanel)
+                        return new PageProbeResult(PageProbeKind.BadSignature,
+                            "dom[" + hitPanel + "]=" + Truncate(text, 300));
                     // 坏签名匹配顺序：错误原文优先（更精确）。证据携带**异常原文**（截断），
                     // 不只带命中的签名——"捕获原文"是 S22 验收的硬要求。
                     if (err.Length > 0 && MatchBadSignature(err, profile.BadSignatures) is { } hitErr)

@@ -523,4 +523,20 @@ public class BootHealthMonitorTests
         var stop = Task.Run(m.Stop);
         Assert.True(stop.Wait(TimeSpan.FromSeconds(2)), "Stop must not block on a hung probe");
     }
+
+    [Fact]
+    public async Task PageProbe_PluginFatalPanel_EvenWithGoodSymbol_FailsWithDomEvidence()
+    {
+        // 2026-08-29 实机回归：dsh 0.1.2 插件客户端模块加载失败 → 失败面板替代整个应用 UI，
+        // 但面板页面 ModuleLoader 门面尚在（good=true）——致命面板签名必须一票判死，
+        // 证据 dom[ 前缀（→ 插件归因 → 安全模式），而非 HEALTHY 假阳性。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => Task.FromResult("{\"good\":true,\"text\":\"HARNESS Failed to load plugins failed to import loader entry dacd7ad5 (dsh-notification): client-modules missed the module table\",\"err\":\"\"}"),
+            httpProbe: _ => true);
+        var failedTask = WaitFailedAsync(m);
+        m.OnNavigationCompleted();
+        var verdict = await failedTask;
+        Assert.Equal("E2008", verdict.ErrorCode);
+        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Page && e.Detail!.StartsWith("dom[failed to import loader entry]="));
+    }
 }
