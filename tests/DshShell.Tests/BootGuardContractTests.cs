@@ -348,4 +348,49 @@ public class BootGuardContractTests
         Assert.Null(ShellLogic.ProcessManagement.SplitCommandLine("   "));
         Assert.Null(ShellLogic.ProcessManagement.SplitCommandLine("\"unterminated quote"));
     }
+
+    // ---------------- 插件致命面板（2026-08-29 实机回归：dsh 0.1.2 客户端模块失败面板）----------------
+
+    [Fact]
+    public void EvaluatePageProbe_PluginFatalPanel_BeatsGoodSymbol_OneVoteWithDomEvidence()
+    {
+        // 实机形态：dsh 0.1.2 客户端引导遇到加载失败的插件模块 → 渲染失败面板替代整个应用 UI，
+        // 但面板页面仍带 ModuleLoader 门面（good=true）——面板必须一票判死（优先于 good），
+        // 证据带 dom[ 前缀 → VerdictIndicatesPluginInvolvement 命中 → 安全模式询问。
+        var r = Evaluate(ProbeJson(true,
+            "HARNESS\n\nFailed to load plugins\n\nfailed to import loader entry dacd7ad5 (dsh-notification): client-modules: require(\"@deepseek-ai/dsh-client-runtime/client\") missed the module table",
+            ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
+        Assert.StartsWith("dom[failed to import loader entry]=", r.Detail);
+        Assert.Contains("dsh-notification", r.Detail);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_FatalPanel_CaseInsensitive()
+    {
+        var r = Evaluate(ProbeJson(true, "FAILED TO IMPORT LOADER ENTRY something broke", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_FatalPanelSignatures_OverridableViaProfile()
+    {
+        var profile = ShellLogic.BootGuard.ResolveProfile(
+            "{\"fatal_panel_signatures\":[\"custom fatal panel copy\"]}");
+        var hit = ShellLogic.BootGuard.EvaluatePageProbe(
+            ProbeJson(true, "custom fatal panel copy: detail", ""), profile);
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, hit.Kind);
+        // 默认签名被覆盖后不再命中
+        var miss = ShellLogic.BootGuard.EvaluatePageProbe(
+            ProbeJson(true, "failed to import loader entry x", ""), profile);
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.GoodSymbol, miss.Kind);
+    }
+
+    [Fact]
+    public void EvaluatePageProbe_NormalRenderedPage_NotCaughtByFatalPanel()
+    {
+        // 误报防护：正常渲染页（无面板文案）不受致命面板通道影响
+        var r = Evaluate(ProbeJson(true, "DeepSeek Harness 主界面正常渲染的长文本内容，用于模拟真实界面超过渲染豁免阈值的情形……", ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.GoodSymbol, r.Kind);
+    }
 }

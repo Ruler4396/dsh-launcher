@@ -351,6 +351,22 @@ token 信任栅栏，`--trusted-host` 只放宽 /api 不放宽根路径）。壳
 WebView 导航目标，`Target.Port`/就绪探测/健康监控仍用裸 `Target.Url`（401 对 tcp+http 就绪判定无影响，
 与沙盒实测一致）。
 
+## 9. 2026-08-29 [签名漂移]：dsh 0.1.2 插件失败面板绕过页面层（修复点14）
+
+实机形态（0.4.2 × dsh 0.1.2-alpha.1 × 用户真实第三方插件）：插件客户端模块加载失败时，dsh 渲染
+"Failed to load plugins / failed to import loader entry (dsh-notification)…"面板**替代整个应用 UI**，
+但面板页面仍带 ModuleLoader 门面 → 探针 `good=true` 走 GoodSymbol 分支 → **HEALTHY 假阳性**：
+无弹窗、无安全模式、用户对着死页。探针其实已把面板全文采进 `text`，但 BadSignatures 还是
+0.1.1 时代三签名，0.1.2 失败文案一个不匹配（签名漂移）。
+
+| # | 节点（§5 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点14** | `EvaluatePageProbe` 判定顺序 | 好符号分支优先于 DOM 坏签名，且签名表未覆盖 0.1.2 面板文案 | 新增 `FatalPanelSignatures` 通道（默认 `failed to import loader entry`，`DSH_BOOT_SIGNATURES.fatal_panel_signatures` 可覆盖）：**最先**匹配 body 文本、优先于 good，命中即 E2008 一票判死 + `dom[` 证据 → 插件归因 → 安全模式询问 | `BootGuardContractTests.EvaluatePageProbe_PluginFatalPanel_*`（4 例）、`BootHealthMonitorTests.PageProbe_PluginFatalPanel_EvenWithGoodSymbol_FailsWithDomEvidence` |
+
+**决策权衡**：面板命中一票判死而非计票——面板是确定性"应用被插件打断"证据（非瞬时加载态）；误报面
+（用户会话文本恰含该文案）自愈成本低（点否即可）。`dsh-launcher-lifetime` 类**类型导入**插件构建后
+不含死包引用不受影响；实机处置：摘除 dsh-notification/dsh-zh-guide 出 web profile bundles（依赖保留）。
+
 ---
 
 ## 如何使用本地图
