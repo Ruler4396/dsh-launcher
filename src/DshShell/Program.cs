@@ -694,6 +694,14 @@ internal static class Program
 
         ScheduleUpdateCheck(form);
 
+        // [DSH_TEST_TOAST=1] 通知链路自检：直接走一次 SystemToast（分步轨迹见 SystemToast.cs）
+        if (string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_TOAST"), "1", StringComparison.OrdinalIgnoreCase))
+        {
+            var ok = Windows.SystemToast.TryShow(form, "dsh-launcher toast 自检",
+                $"通知链路自检 {DateTime.Now:HH:mm:ss}（DSH_TEST_TOAST）", TimeSpan.FromSeconds(15), null);
+            Trace($"toast self-test: shown={ok}");
+        }
+
         // ---- 任务一：插件崩溃安全模式接线 ----
         // WebViewManager 检测到插件不兼容的致命错误消息时广播 PluginCrashDetected。
         // 组合根接线：经 AskEnterSafeModeOnce（每会话仅询问一次，ADR-023 与页面层共用闸门）
@@ -2092,14 +2100,14 @@ internal static class Program
                     form.BeginInvoke(() => NotifyPendingApply(v));
                 }
 
-                using var http = Managers.WebRuntimeInstaller.CreateHttpClient(TimeSpan.FromSeconds(15)); // P2-9：弱网放宽 8s→15s
-
                 // 1) launcher 安全更新优先（安全修复比功能更新重要）。
                 // 独立 try/catch：此步任何意外异常都不得中断后面的 dsh 检查（此前整段任务只有
                 // 一个静默总 catch，一处抛出 → dsh 检查无声消失，日志零痕迹难排查）。
+                // [2026-08-29 可达性] 回退版自动多出口（直连→常见本地代理），大陆网络下
+                // api.github.com 直连不可达时经本地代理可达——旧版在此静默失败、通知永不达。
                 try
                 {
-                    var lr = await UpdateChecker.FetchLatestLauncherReleaseAsync(http);
+                    var lr = await UpdateChecker.FetchLatestLauncherReleaseFallbackAsync();
                     if (lr is not null && lr.IsSecurity
                         && UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
                     {
@@ -2115,7 +2123,7 @@ internal static class Program
                 }
 
                 // 2) dsh 新版
-                var latest = await UpdateChecker.FetchLatestDshVersionAsync(http);
+                var latest = await UpdateChecker.FetchLatestDshVersionFallbackAsync();
                 var local = UpdateChecker.ResolveLocalDshVersion();
                 // 诊断留痕（v0.4.1）：无论命中与否都记录 latest/local。此前只在 latest 为空时
                 // 留痕——"检测成功、准备弹气泡"路径完全静默，气泡一旦被系统吞掉（托盘不可见/
@@ -2176,6 +2184,14 @@ internal static class Program
         var (title, body) = type == PendingUpdate.LauncherSecurity
             ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
             : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
+        // [2026-08-29 便携版分流] 便携 ZIP：无开始菜单快捷方式/AUMID 关联，系统 Toast 在部分
+        // 环境被拒（实测 0x80070490）→ 直接模态弹窗保证可达；MSI（Program Files）保持
+        // Toast → 托盘气泡 → 标题驻留链。
+        if (ShellLogic.RuntimeConfig.IsPortableInstall())
+        {
+            ShowPortableUpdateDialog(title, body, type);
+            return;
+        }
         // [v0.4.1] 系统 Toast 替代托盘气泡：通知不再依赖托盘图标（此前非 tray 常驻模式下
         // TrayIcon 恒为 null，更新气泡被静默丢弃——rc6→rc7 无提示根因）。
         // 点击 → OnPendingBalloonClicked（SystemToast 内部编组回 UI 线程），语义与原 BalloonTipClicked 一致。
@@ -2183,9 +2199,70 @@ internal static class Program
             TimeSpan.FromSeconds(25), // 驻留 25s，安全更新要让人看到
             () => OnPendingBalloonClicked(null, EventArgs.Empty));
         if (shown)
+        {
             Logger.Info($"update toast shown: {title} / {body.Replace("\n", " ")}");
-        else
-            Logger.Warn("update toast unavailable; user will not see this update notice");
+            return;
+        }
+        // [2026-08-29 多种方式兜底] toast 失败（实测系统通知平台在部分上下文拒绝）：
+        // ① 托盘气泡（TrayManager 已建托盘时）；② 主窗标题栏驻留标记（托盘不可用的最后防线）。
+        Logger.Warn("update toast unavailable; falling back to tray balloon / title dwell");
+        try
+        {
+            if (Managers.WindowManager.Instance.TrayIcon is { } tray)
+            {
+                tray.ShowBalloonTip(15000, title, body, System.Windows.Forms.ToolTipIcon.Info);
+                Logger.Info($"update balloon fallback shown: {title}");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("update balloon fallback failed: " + ex.Message);
+        }
+        try
+        {
+            if (_pendingForm is not null && !_pendingForm.IsDisposed)
+            {
+                var mark = type == PendingUpdate.LauncherSecurity ? "（有安全更新）" : "（有更新）";
+                if (_pendingForm is DshWeb.Windows.DshShellForm shell && shell.TitleBar is not null)
+                {
+                    shell.TitleBar._titleText += mark;
+                    shell.TitleBar.Invalidate();
+                }
+                _pendingForm.Text += mark;
+                Logger.Info($"update notice pinned to title bar: {mark}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("update title dwell failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// [2026-08-29 便携版通知兜底] 模态弹窗告知更新（便携 ZIP 无系统通知可靠渠道时的唯一
+    /// 保证可达通道）。点"是"打开 GitHub Releases 下载页（点"否"仅本次跳过，下次启动再检查）。
+    /// NotifyPending 经 UI 线程调用，此处可直接 MessageBox；绝不抛出。
+    /// </summary>
+    private static void ShowPortableUpdateDialog(string title, string body, PendingUpdate type)
+    {
+        try
+        {
+            var form = _pendingForm;
+            try { form?.Activate(); } catch { /* 窗体已关闭则忽略 */ }
+            var r = MessageBox.Show(form,
+                title + "\n\n" + body + "\n\n便携版需手动下载更新：\nhttps://github.com/Ruler4396/dsh-launcher/releases/latest\n\n是否打开下载页？",
+                title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            Trace($"portable update ask answered: {r}");
+            if (r == DialogResult.Yes)
+                Managers.WebRuntimeInstaller.OpenExternally("https://github.com/Ruler4396/dsh-launcher/releases/latest");
+            _pendingUpdate = PendingUpdate.None;
+        }
+        catch (Exception ex)
+        {
+            // 弹窗本身失败（窗体关闭/无主窗）：留痕，绝不让通知链路抛进调用方
+            Logger.Warn($"portable update dialog failed: {ex.Message}");
+        }
     }
 
     /// <summary>质量治理 P1-6/P1-8："已下载待应用"更新的一次性气泡提示（无点击行为）。

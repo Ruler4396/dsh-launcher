@@ -82,6 +82,152 @@ public static class UpdateChecker
         }
     }
 
+    // ==================== [2026-08-29 安全通知可达性] 多出口回退链 ====================
+
+    /// <summary>会话级粘住的成功网络出口：null=未知，""=直连/系统代理，其他=代理 URI。</summary>
+    private static volatile string? _workingExit;
+
+    /// <summary>用户 .npmrc 路径（版本检查 HTTP 端跟随用户真实 registry 配置）。</summary>
+    internal static string UserNpmrcPath =>
+        System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".npmrc");
+
+    /// <summary>读用户 .npmrc 的 registry=（纯解析在 ShellLogic.NpmRegistryPolicy；读失败/无值 → null）。</summary>
+    internal static string? ReadUserNpmrcRegistry()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(UserNpmrcPath)) return null;
+            return ShellLogic.NpmRegistryPolicy.ParseNpmrcRegistry(System.IO.File.ReadAllText(UserNpmrcPath));
+        }
+        catch { return null; }
+    }
+
+    /// <summary>dsh 版本检查的 registry 候选序（去重）：env → 用户 .npmrc → npmmirror → npmjs。
+    /// 注：裸 npmjs 直连在部分网络不可达，靠出口回退（本地代理）兜底。</summary>
+    internal static string[] DshRegistryCandidates(string? envRegistry, string? npmrcRegistry)
+    {
+        var list = new System.Collections.Generic.List<string>();
+        void Add(string? uri)
+        {
+            if (string.IsNullOrWhiteSpace(uri)) return;
+            var norm = uri.Trim().TrimEnd('/');
+            if (!list.Contains(norm, StringComparer.OrdinalIgnoreCase)) list.Add(norm);
+        }
+        Add(envRegistry);
+        Add(npmrcRegistry);
+        Add(ShellLogic.NpmRegistryPolicy.FallbackMirror);
+        Add("https://registry.npmjs.org");
+        return list.ToArray();
+    }
+
+    /// <summary>按出口序构造 HttpClient 列表（上次成功出口优先，随后直连/系统代理，再存活本地代理）。
+    /// 每个 HttpClient 用完即弃、由调用方 Dispose。</summary>
+    internal static System.Collections.Generic.List<(System.Net.Http.HttpClient Client, string? ExitKey)> CreateUpdateHttpClients(
+        int timeoutSec, System.Collections.Generic.IReadOnlyList<string> exitCandidates)
+    {
+        var list = new System.Collections.Generic.List<(System.Net.Http.HttpClient, string?)>();
+        var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddExit(string? key)
+        {
+            if (key is null) return;
+            var norm = key.Trim();
+            if (norm == "direct") norm = "";
+            if (!seen.Add(norm)) return;
+            list.Add((MakeUpdateClient(norm, timeoutSec), norm));
+        }
+        if (_workingExit is not null) AddExit(_workingExit);
+        foreach (var c in exitCandidates) AddExit(c);
+        // 本地代理存活探测（回环连接毫秒级；失败不上链）
+        foreach (var p in ShellLogic.UpdateProxyPolicy.LocalProxyCandidates())
+        {
+            if (seen.Contains(p)) continue;
+            if (ShellLogic.UpdateProxyPolicy.LocalProxyAlive(p))
+            {
+                seen.Add(p);
+                list.Add((MakeUpdateClient(p, timeoutSec), p));
+            }
+        }
+        return list;
+    }
+
+    private static System.Net.Http.HttpClient MakeUpdateClient(string? proxyUri, int timeoutSec)
+    {
+        var handler = new System.Net.Http.HttpClientHandler { UseProxy = true };
+        if (!string.IsNullOrEmpty(proxyUri)) handler.Proxy = new System.Net.WebProxy(new Uri(proxyUri));
+        var client = new System.Net.Http.HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
+        // [2026-08-29 403 回归] GitHub API 强制要求 User-Agent：.NET 默认不发 → 所有出口一律
+        // 403 "missing User-Agent" → 更新检查全链路静默 null。版本号可随发布注入。
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "dsh-launcher/" + (CurrentLauncherVersion ?? "0.0.0"));
+        return client;
+    }
+
+    /// <summary>launcher 安全更新检查回退版：多出口依次尝试，首个成功即粘住该出口。</summary>
+    public static async Task<LauncherRelease?> FetchLatestLauncherReleaseFallbackAsync()
+    {
+        var envProxy = Environment.GetEnvironmentVariable("https_proxy")
+            ?? Environment.GetEnvironmentVariable("HTTPS_PROXY");
+        var candidates = ShellLogic.UpdateProxyPolicy.ExitCandidates(envProxy);
+        foreach (var (client, key) in CreateUpdateHttpClients(15, candidates))
+        {
+            try
+            {
+                Logger.Info($"update network: launcher check attempting exit={(key is { Length: > 0 } ? key : "direct")}");
+                var r = await FetchLatestLauncherReleaseAsync(client);
+                if (r is not null)
+                {
+                    _workingExit = key;
+                    var exitLabel = key is { Length: > 0 } ? key : "direct";
+                    Logger.Info($"update network: launcher check exit={exitLabel} version={r.Version}");
+                    return r;
+                }
+                Logger.Warn($"update network: launcher check null via exit={(key is { Length: > 0 } ? key : "direct")}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"update network: launcher check failed via exit={key ?? "?"} ({ex.Message})");
+            }
+            finally { client.Dispose(); }
+        }
+        return null;
+    }
+
+    /// <summary>dsh 版本检查回退版：registry 候选 × 网络出口依次尝试。</summary>
+    public static async Task<string?> FetchLatestDshVersionFallbackAsync()
+    {
+        var envProxy = Environment.GetEnvironmentVariable("https_proxy")
+            ?? Environment.GetEnvironmentVariable("HTTPS_PROXY");
+        var exits = ShellLogic.UpdateProxyPolicy.ExitCandidates(envProxy);
+        foreach (var registry in DshRegistryCandidates(
+                     Environment.GetEnvironmentVariable("DSH_NPM_REGISTRY"), ReadUserNpmrcRegistry()))
+        {
+            foreach (var (client, key) in CreateUpdateHttpClients(15, exits))
+            {
+                try
+                {
+                    using (var resp = await client.GetAsync($"{registry}/{Uri.EscapeDataString(DshNpmPackage)}/latest"))
+                    {
+                        if (!resp.IsSuccessStatusCode) continue;
+                        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+                        if (doc.RootElement.TryGetProperty("version", out var v) && v.GetString() is { Length: > 0 } version)
+                        {
+                            _workingExit = key;
+                            var exitLabel = key is { Length: > 0 } ? key : "direct";
+                            Logger.Info($"update network: dsh check ok via registry={registry} exit={exitLabel} version={version}");
+                            return version;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"update network: dsh check failed ({registry} / {key ?? "?"}): {ex.Message}");
+                }
+                finally { client.Dispose(); }
+            }
+        }
+        return null;
+    }
+
     /// <summary>拉取 dsh（@deepseek-ai/dsh）npm 最新版本；失败返回 null。</summary>
     public static async Task<string?> FetchLatestDshVersionAsync(HttpClient http)
     {

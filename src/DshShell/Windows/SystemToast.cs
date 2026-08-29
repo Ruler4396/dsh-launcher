@@ -119,10 +119,13 @@ internal static class SystemToast
         [PreserveSig] int _GetRuntimeClassName(nint a);
         [PreserveSig] int _GetTrustLevel(nint a);
 
+        // [2026-08-29 槽位修复] 真实 v1 布局：CreateToastNotification / CreateToastNotifier /
+        // GetTemplateContent。旧声明漏了头一个成员且多插了重载占位 → 整体错位一槽，
+        // CreateToastNotifier 实际调到 CreateToastNotification（AUMID 指针被当作 XmlDocument）
+        // → 0x80070490，toast 自 0.4.1 起从未真正弹出过。
+        void CreateToastNotification(nint xmlDocument, out nint toast);
         void CreateToastNotifier(nint aumidHstring, out nint notifier);
-        // 第二个重载（ForUser 变体）只占槽位，本方从不调用
-        void CreateToastNotifierOverload(nint a, nint b, out nint c);
-        void GetTemplateContent(nint templateHstring, out nint xmlDocument);
+        void GetTemplateContent(nint templateType, out nint xmlDocument);
     }
 
     [ComImport, Guid("75927B93-03F3-41EC-91D3-6E5BAC1B38E7"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -199,21 +202,27 @@ internal static class SystemToast
         try
         {
             EnsureAumidRegistered();
+            var trace = string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_TOAST"), "1",
+                StringComparison.OrdinalIgnoreCase);
+            if (trace) Logger.Info("toast step 0: aumid registered");
 
             // 1) XmlDocument + LoadXml（策略 XML 由 ToastPolicy 单点构造）
             var hXmlDoc = "Windows.Data.Xml.Dom.XmlDocument";
             RoActivateInstance(H(hXmlDoc), out var pDoc);
+            if (trace) Logger.Info("toast step 1: xml document activated");
             try
             {
                 var docIo = (IXmlDocumentIO)Marshal.GetObjectForIUnknown(pDoc);
                 var hXml = H(ShellLogic.ToastPolicy.BuildToastXml(title, body));
                 try { docIo.LoadXml(hXml); } finally { WindowsDeleteString(hXml); }
+                if (trace) Logger.Info("toast step 1b: loadxml ok");
 
                 // 2) ToastNotificationFactory → new ToastNotification(xml)
                 var factory = Factory<IToastNotificationFactory>(
                     "Windows.UI.Notifications.ToastNotification",
                     new Guid("04124B20-82C6-4229-B109-FD9ED4662B53"));
                 factory.CreateToastNotification(pDoc, out var pToast);
+                if (trace) Logger.Info("toast step 2: notification created");
                 try
                 {
                     var toast = (IToastNotification)Marshal.GetObjectForIUnknown(pToast);
@@ -231,14 +240,17 @@ internal static class SystemToast
                     var statics = Factory<IToastNotificationManagerStatics>(
                         "Windows.UI.Notifications.ToastNotificationManager",
                         new Guid("50AC103F-D235-4598-BBEF-98FE4D1A3AD4"));
+                    if (trace) Logger.Info("toast step 4a: manager factory ok");
                     var hAumid = H(ShellLogic.ToastPolicy.ToastAumid);
                     try
                     {
                         statics.CreateToastNotifier(hAumid, out var pNotifier);
+                        if (trace) Logger.Info("toast step 4b: notifier created");
                         try
                         {
                             var notifier = (IToastNotifier)Marshal.GetObjectForIUnknown(pNotifier);
                             notifier.Show(pToast);
+                            if (trace) Logger.Info("toast step 4c: show ok");
                             return true;
                         }
                         finally { Marshal.Release(pNotifier); }
