@@ -465,4 +465,62 @@ public class BootHealthMonitorTests
         Assert.Equal("E2007", verdict.ErrorCode);
         Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Cdp && e.Detail!.Contains("facade is missing"));
     }
+
+    // ---------------- 页面探针超时（2026-08-29 token 栅栏回归加固）----------------
+
+    [Fact]
+    public async Task PageProbe_HangingRounds_TimeoutStreakConvergesToFailed()
+    {
+        // 401 错误页实测形态：ExecuteScript 永不返回。单轮超时只 Warn；连续超时达阈值 → E2008。
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously).Task,
+            httpProbe: _ => true, // HTTP 层保持"健康"，失败必须由页面层超时通道给出
+            pageProbeTimeout: TimeSpan.FromMilliseconds(60),
+            pageProbeTimeoutFailureThreshold: 3);
+        var failedTask = WaitFailedAsync(m);
+        m.OnNavigationCompleted();
+        var verdict = await failedTask;
+        Assert.Equal("E2008", verdict.ErrorCode);
+        Assert.Contains("超时", verdict.Summary);
+        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Page && e.Detail!.Contains("timeout"));
+    }
+
+    [Fact]
+    public async Task PageProbe_TimeoutThenGoodSymbol_StreakReset_Healthy()
+    {
+        // 单次超时不得判死：前两轮挂起、第三轮好符号 → Healthy
+        var calls = 0;
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ =>
+            {
+                calls++;
+                return calls <= 2
+                    ? new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously).Task
+                    : Task.FromResult<string?>("{\"good\":true,\"text\":\"ok\",\"err\":\"\"}");
+            },
+            httpProbe: _ => true,
+            pageProbeTimeout: TimeSpan.FromMilliseconds(60),
+            pageProbeTimeoutFailureThreshold: 3);
+        var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        m.HealthyDetected += () => healthy.TrySetResult();
+        m.OnNavigationCompleted();
+        Assert.True(await Task.WhenAny(healthy.Task, Task.Delay(4000)) == healthy.Task,
+            "recovery after timeouts should turn Healthy (streak must reset)");
+        Assert.Equal(BootHealthState.Healthy, m.State);
+    }
+
+    [Fact]
+    public async Task PageProbe_HangingForever_StopReturnsPromptly_NoDeadlock()
+    {
+        // 探针永久挂起时 Stop() 必须立即返回（WhenAny 的取消分支），不得死锁
+        using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
+            _ => new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously).Task,
+            httpProbe: _ => true,
+            pageProbeTimeout: TimeSpan.FromSeconds(30),
+            pageProbeTimeoutFailureThreshold: 3);
+        m.OnNavigationCompleted();
+        await Task.Delay(120); // 进入第一轮挂起探针
+        var stop = Task.Run(m.Stop);
+        Assert.True(stop.Wait(TimeSpan.FromSeconds(2)), "Stop must not block on a hung probe");
+    }
 }

@@ -932,6 +932,57 @@ public static class ShellLogic
         }
     }
 
+    /// <summary>
+    /// dsh 服务 stdout 行解析（纯函数，契约测试锁定）。
+    /// [2026-08-29 token 栅栏回归] dsh ≥0.1.2 的 web-startup 给根路径加了 token 信任栅栏
+    /// （0.1.1 根路径免鉴权），启动横幅形如 `dsh web: http://127.0.0.1:3080/?token=...`。
+    /// 壳必须解析该行并跟随 token URL 导航，否则 WebView 停在 401 错误页（E2004）且页面
+    /// 探针永久挂死。安全约束（防恶意插件伪造 stdout 行把壳 WebView 引向外站）：
+    /// 仅接受回环主机 + 端口等于目标端口 + token 参数非空。
+    /// </summary>
+    public static class ServiceOutput
+    {
+        private const string WebBannerMarker = "dsh web: ";
+
+        /// <summary>
+        /// 从一行服务输出中提取带 token 的 web URL。
+        /// 宽进：容忍时间戳/`[dsh] ` 渲染前缀与行尾附加文本（取标记后首个空白前的字段）。
+        /// 严出：绝对 URL、http(s)、`token` 查询参数非空、端口等于 <paramref name="expectedPort"/>、
+        /// 主机必须回环（Uri.IsLoopback）。任一不满足返回 false。
+        /// </summary>
+        public static bool TryExtractTokenUrl(string? rawLine, int expectedPort, out string tokenUrl)
+        {
+            tokenUrl = string.Empty;
+            if (string.IsNullOrWhiteSpace(rawLine) || expectedPort <= 0) return false;
+            var idx = rawLine.IndexOf(WebBannerMarker, StringComparison.Ordinal);
+            if (idx < 0) return false;
+            var candidate = rawLine[(idx + WebBannerMarker.Length)..].Trim();
+            var spaceIdx = candidate.IndexOfAny([' ', '\t']);
+            if (spaceIdx >= 0) candidate = candidate[..spaceIdx];
+            if (candidate.Length == 0) return false;
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return false;
+            if (uri.Scheme is not ("http" or "https")) return false;
+            if (!uri.IsLoopback) return false;
+            if (uri.Port != expectedPort) return false;
+            var hasToken = false;
+            foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = pair.IndexOf('=');
+                var key = eq < 0 ? pair : pair[..eq];
+                var value = eq < 0 ? string.Empty : pair[(eq + 1)..];
+                if (string.Equals(key, "token", StringComparison.OrdinalIgnoreCase)
+                    && value.Length > 0)
+                {
+                    hasToken = true;
+                    break;
+                }
+            }
+            if (!hasToken) return false;
+            tokenUrl = uri.AbsoluteUri;
+            return true;
+        }
+    }
+
     /// <summary>运行时配置解析：目标地址端口、生命周期模式、WebView2 版本。</summary>
     public static class RuntimeConfig
     {

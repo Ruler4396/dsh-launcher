@@ -200,11 +200,36 @@ internal static class Program
         if (HandleCommandLineArgs(args)) return; // CLI modes: diagnose / ui-selftest / ui-probe
 
         InitializeCoreDataAndLogs();
+        // [2026-08-29 token 栅栏] 必须先于 EnsureServiceAndRuntime 订阅：服务横幅在启动轮询期间
+        // 即到达（实测 55.561 触发 vs RunUserInterface 55.787 建窗——晚订阅必然错过事件）。
+        WireServiceTokenFollow();
         if (!EnsureSingleInstanceAndAutostart()) return;
 
         if (!EnsureServiceAndRuntime()) return;
 
         RunUserInterface(args);
+    }
+
+    /// <summary>
+    /// [2026-08-29 token 栅栏] 订阅静态通道（覆盖 identity / DSH_SERVICE_CMD 两条启动路径的
+    /// 全部 ServiceManager 实例）：dsh ≥0.1.2 的启动横幅带根路径 token，壳必须跟随导航，
+    /// 否则 WebView 停在 401 错误页（E2004）且页面探针挂死。横幅可能远早于建窗到达——
+    /// 先记值（_serviceTokenUrl），初始导航与后续刷新点统一消费 <see cref="CurrentWebUrl"/>。
+    /// Main 只调用一次（静态事件重复订阅 = 重复导航）。
+    /// </summary>
+    private static void WireServiceTokenFollow()
+    {
+        Managers.ServiceManager.ServiceTokenUrlObserved += url =>
+        {
+            _serviceTokenUrl = url;
+            var form = GetMainFormForDialog();
+            if (form is not null && form.IsHandleCreated)
+            {
+                Trace($"token follow: fresh token, queuing navigation on UI thread");
+                form.BeginInvoke(NavigateMainWebToCurrentServiceUrl);
+            }
+            // 主窗未建：仅记值，初始导航（RunUserInterface）消费 CurrentWebUrl
+        };
     }
 
     // ===== Pipeline stage methods (extracted from Main for readability) =====
@@ -361,6 +386,9 @@ internal static class Program
     /// <summary>Stage 6: Create main form, wire up WebView2/theme/tray, run Application.Run.</summary>
     private static void RunUserInterface(string[] args)
     {
+        // [2026-08-29 token 栅栏] 订阅已在 Main.WireServiceTokenFollow 完成（先于服务启动）——
+        // 此处订阅必然晚于横幅到达，会永久错过事件（实测竞态），严禁重复订阅。
+
         // 正常模式启动：清理历史遗留的隔离 profile（Task 4）。安全模式启动时 SafeProfile.Build
         // 会幂等重建，故此处清理无副作用；若本次为安全模式则保留（服务正在使用）。
         if (!SafeMode.IsActive && SafeProfile.SafeProfileExists())
@@ -559,17 +587,41 @@ internal static class Program
             try
             {
                 await InitWebViewAsync(web, userDataFolder);
-                web.CoreWebView2.Navigate(Target.Url);
+                web.CoreWebView2.Navigate(CurrentWebUrl); // token 跟随：dsh ≥0.1.2 根路径需 ?token=
                 var navWarned = false;
+                var navRetries = 5; // [2026-08-29 token 栅栏] 瞬态失败自动重导航（服务重启空窗的 404/拒绝连接窗口）
                 web.CoreWebView2.NavigationCompleted += (_, e) =>
                 {
-                    if (e.IsSuccess) WebViewManager.ResetCrashCount();
+                    // [2026-08-29 token 栅栏] 全量导航轨迹：错误页驻留问题的取证基线
+                    Trace($"webview nav completed: success={e.IsSuccess} http={e.HttpStatusCode} url={web.CoreWebView2?.Source}");
+                    if (e.IsSuccess) { _navSucceededSinceFailure = true; WebViewManager.ResetCrashCount(); }
                     BootMonitor?.OnNavigationCompleted(); // ADR-023：页面层探针武装点
-                    if (!e.IsSuccess && !navWarned)
+                    if (!e.IsSuccess)
                     {
-                        navWarned = true;
-                        ShowError(ErrorCodes.E2004,
-                            $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}");
+                        _navSucceededSinceFailure = false;
+                        if (navRetries > 0)
+                        {
+                            navRetries--;
+                            Trace($"token follow: nav failed (http={e.HttpStatusCode}); retrying {navRetries} more time(s)");
+                            try { web.CoreWebView2.Navigate(CurrentWebUrl); } catch { /* 关闭竞态 */ }
+                            return;
+                        }
+                        if (!navWarned)
+                        {
+                            navWarned = true;
+                            // [2026-08-29 实测] 模态弹窗阻塞后续 WebView2 导航完成（弹窗后的 token 跟随
+                            // 导航永不返回）——延迟 6s 弹出，窗口期内任何成功导航都取消弹窗。
+                            _ = Task.Delay(TimeSpan.FromSeconds(6)).ContinueWith(_ =>
+                            {
+                                try
+                                {
+                                    if (_navSucceededSinceFailure) return; // 页面已救回，不打扰
+                                    form.BeginInvoke(() => ShowError(ErrorCodes.E2004,
+                                        $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}"));
+                                }
+                                catch { /* 窗体已关闭 */ }
+                            });
+                        }
                     }
                 };
                 WireBootHealthPageLayer();
@@ -591,17 +643,38 @@ internal static class Program
                     try
                     {
                         await InitWebViewAsync(web, userDataFolder);
-                        web.CoreWebView2.Navigate(Target.Url);
+                        web.CoreWebView2.Navigate(CurrentWebUrl); // token 跟随：dsh ≥0.1.2 根路径需 ?token=
                         var navWarned = false;
+                        var navRetries = 5;
                         web.CoreWebView2.NavigationCompleted += (_, e) =>
                         {
-                            if (e.IsSuccess) WebViewManager.ResetCrashCount();
+                            Trace($"webview nav completed: success={e.IsSuccess} http={e.HttpStatusCode} url={web.CoreWebView2?.Source}");
+                            if (e.IsSuccess) { _navSucceededSinceFailure = true; WebViewManager.ResetCrashCount(); }
                             BootMonitor?.OnNavigationCompleted(); // ADR-023：页面层探针武装点
-                            if (!e.IsSuccess && !navWarned)
+                            if (!e.IsSuccess)
                             {
-                                navWarned = true;
-                                ShowError(ErrorCodes.E2004,
-                                    $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}");
+                                _navSucceededSinceFailure = false;
+                                if (navRetries > 0)
+                                {
+                                    navRetries--;
+                                    try { web.CoreWebView2.Navigate(CurrentWebUrl); } catch { /* 关闭竞态 */ }
+                                    return;
+                                }
+                                if (!navWarned)
+                                {
+                                    navWarned = true;
+                                    // [2026-08-29 实测] 同上：模态弹窗阻塞后续导航完成——延迟弹出
+                                    _ = Task.Delay(TimeSpan.FromSeconds(6)).ContinueWith(_ =>
+                                    {
+                                        try
+                                        {
+                                            if (_navSucceededSinceFailure) return;
+                                            form.BeginInvoke(() => ShowError(ErrorCodes.E2004,
+                                                $"页面加载失败。\n\n请确认 {Target.Url} 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。\n\n统一日志：{UnifiedLogPath}"));
+                                        }
+                                        catch { /* 窗体已关闭 */ }
+                                    });
+                                }
                             }
                         };
                         WireBootHealthPageLayer();
@@ -1105,6 +1178,77 @@ internal static class Program
     /// <summary>组合根共享的服务 Manager 实例（无状态；安全模式/回滚/重启询问等主窗流程复用）。</summary>
     private static readonly ServiceManager ShellService = new();
 
+    // ===== [2026-08-29 token 栅栏] 服务 URL 跟随（dsh ≥0.1.2 web-startup 信任栅栏）=====
+
+    /// <summary>
+    /// 最近一次从服务 stdout 观察到的带 token web URL（dsh ≥0.1.2；0.1.1 无此横幅保持 null）。
+    /// 每次服务进程重启都会换新 token——经静态事件在全线程更新，UI 线程消费。
+    /// </summary>
+    private static volatile string? _serviceTokenUrl;
+
+    /// <summary>WebView 导航目标：优先服务自报的 token URL，回退裸 Target.Url（旧版 dsh）。</summary>
+    private static string CurrentWebUrl => _serviceTokenUrl ?? Target.Url;
+
+    /// <summary>服务重启前的 token 基线（StopShellService 捕获；WaitForFreshServiceToken 消费）。</summary>
+    private static volatile string? _tokenBeforeServiceRestart;
+
+    /// <summary>
+    /// [2026-08-29 实测] 最近一次导航是否成功。模态 E2004 弹窗会阻塞后续 WebView2 导航完成
+    /// （弹窗前重试导航全部正常完成、弹窗后的 token 跟随导航永不返回）——延迟弹窗期间用此标志
+    /// 判断页面是否已被 token 跟随救回，救回则取消弹窗。
+    /// </summary>
+    private static volatile bool _navSucceededSinceFailure;
+
+    /// <summary>
+    /// 把主窗 WebView 导航到当前服务 URL（UI 线程调用）。服务重启/安全模式切换后
+    /// 以导航替代 Reload：新进程新 token，Reload 停留的旧地址会 401。web 未建/已关时静默跳过。
+    /// </summary>
+    private static void NavigateMainWebToCurrentServiceUrl()
+    {
+        var web = WebViewManager.MainWeb;
+        if (web?.CoreWebView2 is null)
+        {
+            Trace("token follow: main web unavailable; skip navigation");
+            return;
+        }
+        try
+        {
+            Trace($"token follow: navigating main web to {CurrentWebUrl}");
+            web.CoreWebView2.Navigate(CurrentWebUrl);
+        }
+        catch (Exception ex)
+        {
+            // 预期内竞态（窗体正在关闭）：留痕不阻断
+            Logger.Warn($"navigate to service url failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// [2026-08-29 token 栅栏] 服务重启后，等待新进程的 token 横幅到达再刷新导航。
+    /// 空 <paramref name="tokenBefore"/> = 重启前无 token（旧版 dsh 或首启横幅未到）：等待窗口内
+    /// 出现任意 token 即返回；超时（dsh 未打印横幅/旧版）原样返回，刷新退回 Target.Url。
+    /// 为什么必须等：服务重启存在秒级空窗（进程退出 → 新进程监听），其间导航只会把 WebView
+    /// 停在 404/401 错误页（实测驻留），而晚到的 token 跟随导航无法保证后到覆盖——
+    /// 刷新点先等横幅，从根上消灭竞态。仅限后台线程调用（内部 Thread.Sleep 轮询）。
+    /// </summary>
+    private static void WaitForFreshServiceToken(string? tokenBefore, int timeoutMs = 15000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested)
+        {
+            var current = _serviceTokenUrl;
+            if (!string.Equals(current, tokenBefore, StringComparison.Ordinal))
+            {
+                Trace(current is null
+                    ? "token wait: no banner observed within window (legacy dsh?)"
+                    : $"token wait: fresh token observed");
+                return;
+            }
+            Thread.Sleep(200);
+        }
+        Trace("token wait: timed out; refreshing with current service url");
+    }
+
     /// <summary>
     /// 安全模式双重观测（ADR-022 Task 3）：readiness + 插件崩溃签名消失。
     /// - 阶段一：等 TCP+HTTP ready（最长 60s）；
@@ -1188,6 +1332,12 @@ internal static class Program
             }
             var restartOk = StartDshServiceViaIdentity();
             Trace($"SAFEMODE(bg): identity-driven start returned {restartOk}");
+            if (restartOk)
+            {
+                // [2026-08-29 token 栅栏] 等新进程横幅到位再刷新，消灭"重启空窗期导航 →
+                // 错误页驻留"竞态（实测 404 错误页驻留、探针连击超时）。
+                WaitForFreshServiceToken(_tokenBeforeServiceRestart);
+            }
             if (!restartOk)
             {
                 BootMonitor?.Stop(); // 重启失败且不再有服务可监视
@@ -1235,7 +1385,7 @@ internal static class Program
                         // 刷新页面（此时服务已按 --profile .dsh-safe 正常提供核心 UI）
                         if (WebViewManager.MainWeb?.CoreWebView2 is not null)
                         {
-                            try { WebViewManager.MainWeb.CoreWebView2.Reload(); } catch { }
+                            NavigateMainWebToCurrentServiceUrl();
                         }
                     }
                     catch { }
@@ -1531,6 +1681,8 @@ internal static class Program
                     log: false);
                 return;
             }
+            // [2026-08-29 token 栅栏] 旧版服务重启后等横幅（或超时回退），避免空窗期错误页驻留
+            WaitForFreshServiceToken(_tokenBeforeServiceRestart);
 
             BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
             try
@@ -1539,7 +1691,7 @@ internal static class Program
                 if (form is not null && form.IsHandleCreated)
                     form.BeginInvoke(() =>
                     {
-                        try { WebViewManager.MainWeb?.CoreWebView2?.Reload(); } catch { /* 页面已关 */ }
+                        NavigateMainWebToCurrentServiceUrl();
                     });
             }
             catch { /* 窗体已关闭 */ }
@@ -1638,6 +1790,8 @@ internal static class Program
                             "dsh 服务重启失败，请查看统一日志后重新打开 dsh-launcher。", log: false)); } catch { }
                         return;
                     }
+                    // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
+                    WaitForFreshServiceToken(_tokenBeforeServiceRestart);
                     var deadline = DateTime.UtcNow.AddSeconds(60);
                     while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
                            && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
@@ -1655,7 +1809,7 @@ internal static class Program
                     {
                         form.BeginInvoke(() =>
                         {
-                            try { WebViewManager.MainWeb?.CoreWebView2?.Reload(); } catch { /* 页面已关 */ }
+                            NavigateMainWebToCurrentServiceUrl();
                         });
                     }
                     catch { /* 窗体已关闭 */ }
@@ -2148,6 +2302,8 @@ internal static class Program
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
                     StartDshServiceViaIdentity(); // 按身份直启新版本服务（ADR-024）
+                    // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
+                    WaitForFreshServiceToken(_tokenBeforeServiceRestart);
                     // 等待就绪后刷新页面（最长 60s）
                     var deadline = DateTime.UtcNow.AddSeconds(60);
                     while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
@@ -2158,7 +2314,7 @@ internal static class Program
                         {
                             if (WebViewManager.MainWeb?.CoreWebView2 is not null)
                             {
-                                try { WebViewManager.MainWeb.CoreWebView2.Reload(); } catch { /* 页面已关 */ }
+                                NavigateMainWebToCurrentServiceUrl();
                             }
                         });
                     }
@@ -2549,7 +2705,12 @@ internal static class Program
     /// 实现见 ServiceLifecycleOps.StopService（ADR-024 迁移，逻辑逐行保持原语义）。
     /// </summary>
     private static void StopShellService()
-        => Managers.ServiceLifecycleOps.StopService(DataDir, Target.Port, _servicePid);
+    {
+        // [2026-08-29 token 栅栏] 停服即记录"重启前 token"基线：随后的 WaitForFreshServiceToken
+        // 以此判断新进程横幅是否已到（每次服务进程重启都会换新 token）。
+        _tokenBeforeServiceRestart = _serviceTokenUrl;
+        Managers.ServiceLifecycleOps.StopService(DataDir, Target.Port, _servicePid);
+    }
 
     // ---- 关窗/退出异步化（2026-08 用户回归：点关闭后 UI 线程同步停服务卡 1.5s+） ----
 

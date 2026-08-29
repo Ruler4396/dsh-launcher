@@ -116,7 +116,10 @@ public sealed class BootHealthMonitor : IDisposable
     private long _logScanOffset;      // 只扫监控起点之后的增量（旧日志不参与判定）
     private int _httpConsecutiveMisses;
     private int _absentStreak;
+    private int _probeTimeoutStreak;  // [2026-08-29] 页面探针连续超时计数（任何成功往返清零）
     private bool _pageArmed;
+    private readonly TimeSpan _pageProbeTimeout;                        // 单轮探针上限（防 ExecuteScript 永久挂起）
+    private readonly int _pageProbeTimeoutFailureThreshold;             // 连续超时判死阈值
     private bool _suspended;          // 壳主动重启服务窗口（安全模式切换）：全部判定挂起
     private bool _promptConsumed;     // 每会话仅询问一次（显式状态，非散落 static bool）
     private bool _stopped;
@@ -143,7 +146,9 @@ public sealed class BootHealthMonitor : IDisposable
         Func<string, bool>? httpProbe = null,
         TimeSpan? logPollInterval = null,
         TimeSpan? httpPollInterval = null,
-        Action<string>? trace = null)
+        Action<string>? trace = null,
+        TimeSpan? pageProbeTimeout = null,
+        int pageProbeTimeoutFailureThreshold = 10)
     {
         _profile = profile;
         _logPath = logPath;
@@ -153,6 +158,9 @@ public sealed class BootHealthMonitor : IDisposable
         _httpProbe = httpProbe ?? (url => ShellLogic.ServiceReadiness.IsHttpReady(url, new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) }));
         _logPollInterval = logPollInterval ?? TimeSpan.FromSeconds(2);
         _httpPollInterval = httpPollInterval ?? TimeSpan.FromSeconds(3);
+        // [2026-08-29 token 栅栏回归] 探针轮必须有界：ExecuteScriptAsync 在 401 错误页可永久挂起
+        _pageProbeTimeout = pageProbeTimeout ?? TimeSpan.FromSeconds(5);
+        _pageProbeTimeoutFailureThreshold = Math.Max(pageProbeTimeoutFailureThreshold, 1);
         // 非空默认（避免散落的 ?. 调用）：未注入时走统一日志 Info
         _trace = trace ?? (m => Logger.Info("[boot-monitor] " + m));
     }
@@ -353,13 +361,41 @@ public sealed class BootHealthMonitor : IDisposable
 
             string? raw = null;
             var probeFailed = false;
+            var probeTimedOut = false;
             try
             {
                 var probe = _pageProbe;
                 _trace("page probe: dispatching script");
-                raw = probe is null ? null : await probe(_profile.BuildProbeScript());
-                _trace($"page probe: round done (rawLen={(raw?.Length.ToString() ?? "null")})");
+                if (probe is null)
+                {
+                    raw = null;
+                }
+                else
+                {
+                    // [2026-08-29 token 栅栏回归加固] ExecuteScriptAsync 在 401 错误页上可能永久
+                    // 不返回（实测：探针派发后再无任何日志）——探针轮必须有界，否则页面层瘫痪、
+                    // 一切自愈路径失效。单次超时只 Warn 不判死（误报防护铁律）；连续超时达阈值
+                    // 按 E2008 判死（页面持续不可用，比"缺席"更强的证据）。
+                    var probeTask = probe(_profile.BuildProbeScript());
+                    var timeoutTask = Task.Delay(_pageProbeTimeout, ct);
+                    var finished = await Task.WhenAny(probeTask, timeoutTask);
+                    if (finished != probeTask)
+                    {
+                        probeTimedOut = true;
+                        _ = probeTask.ContinueWith(
+                            t => _ = t.Exception,
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted,
+                            TaskScheduler.Default); // 吸收迟到异常，防 UnobservedTaskException
+                    }
+                    else
+                    {
+                        raw = await probeTask;
+                    }
+                }
+                _trace($"page probe: round done (rawLen={(raw?.Length.ToString() ?? "null")}{(probeTimedOut ? ", TIMED OUT" : "")})");
             }
+            catch (OperationCanceledException) { return; }
             catch (Exception ex)
             {
                 // Task 3 铁律：探针自身异常只记 Warn，不得判 failed（服务进程死掉时 WebView 断连属常态）
@@ -367,6 +403,31 @@ public sealed class BootHealthMonitor : IDisposable
                 raw = null;
                 probeFailed = true; // 异常轮不计入缺席（缺席=页面健康但好符号没来）
             }
+
+            if (probeTimedOut)
+            {
+                int streak, threshold;
+                lock (_sync)
+                {
+                    _probeTimeoutStreak++;
+                    streak = _probeTimeoutStreak;
+                    threshold = _pageProbeTimeoutFailureThreshold;
+                }
+                if (streak >= threshold)
+                {
+                    Report(BootLayer.Page,
+                        $"页面探针连续 {streak} 轮超时（阈值 {threshold}，页面持续不可用）",
+                        $"page probe timeout streak={streak}, per-round timeout={_pageProbeTimeout.TotalMilliseconds}ms",
+                        ErrorCodes.E2008);
+                    return;
+                }
+                Logger.Warn($"[boot-monitor] page probe timed out after {_pageProbeTimeout.TotalMilliseconds:0}ms (streak {streak}/{threshold}; not judging)");
+                try { await Task.Delay(_profile.ProbeIntervalMs, ct); }
+                catch (OperationCanceledException) { return; }
+                continue;
+            }
+
+            lock (_sync) { _probeTimeoutStreak = 0; } // 任何成功往返都重置连续超时计数
 
             if (probeFailed)
             {
