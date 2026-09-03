@@ -89,6 +89,27 @@
 
 ---
 
+## 🧱 核心约束六：统一沙盒（Single Sandbox Root）
+
+1. **唯一沙盒根**：仓库根 `sandbox/`（`.gitignore` 已忽略，含整棵 node_modules，绝不可入库
+   ——2026-08-22 `git add -A` 误扫事件教训）。**本机禁止在仓库外另建沙盒目录**
+   （如 `D:\dsh-sandbox`——已合并回本根，历史歧路不留样板）。
+2. **一切本地测试安装/验证环境**必须落在 `sandbox/<场景名>/` 子目录下（如 `sandbox/dsh-alpha2/`），
+   场景内拆 `global`（`npm --prefix` 隔离安装根）/ `home`（隔离 DSH_HOME）/ `staging`（产物与日志）；
+   每个场景子目录必须带 README 记录来源/版本/验证命令。
+3. **`%TEMP%` 瞬态隔离不是沙盒**：`DshSandbox`（`%TEMP%\dsh-sandbox-*`）、
+   `negative-test.ps1`（`%TEMP%\dsh-neg`）、`update-drill.ps1`（`%TEMP%\dsh-drill`）、
+   `test.ps1` -CleanData 用例属于**脚本内一次性隔离**，按各自既有铁律保持，不得与持久沙盒
+   混用，也不得削弱其 `%TEMP%` 围栏断言。
+4. **junction 搬迁纪律**：pnpm 的 node_modules 含 junction 链接，`Move-Item` 跨盘搬迁会中途失败
+   （2026-08-31 dsh-alpha2 home 实测事故）。整棵目录树搬迁用 `robocopy /MIR`（junction 感知）
+   或同盘 rename；严禁跨盘 `Move-Item` 拖拽含 node_modules 的目录树。
+5. **沙盒 home/ 视为可重建基线**：`dsh web` 首次使用会从随附模板自动初始化；被污染/损坏时
+   直接删建，禁止手工修补。
+6. **提交纪律**：`sandbox/` 下禁止 `git add -A`；CI 可整体删除重建本目录。
+
+---
+
 ## 📝 变更管理流程 (Change Management Process)
 
 当引入新功能或修复 Bug 时，**必须**遵循以下 Checklist：
