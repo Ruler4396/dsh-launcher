@@ -270,9 +270,14 @@ public sealed class LauncherApp
                 LastErrorCode = ErrorCodes.E2001;
                 LastErrorDetail = identity.CanLaunchDirectly
                     ? $"dsh 服务启动失败（{Url}）。请查看统一日志。"
-                    : $"未找到可用的 dsh 运行时身份（node/JS 入口缺失），无法自动拉起 dsh 服务（{Url}）。";
+                    : BuildEntryMissingDetail(identity, Url);
                 Logger.Error(LastErrorDetail, LastErrorCode,
-                    new { source = identity.Source.ToString(), entry = identity.DshEntryJsPath });
+                    new
+                    {
+                        source = identity.Source.ToString(),
+                        entry = identity.DshEntryJsPath,
+                        probe = identity.EntryProbeFailures
+                    });
                 _lifecycle.Fire(LifecycleTrigger.Fatal); // StartingService + Fatal → Failed
                 return false;
             }
@@ -315,6 +320,20 @@ public sealed class LauncherApp
         _lifecycle.Fire(LifecycleTrigger.ServiceReady);   // → InitializingUI
         _lifecycle.Fire(LifecycleTrigger.UIInitialized);  // → Running
         return true;
+    }
+
+    /// <summary>
+    /// 全局 dsh 入口缺失（issue #24）的用户可读文案：报真实探查位置，不再误导为"缺少 start-dsh.vbs"
+    /// （0.4.x 启动链已无 vbs；真正缺失的是全局 npm/pnpm 布局下 dsh 包的 JS 入口）。
+    /// </summary>
+    private static string BuildEntryMissingDetail(DshWeb.Domain.DshRuntimeIdentity identity, string url)
+    {
+        var probeSummary = identity.EntryProbeSummary;
+        var probeText = string.IsNullOrWhiteSpace(probeSummary)
+            ? "未在任何位置找到全局安装的 dsh 包。"
+            : $"已在以下位置探查均未命中：{probeSummary}。";
+        return $"未找到可用的 dsh 运行时身份（JS 入口解析失败），无法自动拉起 dsh 服务（{url}）。"
+            + $"\n{probeText}\n请确认已通过 npm/pnpm 全局安装 dsh（命令行 dsh --version 应可用）；详细探查记录见统一日志。";
     }
 
     /// <summary>
