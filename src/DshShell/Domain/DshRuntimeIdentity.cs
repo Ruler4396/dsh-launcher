@@ -7,7 +7,8 @@ public enum DshSource
 {
     /// <summary>Launcher 自管的自包含运行时（后台完整构建，重启原子切换）。最高优先级。</summary>
     SelfContained,
-    /// <summary>全局 npm 安装：where dsh 命中，或 %APPDATA%\npm\dsh.cmd shim 存在。</summary>
+    /// <summary>全局 npm/pnpm 安装：where dsh 命中（任意前缀），或 %APPDATA%\npm\dsh.cmd shim 存在。
+    /// 入口解析自动定位（issue #24：就近 node_modules / shim 内嵌路径 / PATH 全候选 / 遗留前缀）。</summary>
     GlobalNpm,
     /// <summary>npx 缓存/兜底（本机无任何物理安装，版本不确定）。</summary>
     NpxCache,
@@ -46,7 +47,8 @@ public sealed record DshRuntimeIdentity(
     string? NodeExePath,
     string? DshEntryJsPath,
     string? Version,
-    string? ProfilePath = null)
+    string? ProfilePath = null,
+    IReadOnlyList<string>? EntryProbeFailures = null)
 {
     /// <summary>是否为壳管理的本地安装（SelfContained 或 GlobalNpm）。</summary>
     public bool IsLocallyManaged => Source is DshSource.SelfContained or DshSource.GlobalNpm;
@@ -76,4 +78,15 @@ public sealed record DshRuntimeIdentity(
 
     /// <summary>返回应用了指定 profile 路径的新身份（不可变，with 语义；启动链使用）。</summary>
     public DshRuntimeIdentity WithProfile(string? profilePath) => this with { ProfilePath = profilePath };
+
+    /// <summary>
+    /// 全局入口解析失败时的探针位置清单（issue #24 归因）：GlobalNpm 且
+    /// <see cref="DshEntryJsPath"/> 为 null 时为非空，供 E2001 弹窗/统一日志展示
+    /// "已在哪些位置探查"。仅运行期 UI/日志使用，不参与持久化。
+    /// </summary>
+    public string? EntryProbeSummary
+        => EntryProbeFailures is null || EntryProbeFailures.Count == 0
+            ? null
+            : string.Join(" | ", EntryProbeFailures.Take(3))
+              + (EntryProbeFailures.Count > 3 ? $" …（共 {EntryProbeFailures.Count} 处）" : "");
 }
