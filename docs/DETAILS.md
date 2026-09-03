@@ -74,7 +74,7 @@
 | E1005 | 便携 Node.js 解压失败 |
 | E1006 | 缺少 WebView2 Runtime（Edge WebView2），无法渲染窗口 |
 | E1007 | 渲染进程反复崩溃，已停止自动重载（可通过托盘唤窗或重新打开恢复） |
-| E2001 | 缺少 start-dsh.vbs，无法自动拉起 dsh 服务 |
+| E2001 | 未找到可用的 dsh 运行时身份（JS 入口解析失败），无法自动拉起 dsh 服务 |
 | E2002 | dsh 服务启动超时（下载较慢或网络/代理问题） |
 | E2003 | dsh 服务启动日志出现错误（npm/权限/依赖问题） |
 | E2004 | dsh 服务不可用（端口无 HTTP 响应） |
@@ -202,8 +202,17 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 3. 页面必须保持打开（可后台）；连接中断期间完成的回合不会补发
 4. 仍不生效：F12 → Console 过滤 `dsh-notification`，看 `show=false` 时括号里的原因（`permission=` / `backgroundOnly=` / `hidden=` / `focus=`）
 
-**Q：日志里出现 [E2001]"未找到 start-dsh.vbs"，但文件明明在？**
-single-file 发布（`PublishSingleFile=true`）下若宿主被 `wscript` 间接调用、或运行时把原生资源解压到临时目录，`AppContext.BaseDirectory` 可能指向临时解压目录而非 exe 所在目录，导致相对定位 vbs 失败。排查：用统一日志确认壳的实际工作目录与 vbs 探测路径；安装版/便携版请从正式发布包启动，不要从临时解压目录直接双击中间产物。
+**Q：日志里出现 [E2001]"未找到可用的 dsh 运行时身份（JS 入口解析失败）"，但命令行里 `dsh --version` 明明正常？**
+（issue #24 场景）这是"启动器找不到全局 dsh 包的 JS 入口"，与 dsh 是否能用是两回事——启动器 ≈0.4.3 曾**硬编码** `%APPDATA%\npm\node_modules\@deepseek-ai\dsh`（`dsh.cmd` 出现在 PATH 上但包实际装在自定义 npm prefix / pnpm 全局目录时，入口解析为 null → E2001）。三个角度：
+1. **0.4.4+ 已自动定位**：就近 `node_modules`/shim 内嵌路径/PATH 全候选/遗留前缀四级解析（不再硬编码）；仍失败时弹窗会列出实际探查过的路径（`EntryProbeFailures`）。
+2. **手工验证**：`npm config get prefix`、`npm root -g`、`where dsh`；确认 `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` 存在。prefix 非默认时把 dsh 装回默认前缀（`npm i -g @deepseek-ai/dsh`）或升级启动器到 0.4.4+。
+3. **文案澄清**：旧版 E2001 显示"缺少 start-dsh.vbs"是启动链移除 vbs 后的遗留话术（`scripts/start-dsh.vbs` 仍随包发布，文件确实在，但启动早已不经过它）——真正缺失的是全局 npm 目录下 dsh 包的 JS 入口。
+
+**Q：启动报 [E2003]，日志尾部是 Node 崩溃大对象（`}`、`... N more items`、`Node.js v<ver>`)？是中文路径导致的吗？**
+**不是中文路径**（已复现排除：dsh 0.1.2-alpha.3 + node v24 在中文与纯 ASCII 两个 `DSH_HOME` 下崩溃签名 1:1 一致，且两轮 `profiles\node_modules` 包都装齐）。该形态根因在 **dsh 0.1.2-alpha（alpha 版）的 web profile 引导链**：cordis loader 从安装锚点按 Node ESM 规则解析 profile 依赖失败，聚合抛出 `ERR_MODULE_NOT_FOUND`（典型行 `Cannot find package '@deepseek-ai/dsh-llm' imported from …`），进程崩溃 → 启动日志错误标志持续 15s → 壳报 E2003。处理建议：
+- 升级 dsh 到稳定线（`latest`=0.1.1-rc.2 或更新的 0.1.2-rc.1），再启动；
+- 仍要定位：用 0.4.4+ 的 E2003 弹窗（含**首条报错线索** + 完整日志路径 + 服务进程退出码事实），崩溃栈头部才是根因；
+- 复现参考：`npm i @deepseek-ai/dsh@0.1.2-alpha.3 --prefix <scratch>` + `node <scratch>\node_modules\@deepseek-ai\dsh\lib\bin.js web --no-open`（CJK/ASCII `DSH_HOME` 均复现 `plugin tree failed to load`）。
 
 **Q：MSI 和 ZIP 有什么区别？**
 见 [Releases](https://github.com/Ruler4396/dsh-launcher/releases) 页面的"安装与卸载"说明。
