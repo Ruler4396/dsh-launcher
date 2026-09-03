@@ -401,6 +401,22 @@ public class ShellLogicTests
     }
 
     [Fact]
+    public void FirstStartupErrorLine_ReturnsFirstMarkerHit()
+    {
+        // E2003 弹窗"报错线索"（issue #24 配套）：崩溃栈中首条错误标志行必须可提取——
+        // 根因在栈头，尾部 12 行常只见 Node 转储尾巴。返回**整行**（保留上下文）。
+        Assert.Equal("hello npm ERR! code ENOTFOUND",
+            ShellLogic.ServiceReadiness.FirstStartupErrorLine("info line\nhello npm ERR! code ENOTFOUND\nmore\nNode.js v24"));
+        Assert.Equal("Cannot find module 'x'",
+            ShellLogic.ServiceReadiness.FirstStartupErrorLine("Cannot find module 'x'\nfine line"));
+        Assert.Equal("Error: EACCES: permission denied",
+            ShellLogic.ServiceReadiness.FirstStartupErrorLine("  Error: EACCES: permission denied\n  at Object.<anonymous>"));
+        Assert.Null(ShellLogic.ServiceReadiness.FirstStartupErrorLine("dsh web listening on 3080"));
+        Assert.Null(ShellLogic.ServiceReadiness.FirstStartupErrorLine(null));
+        Assert.Null(ShellLogic.ServiceReadiness.FirstStartupErrorLine(""));
+    }
+
+    [Fact]
     public void ReadLogTail_ReturnsLastLines()
     {
         var path = Path.Combine(Path.GetTempPath(), $"dsh-test-{Guid.NewGuid():N}.log");
