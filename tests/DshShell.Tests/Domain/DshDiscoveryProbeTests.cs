@@ -119,4 +119,64 @@ public class DshDiscoveryProbeTests
             DshDiscovery.InvalidateCache();
         }
     }
+
+    // ---------- issue #24：自定义 npm/pnpm 前缀的全局入口自动定位 ----------
+
+    /// <summary>临时前缀：dsh.cmd + node_modules\@deepseek-ai\dsh（bin 指向 lib/bin.js）。
+    /// 返回 (前缀目录, 期望入口)。</summary>
+    private static (string Prefix, string EntryJs) BuildFakeGlobalPrefix(string root)
+    {
+        var pkgDir = System.IO.Path.Combine(root, "node_modules", "@deepseek-ai", "dsh");
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(pkgDir, "lib"));
+        File.WriteAllText(System.IO.Path.Combine(pkgDir, "package.json"),
+            "{ \"version\": \"2.2.2-fake\", \"bin\": { \"dsh\": \"lib/bin.js\" } }");
+        File.WriteAllText(System.IO.Path.Combine(pkgDir, "lib", "bin.js"),
+            "console.log('2.2.2-fake');");
+        File.WriteAllText(System.IO.Path.Combine(root, "dsh.cmd"), "@echo off\n");
+        return (root, System.IO.Path.Combine(pkgDir, "lib", "bin.js"));
+    }
+
+    [Fact]
+    public void DiscoverCurrentRuntime_GlobalNpmCustomPrefix_ResolvesSiblingEntry_RealOS()
+    {
+        // issue #24 回归门禁：自定义 prefix（非 %APPDATA%\npm）下发现层必须产出现实可直启身份。
+        // 环境控制：DSH_WEB_URL 推 External、PATH 替换为临时前缀隔离宿主机全局 dsh 干扰。
+        // RealOS：有真实 node 则拷入临时前缀做端到端版本探测；无 node 时仅锁定入口解析契约。
+        var nodeReal = FindNodeExeOrSkip();
+        var pathSave = Environment.GetEnvironmentVariable("PATH");
+        var homeSave = Environment.GetEnvironmentVariable("DSH_HOME");
+        var urlSave = Environment.GetEnvironmentVariable("DSH_WEB_URL");
+        var verSave = Environment.GetEnvironmentVariable("DSH_VERSION");
+        using var tmp = new TempDir();
+        try
+        {
+            var (prefix, expectedEntry) = BuildFakeGlobalPrefix(tmp.Path);
+            if (nodeReal is not null) File.Copy(nodeReal, Path.Combine(prefix, "node.exe"));
+            else File.WriteAllBytes(Path.Combine(prefix, "node.exe"), Array.Empty<byte>()); // 只保身份可直启，不探测版本
+            Environment.SetEnvironmentVariable("PATH", prefix);
+            Environment.SetEnvironmentVariable("DSH_HOME",
+                System.IO.Path.Combine(tmp.Path, "home"));
+            Environment.SetEnvironmentVariable("DSH_WEB_URL", null);
+            Environment.SetEnvironmentVariable("DSH_VERSION", null);
+            DshDiscovery.InvalidateCache();
+
+            var identity = DshDiscovery.DiscoverCurrentRuntime();
+
+            Assert.Equal(DshSource.GlobalNpm, identity.Source);
+            Assert.True(identity.CanLaunchDirectly, "自定义前缀下入口必须可解析（issue #24 回归门禁）");
+            Assert.Equal(expectedEntry, identity.DshEntryJsPath);
+            Assert.True(File.Exists(identity.DshEntryJsPath));
+            Assert.Null(identity.EntryProbeFailures); // 成功路径无归因材料
+            if (nodeReal is not null)
+                Assert.Equal("2.2.2-fake", identity.Version); // RealOS：同一入口端到端探测版本
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", pathSave);
+            Environment.SetEnvironmentVariable("DSH_HOME", homeSave);
+            Environment.SetEnvironmentVariable("DSH_WEB_URL", urlSave);
+            Environment.SetEnvironmentVariable("DSH_VERSION", verSave);
+            DshDiscovery.InvalidateCache();
+        }
+    }
 }

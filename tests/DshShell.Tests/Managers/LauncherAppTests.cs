@@ -69,6 +69,33 @@ namespace DshShell.Tests.Managers;
     }
 
     [Fact]
+    public async Task ServiceStartFailure_EntryMissing_DetailShowsProbedPaths_NoVbsWording()
+    {
+        // issue #24 归因契约：!CanLaunchDirectly 的 E2001 必须带真实探查位置，
+        // 且不再出现误导性的"start-dsh.vbs"文案（0.4.x 启动链已无 vbs）。
+        var identity = IdentityFixtures.Launchable() with
+        {
+            DshEntryJsPath = null,
+            NodeExePath = @"C:\fake-tools\node.exe",
+            EntryProbeFailures = new List<string>
+            {
+                @"near-shim(missing):D:\my-npm\node_modules\@deepseek-ai\dsh",
+                @"shim-content(no-dsh-entry):D:\my-npm\dsh.cmd",
+                @"legacy:C:\Users\x\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh",
+            }
+        };
+        var app = new LauncherApp(new FakeRuntime { Result = RuntimeResolution.Ready(identity) },
+            new FakeService { Ready = true, StartResult = false, PortState = ShellLogic.ServicePortState.Closed });
+
+        Assert.False(await app.RunStartupAsync());
+        Assert.Equal(ErrorCodes.E2001, app.LastErrorCode);
+        Assert.DoesNotContain("start-dsh.vbs", app.LastErrorDetail);
+        Assert.Contains("已在以下位置探查均未命中", app.LastErrorDetail);
+        Assert.Contains(@"D:\my-npm\node_modules\@deepseek-ai\dsh", app.LastErrorDetail);
+        Assert.Contains("dsh --version", app.LastErrorDetail);
+    }
+
+    [Fact]
     public async Task ReadinessTimeout_DrivesToShuttingDown_AndFalse()
     {
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = false });
