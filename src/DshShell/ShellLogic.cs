@@ -277,14 +277,26 @@ public static class ShellLogic
         /// 用于在轮询等待期间提前发现 npx 下载/启动失败，而不是干等超时。
         /// </summary>
         internal static bool LogShowsStartupError(string? logContent)
+            => FirstStartupErrorLine(logContent) is not null;
+
+        /// <summary>
+        /// 返回首条命中启动失败标志的行（E2003 弹窗"报错线索"归因，issue #24 配套：
+        /// 崩溃栈头部才是根因，尾部 12 行常只见 Node 转储尾巴）。无命中返回 null。
+        /// </summary>
+        internal static string? FirstStartupErrorLine(string? logContent)
         {
-            if (string.IsNullOrWhiteSpace(logContent)) return false;
-            foreach (var marker in StartupErrorMarkers)
+            if (string.IsNullOrWhiteSpace(logContent)) return null;
+            foreach (var raw in logContent.Split('\n'))
             {
-                if (logContent.Contains(marker, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                var line = raw.TrimEnd('\r').Trim();
+                if (line.Length == 0) continue;
+                foreach (var marker in StartupErrorMarkers)
+                {
+                    if (line.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                        return line;
+                }
             }
-            return false;
+            return null;
         }
 
         /// <summary>默认就绪轮询预算（秒）：本地直启 dsh 服务（SelfContained/全局安装）的等待上限。</summary>
@@ -2105,7 +2117,7 @@ public static class ShellLogic
 
     /// <summary>
     /// 启动失败错误码映射策略（纯函数，Headless 可测）：首装全局安装失败时，
-    /// StartService=false 会以通用 E2001（"缺少 start-dsh.vbs"）上报，与真实原因不符——
+    /// StartService=false 会以通用 E2001（"JS 入口解析失败"）上报，与真实原因不符——
     /// 组合根据本映射改用 E1012 与安装失败详情展示（静默失败收口：用户看到的是真实根因）。
     /// </summary>
     public static class StartupFailurePolicy
