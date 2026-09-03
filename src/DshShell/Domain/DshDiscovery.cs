@@ -66,11 +66,16 @@ public static class DshDiscovery
         if (globalDsh is not null || File.Exists(npmShim))
         {
             var version = envVersion ?? ReadVersionFromExecutable(globalDsh ?? npmShim);
-            // JS 入口经统一解析器定位（绕过 .cmd；缺失时 CanLaunchDirectly=false，
-            // 启动层响亮报 E2001 而非静默落入 cmd.exe 中间层）。
-            var entryJs = JsEntryResolver.ResolvePackageEntry(PackageName);
+            // 【issue #24】入口经统一全局解析器定位（就近 node_modules / shim 内嵌路径 /
+            // PATH 全候选 / 遗留 %APPDATA%\npm 四级策略，不再硬编码 %APPDATA%\npm——
+            // 自定义 npm prefix 与 pnpm 全局布局同样可解析）。缺失时 CanLaunchDirectly=false，
+            // 启动层响亮报 E2001 且携带探针路径（EntryProbeFailures），而非静默落入 cmd.exe 中间层。
+            var entryJs = JsEntryResolver.ResolveGlobalPackageEntry(globalDsh ?? npmShim, PackageName, out var probed);
+            if (entryJs is null && probed.Count > 0)
+                Logger.Warn($"global dsh entry resolution failed; probed: {string.Join(" | ", probed)}");
             return new DshRuntimeIdentity(
-                DshSource.GlobalNpm, FindNodeExe(), entryJs, version);
+                DshSource.GlobalNpm, FindNodeExe(), entryJs, version,
+                EntryProbeFailures: entryJs is null && probed.Count > 0 ? probed : null);
         }
 
         // 4. npx 兜底（无任何物理安装；首装链负责 npm -g 后 InvalidateCache 再发现）
@@ -222,9 +227,9 @@ public static class DshDiscovery
     {
         try
         {
-            // 尝试找到 node.exe 和 dsh 的 JS 入口
+            // 尝试找到 node.exe 和 dsh 的 JS 入口（全局布局经统一解析器，issue #24）
             var nodeExe = FindNodeExe();
-            var dshEntryJs = ResolvePackageEntry(PackageName);
+            var dshEntryJs = JsEntryResolver.ResolveGlobalPackageEntry(exePath, PackageName, out _);
 
             string fileName;
             string arguments;
@@ -343,47 +348,6 @@ public static class DshDiscovery
                     if (File.Exists(exe)) return exe;
                 }
             }
-        }
-        catch { }
-        return null;
-    }
-
-    /// <summary>解析全局 npm 包的 JS 入口绝对路径（复用 JsEntryResolver 逻辑）。</summary>
-    private static string? ResolvePackageEntry(string packageName)
-    {
-        try
-        {
-            var appDataNpm = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
-            var pkgDir = Path.Combine(appDataNpm, "node_modules", packageName);
-            var pkgJson = Path.Combine(pkgDir, "package.json");
-            if (!File.Exists(pkgJson)) return null;
-
-            using var doc = JsonDocument.Parse(File.ReadAllText(pkgJson));
-            if (!doc.RootElement.TryGetProperty("bin", out var bin)) return null;
-
-            string? binPath = null;
-            if (bin.ValueKind == JsonValueKind.String)
-                binPath = bin.GetString();
-            else if (bin.ValueKind == JsonValueKind.Object)
-            {
-                var shortName = packageName.Contains('/') ? packageName.Split('/')[^1] : packageName;
-                if (bin.TryGetProperty(shortName, out var named) && named.ValueKind == JsonValueKind.String)
-                    binPath = named.GetString();
-                else
-                {
-                    foreach (var prop in bin.EnumerateObject())
-                        if (prop.Value.ValueKind == JsonValueKind.String)
-                        { binPath = prop.Value.GetString(); break; }
-                }
-            }
-
-            if (binPath is null) return null;
-            var normalized = binPath.Replace('/', Path.DirectorySeparatorChar);
-            var fullPath = Path.Combine(pkgDir, normalized);
-            if (File.Exists(fullPath)) return fullPath;
-            if (!Path.HasExtension(normalized) && File.Exists(fullPath + ".js"))
-                return fullPath + ".js";
         }
         catch { }
         return null;
