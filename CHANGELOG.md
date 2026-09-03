@@ -2,6 +2,21 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.4] - 2026-09-03
+
+> **兼容性修复（issue #24）**：全局 dsh 安装不再硬编码 `%APPDATA%\npm`——自定义 npm prefix / pnpm 全局布局下自动定位 JS 入口，E2001 弹窗输出真实探查路径并删除"缺少 start-dsh.vbs"误导文案。E2003 诊断增强（首条报错线索 + 完整日志路径 + 服务进程退出码）。
+
+### 修复
+
+- **全局 dsh 入口自动定位（issue #24）**：`JsEntryResolver.ResolveGlobalPackageEntry` 四级解析——就近 `node_modules\@deepseek-ai\dsh`（shim 与包同父，任意前缀）/ shim 文本内嵌真实入口（npm/pnpm/yarn/nvm 生成的 .cmd 均内嵌）/ PATH 全候选 / 遗留 `%APPDATA%\npm` 兜底；失败时 `DshRuntimeIdentity.EntryProbeFailures` 携带探针路径。原"`dsh --version` 正常但 launcher 报 E2001"（自定义 prefix 场景）至此根除。
+- **E2001 文案去误导**：删除遗留话术"缺少 start-dsh.vbs"（0.4.x 启动链已无 vbs；真正缺失的是全局 npm 目录下 dsh 包的 JS 入口）；弹窗列出实际探查位置并提示 `dsh --version` 自检。
+- **E2003 可归因**：弹窗补"首条报错线索"（首个命中错误标志的行，崩溃栈头部才是根因）；完整日志路径对齐超时分支；`ServiceManager` 把服务进程退出码直接落统一日志（崩溃事实可查）。
+
+### 测试
+
+- 新增 `JsEntryResolverGlobalTests`（npm/自定义前缀/pnpm shim-文本/负例 + bin 三态 golden ×9）；`DshDiscoveryProbeTests` 自定义前缀 RealOS 端到端（入口+版本同源解析）；`GlobalNpmEntryResolutionOutcomes`（任务级不变量：任意前缀 → 可直启身份且入口物理存在）；`LauncherAppTests` E2001 归因文案契约；`ShellLogicTests.FirstStartupErrorLine_*`。
+- **E2003 中文路径排除复现**（文档）：dsh 0.1.2-alpha.3 + node v24 在 CJK/ASCII `DSH_HOME` 下崩溃签名 1:1——非中文路径问题，根因在 dsh alpha 的 profile 引导链（`ERR_MODULE_NOT_FOUND` 聚合），建议 dsh 升级稳定线。
+
 ## [0.4.3] - 2026-08-29
 
 > **安全更新（SECURITY UPDATE）**：兼容 dsh 0.1.2-alpha 的根路径 token 信任栅栏与插件失败面板检测。npm 上的 dsh 一旦更新到 0.1.2-alpha，旧版启动器 (≤0.4.1) 的窗口会停在错误页——本版必须先于 dsh 0.1.2 上 npm 安装。

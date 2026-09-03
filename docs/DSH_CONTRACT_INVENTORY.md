@@ -60,7 +60,7 @@
 
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
-| 21 | npm 全局布局 `%APPDATA%\npm\node_modules\@deepseek-ai\dsh` + `package.json.bin`（string/对象/首个 三态） | 强 | `JsEntryResolver.ResolvePackageEntry`；`DshDiscovery.ResolvePackageEntry` | 中 | 解析失败→`CanLaunchDirectly=false`→E2001 响亮 | `DshDiscoveryProbeTests`；解析形态 golden 样本缺 |
+| 21 | npm/pnpm 全局布局入口**自动定位**（issue #24）：就近 `node_modules\@deepseek-ai\dsh`（shim 与包同父，前缀任意）/ shim 文本内嵌真实入口 / PATH 全候选 / 遗留 `%APPDATA%\npm` 四级；`package.json.bin` 三态（string / 对象 `dsh` 键 / 对象首键，无扩展名兜底补 `.js`） | 强（不再硬编码默认前缀） | `JsEntryResolver.ResolveGlobalPackageEntry` / `ResolveEntryFromPkgDir`；`DshDiscovery` GlobalNpm 分支 | 中 | 解析失败→`CanLaunchDirectly=false`→E2001 响亮且携带 `EntryProbeFailures` 探针路径（弹窗/日志归因） | `JsEntryResolverGlobalTests`（npm/自定义前缀/pnpm shim-文本/负例 + bin 三态 golden）；`DshDiscoveryProbeTests.DiscoverCurrentRuntime_GlobalNpmCustomPrefix_*`（RealOS）；`GlobalNpmEntryResolutionOutcomes` |
 | 22 | SelfContained 布局 `runtimes\<ver>\node_modules\@deepseek-ai\dsh\{package.json,bin}` | 强 | `DshDiscovery.DiscoverSelfContainedRuntime`；`StagedUpdate.InspectRuntimeDir` | 低 | 完整性门禁 + AlreadyApplied/ReplaceStale 幂等 | `UpdateOutcomes.Regression_*` |
 | 23 | `~/.dsh` 主目录 + `DSH_HOME` 覆盖 | 弱（dsh 生态标准） | `DshDiscovery.GetDataDir`；`Program.DshHomeDir` | 低 | env 可覆盖（测试重定向主通道） | 沙盒 Outcome 全系 |
 | 24 | `profiles/<name>/package.json` 的 `dsh.profile.bundles`【标红：dsh 内部 schema】 | 强 | `ShellLogic.PluginConfig`；`SafeProfileBuilder.ResolveBundles` | 中 | 解析失败→按未装/最小核心（fail-open） | `V030FeaturesTests.IsLifetimePluginInstalled_*`；`SafeProfileBuilderTests` |
