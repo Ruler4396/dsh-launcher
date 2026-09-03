@@ -30,6 +30,7 @@
 | 修改生命周期流转 | 在 `LauncherAppScenarioTests` 补 Headless 测试 |
 | 修改窗口布局/DPI/无边框 | 用 `--ui-selftest` 或 `UiTestHookE2ETests` 验证 0px 间隙，禁肉眼 |
 | 动 `test.ps1` 静态断言 | 严禁注释或削弱（God Object 最后防线） |
+| 建本地沙盒/测试安装环境 | 只用仓库根 `sandbox/` 下子目录（单一沙盒铁律，见 `docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md` 核心约束六）；**禁止仓库外另建沙盒**；`%TEMP%` 瞬态隔离用例（neg/drill/CleanData）保持不动 |
 
 ## 🧭 项目地图（定位代码）
 
