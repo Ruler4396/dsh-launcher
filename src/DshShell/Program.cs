@@ -2013,8 +2013,8 @@ internal static class Program
         // Node 缺失/下载失败：错误码随 outcome 直达，无需再读日志
         if (outcome.ErrorCode is not null)
         {
-            // [静默失败收口] 首装全局安装失败时 StartService=false 走通用 E2001 文案
-            // （"缺少 start-dsh.vbs"）会误导——按 StartupFailurePolicy 改用真实根因 E1012 展示。
+            // [静默失败收口] 首装全局安装失败时 StartService=false 会走通用 E2001 文案
+            // （"JS 入口解析失败"）会误导——按 StartupFailurePolicy 改用真实根因 E1012 展示。
             var mapped = ShellLogic.StartupFailurePolicy.MapFirstRunInstallFailure(
                 outcome.ErrorCode, _firstRunProvisionError);
             if (mapped is not null)
@@ -2030,10 +2030,18 @@ internal static class Program
         var waitResult = outcome.WaitResult ?? "timeout";
         var tail = ShellLogic.ReadLogTail(logPath, 12);
         var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
+        // 【issue #24 配套】logerror 根因常在崩溃栈头部（Node uncaught 转储），尾部 12 行只见其尾：
+        // 弹窗补"首条报错线索"（首个命中启动错误标志的行），并给出完整日志路径（对齐 timeout 分支）。
+        var errorHint = waitResult == "logerror"
+            ? ShellLogic.ServiceReadiness.FirstStartupErrorLine(
+                string.Join("\n", ShellLogic.ReadLogTail(logPath, 120)))
+            : null;
         var body = waitResult switch
         {
             "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
-            "logerror" => "启动过程报错（可能是下载失败、权限或环境问题）。\n\n日志尾部：\n" + tailText,
+            "logerror" => "启动过程报错（dsh 服务未能就绪，多为依赖/下载/权限问题）。\n\n"
+                + (errorHint is null ? "" : "报错线索：\n  " + errorHint + "\n\n")
+                + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
             _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
                 + "\n\n完整日志：" + logPath,
         };

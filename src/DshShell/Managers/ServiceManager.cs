@@ -464,5 +464,28 @@ public sealed class ServiceManager : IServiceManager
         process.ErrorDataReceived += (_, e) => Append(e.Data);
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+
+        // 【E2003 诊断归因（issue #24 配套）】服务进程退出码直接落统一日志：E2003 弹窗只有
+        // 日志尾 12 行，崩溃栈（Node uncaught 转储）的退出事实与退出码必须可查。
+        // 正常停止（壳 Kill）也会触发——统一以 Info 记录（不带错误码），避免污染诊断汇总。
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => LogServiceProcessExit(process);
+        if (process.HasExited) LogServiceProcessExit(process);
+    }
+
+    private static void LogServiceProcessExit(System.Diagnostics.Process process)
+    {
+        try
+        {
+            var code = process.ExitCode;
+            lock (UnifiedLogAppendGate)
+            {
+                Logger.Info($"service process exited (code={code})");
+            }
+        }
+        catch
+        {
+            // 进程对象已失效（退出码不可读）：崩溃堆栈行仍留在统一日志，无额外归因可补
+        }
     }
 }
