@@ -958,6 +958,35 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// WebView2 磁盘缓存失效策略（dsh 版本变更 → 一次性清理，v0.4.5）。
+    /// 解决的问题：webui 资源被浏览器磁盘缓存服务旧版，用户升级 dsh 后"看不到新效果"而误判
+    /// （issue 反馈的经典误报来源）。采用"版本变更事件触发"而非"每次退出清理"——
+    /// 后者会拖慢每次冷启动、且难以做到不误删 localStorage 等用户数据的甄别式清理。
+    ///
+    /// 安全铁律（只放宽不收紧，违反任何一条 = 违反"绝不误删用户内容"红线）：
+    ///   K1 无基线（首次运行/壳升级后首跑）→ 不清（宁可保留陈旧缓存一次，绝不误删；基线在当次启动后建立）；
+    ///   K2 当前版本不可判（null/空白：探测失败/未安装）→ 不清；
+    ///   K3 语义版本相同（含 v 前缀/空白/build metadata 归一，经 <see cref="VersionPolicy"/>）→ 不清；
+    ///   其余真实差异（升级、降级、预发布差异）→ 清。
+    /// 比较委托全局唯一比较器 <see cref="VersionPolicy.CompareVersions"/>（全系统禁止第二套比较器，
+    /// F1 回归根因：发现层用序数比较致 rc.10 &lt; rc.9 判反）。
+    /// 清什么/不清什么由执行器 <c>WebViewManager.ClearDiskCacheAsync</c> 决定：只传
+    /// CoreWebView2BrowsingDataKinds.DiskCache 一种种类，绝不组合任何用户数据位。
+    /// </summary>
+    public static class CacheInvalidationPolicy
+    {
+        /// <summary>
+        /// 是否应清 WebView2 磁盘缓存：上次记录的 dsh 版本有基线 且 当前版本可判 且 语义版本不同。
+        /// </summary>
+        public static bool ShouldInvalidate(string? lastSeenVersion, string? currentVersion)
+        {
+            if (string.IsNullOrWhiteSpace(lastSeenVersion)) return false;  // K1: 无基线不清
+            if (string.IsNullOrWhiteSpace(currentVersion)) return false;   // K2: 不可判不清
+            return VersionPolicy.CompareVersions(lastSeenVersion, currentVersion) != 0; // K3: 语义相同不清
+        }
+    }
+
+    /// <summary>
     /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
     /// [2026-08 用户回归] npmjs 直连不稳且慢（HEAD 2055ms、undici 连接反复被重置），
     /// npmmirror 快且稳（264ms）。策略：优先走最快的源，失败才降级——

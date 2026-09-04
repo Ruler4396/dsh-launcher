@@ -389,4 +389,30 @@ public sealed class WebViewManager : IWebViewManager
         RecoveryNeeded = false;
         HiddenSince = DateTime.MinValue;
     }
+
+    /// <summary>
+    /// 仅清 WebView2 磁盘 HTTP 缓存（dsh 版本变更后一次性失效，v0.4.5）。
+    /// <para><b>安全铁律</b>：只传递 <see cref="CoreWebView2BrowsingDataKinds.DiskCache"/> 一种种类——
+    /// 绝不组合 LocalStorage / IndexedDb / Cookies / CacheStorage(Service Worker 缓存) /
+    /// FileSystems / BrowsingHistory 等任何用户数据位。宁可保留陈旧缓存，绝不误删用户内容。</para>
+    /// <para>失败 → Logger.Warn 降级（缓存保留、导航不受阻、绝不抛给调用方）；核心已初始化
+    /// 前（Profile 未就绪）静默返回。</para>
+    /// 调用时机由组合根控制：主窗 WebView2 初始化后、首次导航前——新版本资源从零建立缓存，
+    /// 不误删本次会话刚产生的数据。
+    /// </summary>
+    public static async Task ClearDiskCacheAsync(WebView2 web)
+    {
+        try
+        {
+            var profile = web.CoreWebView2?.Profile;
+            if (profile is null) return;
+            await profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache);
+        }
+        catch (Exception ex)
+        {
+            // 预期内的清理失败：降级 Warn（缓存保留），绝不阻断启动/导航（K4）
+            Logger.Warn("web disk cache clear failed; cache kept (never blocks navigation)",
+                ctx: new { error = ex.Message });
+        }
+    }
 }

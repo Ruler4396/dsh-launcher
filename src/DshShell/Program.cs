@@ -591,6 +591,7 @@ internal static class Program
             try
             {
                 await InitWebViewAsync(web, userDataFolder);
+                await InvalidateWebCacheOnVersionChangeAsync(web); // [v0.4.5] dsh 版本变更 → 仅磁盘缓存一次性失效（先于首航）
                 web.CoreWebView2.Navigate(CurrentWebUrl); // token 跟随：dsh ≥0.1.2 根路径需 ?token=
                 var navWarned = false;
                 var navRetries = 5; // [2026-08-29 token 栅栏] 瞬态失败自动重导航（服务重启空窗的 404/拒绝连接窗口）
@@ -1116,6 +1117,7 @@ internal static class Program
         Logger.WarnIfOversized(); // P2：常驻超长日志（>50MB 且 >24h）告警
         WindowStateStore.Init(DataDir);
         StagedUpdate.Init(DataDir);
+        WebCacheVersionLedger.Init(DataDir); // [v0.4.5] 版本变更一次性缓存清理的基线账本
         UpdateDataGuard.Init(DataDir, DshHomeDir); // [update-guard] apply 前快照 / 自检失败回滚
         updates.HandlePendingAtStartup(ct, progress,
             p => ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", p)); // v0.4.0 T2：按决策处理，端口开着不再静默跳过
@@ -1167,6 +1169,38 @@ internal static class Program
             _cachedGlobalDshVersionLoaded = true;
         }
         return _cachedGlobalDshVersion;
+    }
+
+    /// <summary>
+    /// [v0.4.5] 版本变更一次性缓存清理（dsh 版本与上次记录不同 → 只清 WebView2 磁盘 HTTP 缓存）。
+    /// 三层职责全部下沉，本方法只做三步薄编排（纯组合根职责）：
+    ///  决策 → <see cref="ShellLogic.CacheInvalidationPolicy.ShouldInvalidate"/>（纯函数，契约测试锁定）；
+    ///  基线 → <see cref="WebCacheVersionLedger"/>（AtomicWrite 账本）；
+    ///  执行 → <see cref="Managers.WebViewManager.ClearDiskCacheAsync"/>（仅 DiskCache 种类，绝不碰用户数据）。
+    /// 时机：主窗 WebView2 初始化后、首次导航前——新版本资源从零建立缓存，不误删本次会话数据。
+    /// 版本取值与 UpdateChecker/标题栏徽标同源（委托 DshDiscovery，因果地图身份一致性铁律）。
+    /// 任何一步失败 → Warn 降级，绝不阻断启动/导航；先清后写基线（崩溃重跑按旧基线再清，幂等无害）。
+    /// 当前版本不可判（null）时：不清、也不写基线（账本 Write 对空白/null 直接拒绝，保基线防漏清）。
+    /// </summary>
+    private static async Task InvalidateWebCacheOnVersionChangeAsync(WebView2 web)
+    {
+        try
+        {
+            var current = UpdateChecker.ResolveLocalDshVersion();
+            var lastSeen = WebCacheVersionLedger.Read();
+            var shouldClear = ShellLogic.CacheInvalidationPolicy.ShouldInvalidate(lastSeen, current);
+            Trace($"web cache invalidation: lastSeen={lastSeen ?? "<none>"} current={current ?? "<unprobed>"} clear={shouldClear}");
+            if (shouldClear)
+                await WebViewManager.ClearDiskCacheAsync(web);
+            if (current is not null)
+                WebCacheVersionLedger.Write(current); // 清后建立新基线；版本相同时也记录（无需重清）
+        }
+        catch (Exception ex)
+        {
+            // 透明降级：缓存清理失败/决策异常都不允许干扰启动（宁可保留陈旧缓存，不可误删/阻断）
+            Logger.Warn("web cache invalidation aborted; continuing normally (cache untouched)",
+                ctx: new { error = ex.Message });
+        }
     }
 
     /// <summary>

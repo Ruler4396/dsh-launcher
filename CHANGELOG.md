@@ -9,10 +9,12 @@
 - **标题栏 dsh 版本徽标**：自绘标题栏标题（DeepSeek Harness）后紧跟显示 dsh 当前版本号（如 `v0.1.2-rc.1`，来自统一发现层），**正文样式**（与标题同字重同色，悬停手型光标 + 下划线），点击弹出**dsh 风格版本信息窗**——无边框 + 复用自绘标题栏（鲸鱼图标 / 仅关闭按钮）+ 深/浅主题（#202020 / #F0F0F0），展示 dsh 与 dsh-launcher 的当前/最新版本（最新版经 UpdateChecker 回退链异步拉取，失败降级"获取失败"）及启动器下载地址（`UpdateChecker.LauncherLatestReleaseUrl` 单一事实源，此前两处硬编码 URL 收口）。
 - **开发构建版本号去误导**：本地/开发构建（.NET SDK 未注入版本时默认 `1.0.0`，本仓库版本线 0.x）不再显示误导性的 "v1.0.0"，回退 git 最近 tag（`git describe --tags --abbrev=0`，进程三必须合规的有界探测；发布构建仍用 CI 注入版本）。
 - 展示文案（v 前缀 / "已是最新" / "有新版本"）统一沉淀为 `ShellLogic.VersionInfoPolicy` 纯函数（契约测试锁定），标题栏与弹窗共用，避免各 UI 各自拼串漂移。
+- **版本变更一次性磁盘缓存失效**：dsh 版本与上次记录（`DataDir\webcache-version.json`，原子写）语义不同时，在主窗 WebView2 初始化后、首次导航前进 `ClearBrowsingDataAsync(DiskCache)`——**只清磁盘 HTTP 缓存一种种类**，绝不触碰 localStorage/IndexedDB/Cookies/Service Worker 缓存等任何用户数据（red line：宁可保留陈旧缓存，不可误删用户内容）。解决"升级 dsh 后 webui 仍由浏览器磁盘缓存服务旧表现、看不到新效果而误判"的经典误报来源；采用**版本变更事件触发**而非"每次退出清理"（后者拖慢每次冷启动且无法甄别式保留用户数据）。决策纯函数 `ShellLogic.CacheInvalidationPolicy` 三不清（无基线/当前版本不可判/版本相同），版本取值与 UpdateChecker/标题栏徽标同源（委托 DshDiscovery，身份一致性铁律）；失败 Warn 降级绝不断导航。
 
 ### 测试
 
 - 新增 `VersionInfoPolicyContractTests`（徽标归一 / 当前/最新展示 / 比较结论委托 VersionPolicy / 失败占位不误导 31 例）；`Outcomes/VersionInfoOutcomes`（徽标字段与点击钩子、下载地址与仓库常量一致、展示文案单点合成、状态语义与更新检查一致）；`UpdateCheckerTests.StripDevDefaultVersion_*`（发布/开发构建版本判定 7 例）。
+- 新增 `CacheInvalidationContractTests`（决策纯函数 15 例：无基线/版本不可判/语义相同一律不清，升级/降级/预发布差异才清，v 前缀与空白归一、build metadata 忽略）；`WebCacheVersionLedgerTests`（原子写往返 / 损坏容错 / `Write(null)` 不得抹掉既有基线 / 无 .tmp 残留 5 例）；`Outcomes/WebCacheVersionChangeOutcomes`（**RealOS 零 Mock 真实 WebView2**：缓存失效以"同一 URL 在清理后再次导航必然回源"的行为级证据锁定，辅以 Cache 目录显著缩水；localStorage 键值 + LevelDB 文件完好、Code Cache 不被触碰、账本更新后同版本不再清，5 条用户级不变量物理断言）。
 
 ## [0.4.4] - 2026-09-03
 
