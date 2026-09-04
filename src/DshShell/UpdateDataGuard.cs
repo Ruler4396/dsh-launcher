@@ -271,6 +271,15 @@ public static class UpdateDataGuard
             return new UpdateRollbackResult(false, restored, quarantined, warnings);
         }
 
+        // [2026-09 删除代码审计加固] 版本串白名单：runtimes\{version} 会被整体移进隔离区，
+        // 穿越串（".."/分隔符）可让 Directory.Move 脱域——版本不安全则跳过隔离，此事必须上报。
+        if (!ShellLogic.PathPolicy.IsSafeVersionSegment(version))
+        {
+            warnings.Add($"rollback skipped: unsafe version segment '{version}'");
+            Logger.Error($"[update-guard] rollback skipped: unsafe version segment '{version}'", ErrorCodes.E4003);
+            return new UpdateRollbackResult(false, restored, quarantined, warnings);
+        }
+
         // ① 还原受保护文件
         try
         {
