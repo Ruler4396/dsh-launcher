@@ -197,4 +197,17 @@ public class UpdateCheckerTests
             Environment.SetEnvironmentVariable("DSH_VERSION", saved);
         }
     }
+
+    // ---------- 壳自身版本的发布/开发构建判定（2026-09 用户反馈："为什么显示 v1.0.0"） ----------
+
+    [Theory]
+    [InlineData("0.4.4", "0.4.4")]            // 发布构建（CI 注入）
+    [InlineData("0.4.4+abc123", "0.4.4")]     // 发布构建 + SourceRevisionId
+    [InlineData("1.0.0", null)]               // SDK 未注入 → 默认 1.0.0 → 视为开发构建
+    [InlineData("1.0.0+48f6017c", null)]      // 开发构建（SDK 默认 + commit sha）
+    [InlineData("1.0.1", "1.0.1")]            // 显式设置过的 1.0.1 视为真实版本（信任调用方）
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void StripDevDefaultVersion_IdentiFiesDevBuild(string? informational, string? expected)
+        => Assert.Equal(expected, UpdateChecker.StripDevDefaultVersion(informational));
 }
