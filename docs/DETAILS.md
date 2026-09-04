@@ -204,14 +204,14 @@ Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri �
 
 **Q：日志里出现 [E2001]"未找到可用的 dsh 运行时身份（JS 入口解析失败）"，但命令行里 `dsh --version` 明明正常？**
 （issue #24 场景）这是"启动器找不到全局 dsh 包的 JS 入口"，与 dsh 是否能用是两回事——启动器 ≈0.4.3 曾**硬编码** `%APPDATA%\npm\node_modules\@deepseek-ai\dsh`（`dsh.cmd` 出现在 PATH 上但包实际装在自定义 npm prefix / pnpm 全局目录时，入口解析为 null → E2001）。三个角度：
-1. **0.4.4+ 已自动定位**：就近 `node_modules`/shim 内嵌路径/PATH 全候选/遗留前缀四级解析（不再硬编码）；仍失败时弹窗会列出实际探查过的路径（`EntryProbeFailures`）。
-2. **手工验证**：`npm config get prefix`、`npm root -g`、`where dsh`；确认 `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` 存在。prefix 非默认时把 dsh 装回默认前缀（`npm i -g @deepseek-ai/dsh`）或升级启动器到 0.4.4+。
+1. **0.4.5+ 已自动定位**：就近 `node_modules`/shim 内嵌路径/PATH 全候选/遗留前缀四级解析（不再硬编码）；仍失败时弹窗会列出实际探查过的路径（`EntryProbeFailures`）。
+2. **手工验证**：`npm config get prefix`、`npm root -g`、`where dsh`；确认 `%APPDATA%\npm\node_modules\@deepseek-ai\dsh\lib\bin.js` 存在。prefix 非默认时把 dsh 装回默认前缀（`npm i -g @deepseek-ai/dsh`）或升级启动器到 0.4.5+。
 3. **文案澄清**：旧版 E2001 显示"缺少 start-dsh.vbs"是启动链移除 vbs 后的遗留话术（`scripts/start-dsh.vbs` 仍随包发布，文件确实在，但启动早已不经过它）——真正缺失的是全局 npm 目录下 dsh 包的 JS 入口。
 
 **Q：启动报 [E2003]，日志尾部是 Node 崩溃大对象（`}`、`... N more items`、`Node.js v<ver>`)？是中文路径导致的吗？**
 **不是中文路径**（已复现排除：dsh 0.1.2-alpha.3 + node v24 在中文与纯 ASCII 两个 `DSH_HOME` 下崩溃签名 1:1 一致，且两轮 `profiles\node_modules` 包都装齐）。该形态根因在 **dsh 0.1.2-alpha（alpha 版）的 web profile 引导链**：cordis loader 从安装锚点按 Node ESM 规则解析 profile 依赖失败，聚合抛出 `ERR_MODULE_NOT_FOUND`（典型行 `Cannot find package '@deepseek-ai/dsh-llm' imported from …`），进程崩溃 → 启动日志错误标志持续 15s → 壳报 E2003。处理建议：
 - 升级 dsh 到稳定线（`latest`=0.1.1-rc.2 或更新的 0.1.2-rc.1），再启动；
-- 仍要定位：用 0.4.4+ 的 E2003 弹窗（含**首条报错线索** + 完整日志路径 + 服务进程退出码事实），崩溃栈头部才是根因；
+- 仍要定位：用 0.4.5+ 的 E2003 弹窗（含**首条报错线索** + 完整日志路径 + 服务进程退出码事实），崩溃栈头部才是根因；
 - 复现参考：`npm i @deepseek-ai/dsh@0.1.2-alpha.3 --prefix <scratch>` + `node <scratch>\node_modules\@deepseek-ai\dsh\lib\bin.js web --no-open`（CJK/ASCII `DSH_HOME` 均复现 `plugin tree failed to load`）。
 
 **Q：MSI 和 ZIP 有什么区别？**
