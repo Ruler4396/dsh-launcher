@@ -140,6 +140,16 @@ public sealed class DshUpdateManager : IDshUpdateManager
         var (pendingVersion, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(pendingVersion)) return;
 
+        // [2026-09 删除代码审计加固] pending 版本串白名单：被篡改/污染的版本串（含 ".."/分隔符）
+        // 会经 runtimeDir/targetDir 传入 Directory.Move/Directory.Exists 造成越界——拒用并清账。
+        if (!ShellLogic.PathPolicy.IsSafeVersionSegment(pendingVersion))
+        {
+            Logger.Error($"[Apply] pending version rejected as unsafe path segment: '{pendingVersion}'; clearing pending", ErrorCodes.E4002);
+            StagedUpdate.ClearPending();
+            progress?.Invoke("检测到损坏的更新记录，已清除；请重新点击更新。");
+            return;
+        }
+
         // [INVARIANT] SelfContained 构建完成后，必须无条件执行 Apply，无论端口是否被占用。
         // 旧服务仍在运行（端口开）时，强杀后执行原子切换。
         if (!string.IsNullOrWhiteSpace(runtimeDir) && Directory.Exists(runtimeDir))
@@ -230,6 +240,16 @@ public sealed class DshUpdateManager : IDshUpdateManager
     {
         var (version, _, _, _, runtimeDir) = StagedUpdate.ReadPending();
         if (string.IsNullOrWhiteSpace(version)) return;
+
+        // [2026-09 删除代码审计加固] 同 HandlePendingAtStartup：版本串不安全则拒绝应用
+        //（防 Directory.Move(runtimeDir, runtimes\{version}) 越界），走既有失败通道保留现场。
+        if (!ShellLogic.PathPolicy.IsSafeVersionSegment(version))
+        {
+            Logger.Error($"[Apply] target version rejected as unsafe path segment: '{version}'", ErrorCodes.E4002);
+            StagedUpdate.MarkApplyFailed();
+            NotifyApplyFailedInternal(version, "更新记录中的版本号异常（可能已损坏），已放弃自动应用。请重新点击更新。");
+            return;
+        }
 
         // [Evidence-1] Apply 开始
         Logger.Info($"[Apply] Start: pending exists, target version={version}, runtimeDir={runtimeDir ?? "null"}, port={_port}");

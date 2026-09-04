@@ -967,6 +967,7 @@ public static class ShellLogic
     ///   K1 无基线（首次运行/壳升级后首跑）→ 不清（宁可保留陈旧缓存一次，绝不误删；基线在当次启动后建立）；
     ///   K2 当前版本不可判（null/空白：探测失败/未安装）→ 不清；
     ///   K3 语义版本相同（含 v 前缀/空白/build metadata 归一，经 <see cref="VersionPolicy"/>）→ 不清；
+    ///   K6 基线或当前版本**不可信/不可解析**（账本被写坏/被篡改/注入串）→ 不清——宁可漏清，绝不在坏基线上行动。
     ///   其余真实差异（升级、降级、预发布差异）→ 清。
     /// 比较委托全局唯一比较器 <see cref="VersionPolicy.CompareVersions"/>（全系统禁止第二套比较器，
     /// F1 回归根因：发现层用序数比较致 rc.10 &lt; rc.9 判反）。
@@ -976,13 +977,58 @@ public static class ShellLogic
     public static class CacheInvalidationPolicy
     {
         /// <summary>
-        /// 是否应清 WebView2 磁盘缓存：上次记录的 dsh 版本有基线 且 当前版本可判 且 语义版本不同。
+        /// 版本字符串可信度门（宽松 semver-ish）：
+        /// [vV]?数字(.数字){0,3} 可选 -预发布(+字母数字/./-串) 可选 +build(+字母数字/./-串)。
+        /// 只做"能安全交给VersionPolicy比较"的粗筛——任何不匹配输入（垃圾/注入/路径语义词）
+        /// 一律视为"不可信"，走 K6 不清（版本值只参与比较，永不进入 Shell/路径，双保险）。
+        /// </summary>
+        private static readonly System.Text.RegularExpressions.Regex PlausibleVersion = new(
+            @"^[vV]?\d+(\.\d+){0,3}(-[0-9A-Za-z][0-9A-Za-z.\-]*)?(\+[0-9A-Za-z][0-9A-Za-z.\-]*)?$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// 是否应清 WebView2 磁盘缓存：上次记录的 dsh 版本有可信基线 且 当前版本可判 且 语义版本不同。
         /// </summary>
         public static bool ShouldInvalidate(string? lastSeenVersion, string? currentVersion)
         {
-            if (string.IsNullOrWhiteSpace(lastSeenVersion)) return false;  // K1: 无基线不清
-            if (string.IsNullOrWhiteSpace(currentVersion)) return false;   // K2: 不可判不清
+            if (!IsTrustedVersion(lastSeenVersion)) return false; // K1+K6: 无基线/坏基线不清
+            if (!IsTrustedVersion(currentVersion)) return false;  // K2+K6: 不可判/坏输入不清
             return VersionPolicy.CompareVersions(lastSeenVersion, currentVersion) != 0; // K3: 语义相同不清
+        }
+
+        private static bool IsTrustedVersion(string? v)
+            => !string.IsNullOrWhiteSpace(v) && PlausibleVersion.IsMatch(v.Trim());
+    }
+
+    /// <summary>
+    /// 路径安全策略（2026-09 删除/移动代码全量审计加固）：
+    /// 版本串作为目录/文件名段前必须先过 PathPolicy 白名单，防路径穿越（".."/分隔符/绝对路径）
+    /// 使任何 <c>TryDeleteDir</c>/<c>Directory.Move</c>/<c>File.Delete</c> 脱域误伤用户数据。
+    /// 更新链路的所有版本来源（npm registry dist-tag、GitHub release tag、pending-update.json、
+    /// 测试钩子）都可能被污染/篡改——宁可中止一次更新，绝不拼出越界路径（契约测试锁定）。
+    /// </summary>
+    public static class PathPolicy
+    {
+        /// <summary>
+        /// 版本串是否可作为安全路径段：非空、Trim 后长度 ≤64、仅含 [0-9A-Za-z.+-_]、
+        /// 不以 '.' 开头/结尾、不含 ".."、不含任何路径分隔符/空白/控制字符。
+        /// 任何不匹配 → false（调用方必须拒绝行动，绝不把该串拼进任何删除/移动路径）。
+        /// </summary>
+        public static bool IsSafeVersionSegment(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return false;
+            var v = version.Trim();
+            if (v.Length == 0 || v.Length > 64) return false;
+            if (v[0] == '.' || v[^1] == '.' || v.Contains("..", StringComparison.Ordinal)) return false;
+            foreach (var c in v)
+            {
+                var ok = (c >= '0' && c <= '9')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z')
+                    || c is '.' or '+' or '-' or '_';
+                if (!ok) return false;
+            }
+            return true;
         }
     }
 

@@ -229,21 +229,22 @@ public sealed class ServiceManager : IServiceManager
     }
 
     /// <summary>
-    /// 强杀僵尸进程树（任务一）：先杀监听端口的 node 进程树（taskkill /T /F），再向上杀
-    /// cmd/npx 外壳（taskkill /T 只向下，不会结束父外壳），最后等待端口释放（最长 2s）。
-    /// 返回是否清理成功（端口最终释放）。</summary>
+    /// 强杀僵尸进程树（任务一）：杀监听端口的 node 进程树（taskkill /T /F），等待端口释放（最长 2s）。
+    /// 返回是否清理成功（端口最终释放）。
+    ///
+    /// 【2026-09 删除/杀伤代码审计加固】**不再杀伤祖先链**：ADR-024 后 dsh 服务由 node.exe 直启，
+    /// 其父进程是启动器自己或用户终端/explorer——旧版"cmd/npx 外壳"中间层已不存在，按祖先链
+    /// （GetAncestorPids ≤8 层无条件收集）逐棵 /T /F 强杀存在自杀与误杀用户终端窗口的真实风险。
+    /// 现在只对端口归属进程执行 taskkill /T（连同其全部子进程），即覆盖 dsh 服务树本身。
+    /// 进程身份由调用方（ProbePort 的 Zombie 分支）先经 IsLikelyDshService（ProcessName==node）确认。
+    /// </summary>
     public bool KillZombieTree(int port)
     {
         var pid = _pidLookup(port);
         if (pid <= 0)
             return true; // 端口已无占用者（自愈：僵尸进程恰好退出）
 
-        // 杀 node 进程树 + 祖先外壳链（cmd/npx），全部 /T /F 强杀
-        var targets = new System.Collections.Generic.HashSet<int> { pid };
-        foreach (var ancestor in _ancestors(pid))
-            targets.Add(ancestor);
-        foreach (var target in targets)
-            _killProcessTree(target);
+        _killProcessTree(pid); // taskkill /PID {pid} /T /F：覆盖 dsh 服务全部子进程
 
         // 等待端口释放（最长 2s，每 200ms 探测一次）
         var deadline = DateTime.UtcNow + _portReleaseTimeout;

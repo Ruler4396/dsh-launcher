@@ -71,7 +71,9 @@ public static class StagedUpdate
         try
         {
             if (!File.Exists(tarballPath)) return false;
-            var fallbackTarball = Path.Combine(stagingDir, tarballName);
+            // [2026-09 删除代码审计加固] tarballName 可能内嵌外部版本串——归一为纯文件名分量后
+            // 拼接，任何 ".."/分隔符注入都无法让 fallbackTarball 逃出 staging 根。
+            var fallbackTarball = Path.Combine(stagingDir, Path.GetFileName(tarballName));
             if (File.Exists(fallbackTarball)) File.Delete(fallbackTarball);
             File.Move(tarballPath, fallbackTarball);
             return true;

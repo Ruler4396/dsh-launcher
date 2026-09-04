@@ -2544,6 +2544,15 @@ internal static class Program
     /// </summary>
     private static void DownloadDshUpdateStaged(Form form, string latest)
     {
+        // [2026-09 删除代码审计加固] 版本串白名单：latest 来自 registry/release tag/测试钩子，
+        // 污染串（含 ".."/分隔符）会经 buildDir 传入 TryDeleteDir 造成越界删除——宁可中止本次构建。
+        if (!ShellLogic.PathPolicy.IsSafeVersionSegment(latest))
+        {
+            Logger.Error($"update build refused: unsafe version segment '{latest}'", ErrorCodes.E4002);
+            UpdateBuildStatus(form, CustomTitleBar.BuildStatus.Failed,
+                $"更新版本号异常（{latest}），已中止。请稍后重试。", 0f);
+            return;
+        }
         var staging = Path.Combine(DataDir, "staging");
         var buildDir = Path.Combine(staging, $"runtime-build-{latest}");
         _buildCts = new CancellationTokenSource();
