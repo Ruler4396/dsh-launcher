@@ -2,7 +2,13 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.4.5] - 2026-09-04
+
+> **重要更新（含安全加固，SECURITY UPDATE）**：自上版 v0.4.3 以来的全部修复与功能**一次交付**，建议所有旧版本用户更新——
+> ① **兼容性（issue #24）**：全局 dsh 安装不再硬编码 `%APPDATA%\npm`——自定义 npm prefix / pnpm 全局布局下自动定位 JS 入口，E2001 弹窗输出真实探查路径并删除"缺少 start-dsh.vbs"误导文案；E2003 诊断增强（首条报错线索 + 完整日志路径 + 服务进程退出码）。
+> ② **新增标题栏 dsh 版本徽标与 dsh 风格版本信息窗**（当前/最新版本 + 启动器下载地址，单击即达）。
+> ③ **新增 dsh 版本升级后的一次性 WebView2 磁盘缓存失效**（只清 DiskCache、绝不触碰用户数据）——升级 dsh 后立即看到新 webui，杜绝"升级了但服务旧表现"的经典误报。
+> ④ **删除/杀伤路径安全加固**（版本段路径白名单 + 缓存失效可信门 + 僵尸清理杀伤收窄）。
 
 ### 新增
 
@@ -13,33 +19,20 @@
 
 ### 修复
 
-- **缓存失效决策加固（K6）**：`CacheInvalidationPolicy` 增加版本可信门——基线或当前版本不可信/不可解析（账本被写坏/篡改/注入串）时**一律不清**（宁可漏清，绝不在坏基线上行动）；此前损坏账本可能触发一次本可避免的清理（仅 DiskCache，不伤用户数据）。
+- **全局 dsh 入口自动定位（issue #24）**：`JsEntryResolver.ResolveGlobalPackageEntry` 四级解析——就近 `node_modules\@deepseek-ai\dsh`（shim 与包同父，任意前缀）/ shim 文本内嵌真实入口（npm/pnpm/yarn/nvm 生成的 .cmd 均内嵌）/ PATH 全候选 / 遗留 `%APPDATA%\npm` 兜底；失败时 `DshRuntimeIdentity.EntryProbeFailures` 携带探针路径。原"`dsh --version` 正常但 launcher 报 E2001"（自定义 prefix 场景）至此根除。
+- **E2001 文案去误导**：删除遗留话术"缺少 start-dsh.vbs"（0.4.x 启动链已无 vbs；真正缺失的是全局 npm 目录下 dsh 包的 JS 入口）；弹窗列出实际探查位置并提示 `dsh --version` 自检。
+- **E2003 可归因**：弹窗补"首条报错线索"（首个命中错误标志的行，崩溃栈头部才是根因）；完整日志路径对齐超时分支；`ServiceManager` 把服务进程退出码直接落统一日志（崩溃事实可查）。
+- **缓存失效决策加固（K6 可信门）**：`CacheInvalidationPolicy` 增加版本可信门——基线或当前版本不可信/不可解析（账本被写坏/篡改/注入串）时**一律不清**（宁可漏清，绝不在坏基线上行动）；此前损坏账本可能触发一次本可避免的清理（仅 DiskCache，不伤用户数据）。
 - **删除/移动路径穿越加固**：新增 `ShellLogic.PathPolicy.IsSafeVersionSegment` 版本段白名单，前置到所有用版本串拼路径的删除/移动入口（`staging\runtime-build-{v}` 清场删除、`runtimes\{v}` 原子切换 `Directory.Move`、更新回滚隔离、tarball 保留重试），杜绝被污染的 registry/release tag/pending 记录以 `..`/分隔符形态使删除越出自家目录；`PreserveTarballForRetry` 同时按 `Path.GetFileName` 归一目标名。
 - **僵尸清理杀伤范围收窄**：`KillZombieTree` 不再杀伤祖先链（ADR-024 直启后 node 的父进程是启动器自身/用户终端，旧"cmd/npx 外壳"中间层已不存在，按祖先强杀存在自杀与误杀终端风险），只对端口归属的 node 进程树执行 `taskkill /T /F`；身份仍由 Zombie 分支的 `IsLikelyDshService` 先确认。
 
 ### 测试
 
-- 新增 `CacheInvalidationContractTests` K6 坏输入 7 例（垃圾/换行/注入串/路径语义一律不清）；`WebCacheVersionLedgerTests` 扩展账本损坏形状 10 例（非对象/非字符串/路径碰撞/写失败不抛/前向兼容/超长 Unicode）；`Outcomes/CacheInvalidationLaunchCycleOutcomes`（跨会话启动循环：首启/同版/升级/降级/崩溃窗口重清/探测失败保基线/坏基线自愈，3 例）。
-- `Outcomes/WebCacheVersionChangeOutcomes` 扩展为 **5 类用户数据物理断言**（localStorage + Cookie + IndexedDB + CacheStorage/SW + LevelDB 目录），新增空档案库清理 no-op 场景与 double-clear 幂等；实测确认本 SDK `ExecuteScriptAsync` 不等 Promise，异步 JS 证据改"全局标志 + C# 轮询"驱动。
-- 新增 `PathPolicyContractTests`（版本段白名单 26 例：穿越/分隔符/控制字符/超长全拒）；`Managers/KillZombieTreeSafetyTests`（Headless：只杀端口归属 pid、绝不杀祖先、无占用者零杀伤、清理失败如实上报）。
-
-- 新增 `VersionInfoPolicyContractTests`（徽标归一 / 当前/最新展示 / 比较结论委托 VersionPolicy / 失败占位不误导 31 例）；`Outcomes/VersionInfoOutcomes`（徽标字段与点击钩子、下载地址与仓库常量一致、展示文案单点合成、状态语义与更新检查一致）；`UpdateCheckerTests.StripDevDefaultVersion_*`（发布/开发构建版本判定 7 例）。
-- 新增 `CacheInvalidationContractTests`（决策纯函数 15 例：无基线/版本不可判/语义相同一律不清，升级/降级/预发布差异才清，v 前缀与空白归一、build metadata 忽略）；`WebCacheVersionLedgerTests`（原子写往返 / 损坏容错 / `Write(null)` 不得抹掉既有基线 / 无 .tmp 残留 5 例）；`Outcomes/WebCacheVersionChangeOutcomes`（**RealOS 零 Mock 真实 WebView2**：缓存失效以"同一 URL 在清理后再次导航必然回源"的行为级证据锁定，辅以 Cache 目录显著缩水；localStorage 键值 + LevelDB 文件完好、Code Cache 不被触碰、账本更新后同版本不再清，5 条用户级不变量物理断言）。
-
-## [0.4.4] - 2026-09-03
-
-> **兼容性修复（issue #24）**：全局 dsh 安装不再硬编码 `%APPDATA%\npm`——自定义 npm prefix / pnpm 全局布局下自动定位 JS 入口，E2001 弹窗输出真实探查路径并删除"缺少 start-dsh.vbs"误导文案。E2003 诊断增强（首条报错线索 + 完整日志路径 + 服务进程退出码）。
-
-### 修复
-
-- **全局 dsh 入口自动定位（issue #24）**：`JsEntryResolver.ResolveGlobalPackageEntry` 四级解析——就近 `node_modules\@deepseek-ai\dsh`（shim 与包同父，任意前缀）/ shim 文本内嵌真实入口（npm/pnpm/yarn/nvm 生成的 .cmd 均内嵌）/ PATH 全候选 / 遗留 `%APPDATA%\npm` 兜底；失败时 `DshRuntimeIdentity.EntryProbeFailures` 携带探针路径。原"`dsh --version` 正常但 launcher 报 E2001"（自定义 prefix 场景）至此根除。
-- **E2001 文案去误导**：删除遗留话术"缺少 start-dsh.vbs"（0.4.x 启动链已无 vbs；真正缺失的是全局 npm 目录下 dsh 包的 JS 入口）；弹窗列出实际探查位置并提示 `dsh --version` 自检。
-- **E2003 可归因**：弹窗补"首条报错线索"（首个命中错误标志的行，崩溃栈头部才是根因）；完整日志路径对齐超时分支；`ServiceManager` 把服务进程退出码直接落统一日志（崩溃事实可查）。
-
-### 测试
-
 - 新增 `JsEntryResolverGlobalTests`（npm/自定义前缀/pnpm shim-文本/负例 + bin 三态 golden ×9）；`DshDiscoveryProbeTests` 自定义前缀 RealOS 端到端（入口+版本同源解析）；`GlobalNpmEntryResolutionOutcomes`（任务级不变量：任意前缀 → 可直启身份且入口物理存在）；`LauncherAppTests` E2001 归因文案契约；`ShellLogicTests.FirstStartupErrorLine_*`。
 - **E2003 中文路径排除复现**（文档）：dsh 0.1.2-alpha.3 + node v24 在 CJK/ASCII `DSH_HOME` 下崩溃签名 1:1——非中文路径问题，根因在 dsh alpha 的 profile 引导链（`ERR_MODULE_NOT_FOUND` 聚合），建议 dsh 升级稳定线。
+- 新增 `CacheInvalidationContractTests`（决策纯函数 15 例：无基线/版本不可判/语义相同一律不清，升级/降级/预发布差异才清，v 前缀与空白归一、build metadata 忽略；K6 坏输入 7 例：垃圾/换行/注入串/路径语义一律不清）；`WebCacheVersionLedgerTests`（原子写往返 / 损坏容错 / `Write(null)` 不得抹掉既有基线 / 无 .tmp 残留，扩展账本损坏形状 10 例：非对象/非字符串/路径碰撞/写失败不抛/前向兼容/超长 Unicode）；`PathPolicyContractTests`（版本段白名单 26 例：穿越/分隔符/控制字符/超长全拒）。
+- `Outcomes/CacheInvalidationLaunchCycleOutcomes`（跨会话启动循环：首启/同版/升级/降级/崩溃窗口重清/探测失败保基线/坏基线自愈，3 例）；`Outcomes/WebCacheVersionChangeOutcomes`（**RealOS 零 Mock 真实 WebView2**：缓存失效以"同一 URL 在清理后再次导航必然回源"的行为级证据锁定，辅以 Cache 目录显著缩水；**5 类用户数据物理断言** localStorage 键值 + Cookie + IndexedDB + CacheStorage/SW + LevelDB 目录完好、Code Cache 不被触碰、空档案库清理 no-op、double-clear 幂等、账本更新后同版本不再清；实测确认本 SDK `ExecuteScriptAsync` 不等 Promise，异步 JS 证据改"全局标志 + C# 轮询"驱动）。
+- 新增 `VersionInfoPolicyContractTests`（徽标归一 / 当前/最新展示 / 比较结论委托 VersionPolicy / 失败占位不误导 31 例）；`Outcomes/VersionInfoOutcomes`（徽标字段与点击钩子、下载地址与仓库常量一致、展示文案单点合成、状态语义与更新检查一致）；`UpdateCheckerTests.StripDevDefaultVersion_*`（发布/开发构建版本判定 7 例）；`Managers/KillZombieTreeSafetyTests`（Headless：只杀端口归属 pid、绝不杀祖先、无占用者零杀伤、清理失败如实上报）。
 
 ## [0.4.3] - 2026-08-29
 
