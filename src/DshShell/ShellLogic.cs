@@ -898,6 +898,66 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 版本信息展示策略（纯函数，ContractTests.VersionInfoPolicyContractTests 锁定；
+    /// 2026-09 新增功能：TitleBar dsh 版本徽标 + 版本信息弹窗共用）。
+    /// 界面文案（"v 前缀"、"已是最新/有新版本"）统一在此合成——UI 层零拼字符串，
+    /// 防止标题栏与弹窗各写一套展示规则漂移。比较结论委托 <see cref="VersionPolicy"/>
+    /// （全系统唯一比较器），严禁另起炉灶。
+    /// </summary>
+    public static class VersionInfoPolicy
+    {
+        /// <summary>比较结论：Unknown=最新版不可知（获取失败/本地未知且远端未知）；UpToDate=无更新；NewerAvailable=有新版本。</summary>
+        public enum Relation { Unknown, UpToDate, NewerAvailable }
+
+        /// <summary>
+        /// TitleBar 版本徽标文本：dsh 当前版本 → "v0.1.0-rc.7"；null/空白 → ""（不渲染徽标）。
+        /// 输入可能已带 v/V（版本探测输出/环境钩子），统一剥离后按规范加小写 v。
+        /// </summary>
+        public static string ComposeTitleBarBadge(string? dshVersion)
+            => ComposeVersion(dshVersion) ?? "";
+
+        /// <summary>最新版本展示文本：未知 → fallback（默认 "获取失败"，与更新检查静默语义一致）。</summary>
+        public static string FormatLatest(string? latest, string fallback = "获取失败")
+            => ComposeVersion(latest) ?? fallback;
+
+        /// <summary>当前版本展示文本：未知 → unknown（默认 "未知"）。</summary>
+        public static string FormatCurrent(string? current, string unknown = "未知")
+            => ComposeVersion(current) ?? unknown;
+
+        /// <summary>
+        /// 比较 current 与 latest（最新版未知时无法判定 → Unknown）。
+        /// 本地版本已知：latest &gt; current → NewerAvailable，否则 UpToDate；
+        /// 本地版本未知但远端已知 → NewerAvailable（与更新检测语义一致：本地未知视为可安装）。
+        /// </summary>
+        public static Relation CompareCurrentToLatest(string? current, string? latest)
+        {
+            if (string.IsNullOrWhiteSpace(latest)) return Relation.Unknown;
+            if (string.IsNullOrWhiteSpace(current)) return Relation.NewerAvailable;
+            return VersionPolicy.CompareVersions(latest, current) > 0
+                ? Relation.NewerAvailable
+                : Relation.UpToDate;
+        }
+
+        /// <summary>
+        /// 比较结论 → 用户可读状态行。NewerAvailable 时文案自含最新版本号；
+        /// Unknown 时用 unknownText（默认 "无法获取最新版本"，网络/限流失败不误导用户）。
+        /// </summary>
+        public static string FormatRelation(Relation relation, string? latest, string unknownText = "无法获取最新版本")
+            => relation switch
+            {
+                Relation.UpToDate => "已是最新",
+                Relation.NewerAvailable => $"有新版本 {FormatLatest(latest)}",
+                _ => unknownText,
+            };
+
+        private static string? ComposeVersion(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return null;
+            return "v" + version.Trim().TrimStart('v', 'V');
+        }
+    }
+
+    /// <summary>
     /// npm registry 兜底策略（纯函数，ContractTests.NpmRegistryPolicyContractTests 锁定）。
     /// [2026-08 用户回归] npmjs 直连不稳且慢（HEAD 2055ms、undici 连接反复被重置），
     /// npmmirror 快且稳（264ms）。策略：优先走最快的源，失败才降级——

@@ -420,6 +420,10 @@ internal static class Program
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
         form.Controls.Add(form.TitleBar);
+        // [2026-09 版本徽标] 标题栏紧跟标题显示 dsh 当前版本（发现层原始版本号），
+        // 点击弹出原生版本信息窗（dsh/启动器当前+最新版本 + 启动器下载地址）。
+        form.TitleBar._dshVersion = UpdateChecker.ResolveLocalDshVersion() ?? "";
+        form.TitleBar.VersionClick = () => ShowVersionInfoDialog(form);
 
         var web = new WebView2
         {
@@ -2312,17 +2316,43 @@ internal static class Program
                 return;
             }
             var r2 = MessageBox.Show(form,
-                title + "\n\n" + body + "\n\n便携版需手动下载更新：\nhttps://github.com/Ruler4396/dsh-launcher/releases/latest\n\n是否打开下载页？",
+                title + "\n\n" + body + "\n\n便携版需手动下载更新：\n" + UpdateChecker.LauncherLatestReleaseUrl + "\n\n是否打开下载页？",
                 title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             Trace($"portable update ask answered: {r2}");
             if (r2 == DialogResult.Yes)
-                Managers.WebRuntimeInstaller.OpenExternally("https://github.com/Ruler4396/dsh-launcher/releases/latest");
+                Managers.WebRuntimeInstaller.OpenExternally(UpdateChecker.LauncherLatestReleaseUrl);
             _pendingUpdate = PendingUpdate.None;
         }
         catch (Exception ex)
         {
             // 弹窗本身失败（窗体关闭/无主窗）：留痕，绝不让通知链路抛进调用方
             Logger.Warn($"portable update dialog failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// [2026-09 版本徽标] 标题栏 dsh 版本徽标点击 → 弹出版本信息窗（原生样式）：
+    /// dsh 当前/最新版本 + 启动器当前/最新版本 + 启动器下载地址。
+    /// 当前版本即时读取（发现层/程序集信息，与更新检查同源）；最新版本由窗体打开后
+    /// 异步拉取（UpdateChecker 回退链，失败静默降级为"获取失败"）。弹窗本身绝不抛出
+    /// ——版本信息是增值 UI，任何失败都不得反噬主窗。
+    /// </summary>
+    private static void ShowVersionInfoDialog(Form owner)
+    {
+        try
+        {
+            if (owner is null || owner.IsDisposed) return;
+            try { owner.Activate(); } catch { /* 窗体未就绪则忽略 */ }
+            using var dialog = new DshWeb.Windows.VersionInfoDialog(
+                DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Version,
+                UpdateChecker.CurrentLauncherVersion,
+                ResolveDarkMode());
+            dialog.ShowDialog(owner);
+        }
+        catch (Exception ex)
+        {
+            // 弹窗失败留痕：绝不静默吞掉，也不向版本徽标回调抛异常
+            Logger.Warn("version info dialog failed", ctx: new { error = ex.Message });
         }
     }
 

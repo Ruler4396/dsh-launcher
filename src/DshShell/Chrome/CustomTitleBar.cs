@@ -12,11 +12,24 @@ namespace DshWeb.Chrome;
 /// </summary>
 internal sealed class CustomTitleBar : Panel
 {
-    private readonly DshShellForm _owner;
+    private readonly Form _owner;
+    /// <summary>仅保留关闭按钮（dsh 风格版本信息窗等模态小窗用：无最小化/最大化）。</summary>
+    private readonly bool _closeOnly;
     private float _scale;
     private int _btnWidth;
     private bool _dark;
     private bool _hoverMin, _hoverMax, _hoverClose;
+
+    // ---- 2026-09：dsh 版本徽标（"DeepSeek Harness v0.1.0-rc.7"，点击弹版本信息窗） ----
+    /// <summary>dsh 当前版本（原始版本号，如 "0.1.0-rc.7"；空 = 不渲染徽标）。Program 启动时写入。
+    /// 徽标展示文本由 ShellLogic.VersionInfoPolicy 纯函数合成（UI 层零拼字符串）。</summary>
+    internal volatile string _dshVersion = "";
+    /// <summary>版本徽标点击回调（Program 注入：弹出版本信息窗）；null=不响应点击。</summary>
+    internal Action? VersionClick;
+    /// <summary>版本徽标命中矩形（OnPaint 计算，点击/悬停命中测试用）。</summary>
+    private Rectangle _versionRect = Rectangle.Empty;
+    /// <summary>版本徽标是否悬停（手型光标 + 下划线）。</summary>
+    private bool _hoverVersion;
 
     // ---- 任务五：后台更新构建状态（UI 反馈） ----
     /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。
@@ -43,10 +56,11 @@ internal sealed class CustomTitleBar : Panel
     private static readonly Color LightHover = Color.FromArgb(229, 229, 229);
     private static readonly Color CloseHover = Color.FromArgb(232, 17, 35);
 
-    public CustomTitleBar(DshShellForm owner, bool dark)
+    public CustomTitleBar(Form owner, bool dark, bool closeOnly = false)
     {
         _owner = owner;
         _dark = dark;
+        _closeOnly = closeOnly;
         // [2026-08 回归修复] 双缓冲：构建进度高频 Invalidate 时旧实现每帧先擦背景再绘制
         // （WM_ERASEBKGND + OnPaint 两段），产生可见闪烁。三样式联用把绘制合并到内存位图。
         SetStyle(ControlStyles.UserPaint
@@ -62,9 +76,10 @@ internal sealed class CustomTitleBar : Panel
         MouseMove += OnMouseMove;
         MouseLeave += (_, _) =>
         {
-            if (_hoverMin || _hoverMax || _hoverClose)
+            if (_hoverMin || _hoverMax || _hoverClose || _hoverVersion)
             {
-                _hoverMin = _hoverMax = _hoverClose = false;
+                _hoverMin = _hoverMax = _hoverClose = _hoverVersion = false;
+                Cursor = Cursors.Default;
                 Invalidate();
             }
         };
@@ -86,11 +101,14 @@ internal sealed class CustomTitleBar : Panel
         Invalidate();
     }
 
-    private Rectangle BtnRect(int i) => new(Width - _btnWidth * (3 - i), 0, _btnWidth, Height);
+    /// <summary>窗口按钮个数：closeOnly 仅关闭按钮，否则最小化/最大化/关闭三键。</summary>
+    private int BtnCount => _closeOnly ? 1 : 3;
+
+    private Rectangle BtnRect(int i) => new(Width - _btnWidth * (BtnCount - i), 0, _btnWidth, Height);
 
     private int HitButton(int x)
     {
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < BtnCount; i++)
             if (BtnRect(i).Contains(x, Height / 2)) return i;
         return -1;
     }
@@ -104,6 +122,13 @@ internal sealed class CustomTitleBar : Panel
         }
         if (e.Button != MouseButtons.Left) return;
         if (HitButton(e.X) >= 0) return; // 按钮点击交给 MouseUp
+        // [2026-09 版本徽标] 点击徽标：不触发窗口拖拽，转交 VersionClick（版本信息窗）
+        if (VersionClick is not null && _dshVersion.Length > 0 && _versionRect.Contains(e.Location))
+        {
+            try { VersionClick(); }
+            catch (Exception ex) { Program.Trace($"version badge click handler failed: {ex.Message}"); }
+            return;
+        }
         // 拖拽移动窗口（系统级 HTCAPTION 拖拽）
         Program.ReleaseCapture();
         Program.SendMessage(_owner.Handle, (uint)Program.WM_NCLBUTTONDOWN, (IntPtr)Program.HTCAPTION, IntPtr.Zero);
@@ -114,6 +139,7 @@ internal sealed class CustomTitleBar : Panel
         if (e.Button != MouseButtons.Left) return;
         switch (HitButton(e.X))
         {
+            case 0 when _closeOnly: _owner.Close(); break; // 模态小窗：仅关闭
             case 0: _owner.WindowState = FormWindowState.Minimized; break;
             case 1:
                 _owner.WindowState = _owner.WindowState == FormWindowState.Maximized
@@ -136,11 +162,15 @@ internal sealed class CustomTitleBar : Panel
         var h1 = btn == 0;
         var h2 = btn == 1;
         var h3 = btn == 2;
-        if (h1 != _hoverMin || h2 != _hoverMax || h3 != _hoverClose)
+        // [2026-09 版本徽标] 悬停 → 手型光标（与按钮悬停同通道去重 Invalidate）
+        var overVersion = _dshVersion.Length > 0 && _versionRect.Contains(e.Location);
+        if (overVersion != _hoverVersion || h1 != _hoverMin || h2 != _hoverMax || h3 != _hoverClose)
         {
+            _hoverVersion = overVersion;
             _hoverMin = h1;
             _hoverMax = h2;
             _hoverClose = h3;
+            Cursor = overVersion ? Cursors.Hand : Cursors.Default;
             Invalidate();
         }
     }
@@ -173,31 +203,56 @@ internal sealed class CustomTitleBar : Panel
             g.DrawIcon(icon, new Rectangle((int)Math.Round(10 * _scale), (Height - iconSize) / 2, iconSize, iconSize));
         }
 
-        // 标题
+        // 标题 + dsh 版本徽标（2026-09：版本号紧跟标题右侧，正文样式可点击弹版本信息窗）
         var titleLeft = (int)Math.Round(34 * _scale);
-        TextRenderer.DrawText(g, _titleText, TitleFont,
-            new Rectangle(titleLeft, 0, Math.Max(0, Width - _btnWidth * 3 - titleLeft - 8), Height),
+        var rightBound = Width - _btnWidth * BtnCount - 8; // 按钮区左缘（预留 8px 间距）
+        var badgeText = ShellLogic.VersionInfoPolicy.ComposeTitleBarBadge(_dshVersion);
+        Rectangle titleRect;
+        if (badgeText.Length > 0)
+        {
+            // [2026-09 反馈] 徽标与标题同字重同色（正文样式，不加粗不变蓝），悬停仅下划线提示可点；
+            // 与标题间隙收窄到 4px，读作 "DeepSeek Harness v0.1.2-rc.1" 的自然文本流。
+            using var badgeFont = new Font(TitleFont.FontFamily, TitleFont.Size,
+                _hoverVersion ? FontStyle.Underline : FontStyle.Regular);
+            var badgeWidth = TextRenderer.MeasureText(badgeText, badgeFont).Width;
+            var gap = (int)Math.Round(4 * _scale);
+            // 徽标紧跟标题实测宽度之后；空间不足（窗口过窄/标题过长）时右对齐按钮区，
+            // 标题被 EndEllipsis 收窄——徽标位置稳定、始终可点。
+            var badgeX = titleLeft + TextRenderer.MeasureText(_titleText, TitleFont).Width + gap;
+            if (badgeX + badgeWidth > rightBound) badgeX = Math.Max(titleLeft, rightBound - badgeWidth);
+            _versionRect = new Rectangle(badgeX, 0, badgeWidth, Height);
+            titleRect = new Rectangle(titleLeft, 0, Math.Max(0, badgeX - titleLeft - gap), Height);
+            TextRenderer.DrawText(g, badgeText, badgeFont, _versionRect, textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+        }
+        else
+        {
+            _versionRect = Rectangle.Empty;
+            titleRect = new Rectangle(titleLeft, 0, Math.Max(0, rightBound - titleLeft), Height);
+        }
+        TextRenderer.DrawText(g, _titleText, TitleFont, titleRect,
             textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
 
         // 窗口按钮：用 Segoe MDL2 字形（最小化/最大化/还原/关闭），清晰且与系统图标一致
         using (var btnFont = new Font("Segoe MDL2 Assets", (float)Math.Round(11 * _scale), FontStyle.Regular, GraphicsUnit.Pixel))
         {
-            for (var i = 0; i < 3; i++)
+            for (var i = 0; i < BtnCount; i++)
             {
                 var r = BtnRect(i);
-                var hover = (i == 0 && _hoverMin) || (i == 1 && _hoverMax) || (i == 2 && _hoverClose);
+                var isClose = _closeOnly || i == 2;
+                var hover = isClose ? _hoverClose : (i == 0 ? _hoverMin : _hoverMax);
                 if (hover)
                 {
-                    using var hb = new SolidBrush(i == 2 ? CloseHover : (_dark ? DarkHover : LightHover));
+                    using var hb = new SolidBrush(isClose ? CloseHover : (_dark ? DarkHover : LightHover));
                     g.FillRectangle(hb, r);
                 }
-                var glyph = i switch
+                var glyph = _closeOnly ? '\uE8BB' : i switch
                 {
                     0 => '\uE921', // Minimize
                     1 => _owner.WindowState == FormWindowState.Maximized ? '\uE923' : '\uE922', // Restore / Maximize
                     _ => '\uE8BB', // ChromeClose
                 };
-                var glyphColor = hover && i == 2 && _dark ? Color.White : textColor;
+                var glyphColor = hover && isClose && _dark ? Color.White : textColor;
                 TextRenderer.DrawText(g, glyph.ToString(), btnFont, r, glyphColor,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
@@ -244,7 +299,7 @@ internal sealed class CustomTitleBar : Panel
                 var statusText = " " + _buildProgressText;
                 var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
                 TextRenderer.DrawText(g, statusText, statusFont,
-                    new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                    new Rectangle(Width - _btnWidth * BtnCount - statusWidth - 8, 0, statusWidth, Height),
                     _dark ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0),
                     TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }
@@ -267,7 +322,7 @@ internal sealed class CustomTitleBar : Panel
                 var statusText = " " + _buildProgressText;
                 var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
                 TextRenderer.DrawText(g, statusText, statusFont,
-                    new Rectangle(Width - _btnWidth * 3 - statusWidth - 8, 0, statusWidth, Height),
+                    new Rectangle(Width - _btnWidth * BtnCount - statusWidth - 8, 0, statusWidth, Height),
                     terminalColor,
                     TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
             }

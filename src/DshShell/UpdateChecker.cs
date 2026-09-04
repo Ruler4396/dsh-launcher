@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
@@ -17,14 +18,88 @@ public static class UpdateChecker
     public const string LauncherRepo = "Ruler4396/dsh-launcher";
     public const string DshNpmPackage = "@deepseek-ai/dsh";
 
-    /// <summary>当前壳版本：取自程序集信息版本（发布时由构建注入），非法时回退 null。</summary>
-    public static readonly string? CurrentLauncherVersion =
-        typeof(UpdateChecker).Assembly
+    /// <summary>launcher 最新版下载页（版本信息弹窗 / 安全更新提示共用，单一事实源）。
+    /// [2026-09] 此前两处（ShowPortableUpdateDialog）硬编码同一 URL 字符串，统一收口于此。</summary>
+    public const string LauncherLatestReleaseUrl = "https://github.com/" + LauncherRepo + "/releases/latest";
+
+    /// <summary>
+    /// 当前壳版本：发布构建由 CI 注入真实版本（AssemblyInformationalVersion ≥ 0.x）；
+    /// **本地/开发构建 .NET SDK 未设 Version 时默认 1.0.0**（本仓库版本线 0.x，1.0.0 必为默认值）——
+    /// 若显示 1.0.0 会误导"当前版本已是最新/版本号异常"（2026-09 用户反馈），故回退
+    /// 读取 git 最近 tag（有界探测，静默失败保持 null → 展示"未知"）。非法时回退 null。
+    /// </summary>
+    public static readonly string? CurrentLauncherVersion = ResolveLauncherVersion();
+
+    /// <summary>剥离 AssemblyInformationalVersion 的 +metadata 尾段；SDK 默认 1.0.0 → null（触发 git 回退）。</summary>
+    internal static string? StripDevDefaultVersion(string? informationalVersion)
+    {
+        var v = informationalVersion?.Split('+')[0];
+        if (string.IsNullOrWhiteSpace(v) || string.Equals(v.Trim(), "1.0.0", StringComparison.Ordinal))
+            return null;
+        return v.Trim();
+    }
+
+    private static string? ResolveLauncherVersion()
+    {
+        var info = typeof(UpdateChecker).Assembly
             .GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false)
             .Cast<AssemblyInformationalVersionAttribute>()
-            .FirstOrDefault()?
-            .InformationalVersion
-            ?.Split('+')[0];
+            .FirstOrDefault()?.InformationalVersion;
+        var released = StripDevDefaultVersion(info);
+        if (released is not null) return released; // 发布构建（CI 注入真实版本号）
+        return ProbeGitDescribeVersion();          // 开发构建：最近 git tag（如 v0.4.3 → 0.4.3）
+    }
+
+    /// <summary>
+    /// 从可执行目录向上找仓库根（含 .git）后执行 git describe --tags --abbrev=0（最近 tag，去 v 前缀）。
+    /// 进程三必须合规：stdout/stderr 异步排空 + 限时等待 + 超时 Kill(entireProcessTree)（同 DshDiscovery 版本探测）。
+    /// 仅开发 checkout（无 .git 的安装版根本不会走到这里）调用；失败静默返回 null。
+    /// </summary>
+    private static string? ProbeGitDescribeVersion()
+    {
+        try
+        {
+            var repoRoot = FindRepoRoot();
+            if (repoRoot is null) return null;
+            var psi = new ProcessStartInfo("git", "describe --tags --abbrev=0")
+            {
+                WorkingDirectory = repoRoot,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            var outputTask = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(4000))
+            {
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(2000); } catch { /* 尽力回收 */ }
+                Logger.Warn("git describe probe timed out; launcher version stays unknown");
+                return null;
+            }
+            var tag = outputTask.Result.Trim(); // 进程已退出 → 管道已关闭，任务必已完成
+            return string.IsNullOrWhiteSpace(tag) ? null : tag.TrimStart('v', 'V');
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"git describe probe failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var i = 0; i < 10 && dir is not null; i++, dir = dir.Parent)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
+        }
+        return null;
+    }
 
     /// <summary>拉取本项目 GitHub Releases 最新版本号（去掉 v 前缀）；失败返回 null。</summary>
     public static async Task<string?> FetchLatestLauncherVersionAsync(HttpClient http)
