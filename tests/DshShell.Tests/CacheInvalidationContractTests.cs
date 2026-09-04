@@ -35,6 +35,20 @@ public class CacheInvalidationContractTests
     [InlineData("1.0.1", "1.0.0", true)]        // 降级（内容同样可能变化，不能因方向放行）
     [InlineData("0.1.1-rc.2", "0.1.1", true)]   // 预发布 → 正式（语义不同）
     [InlineData("0.1.0-rc.10", "0.1.0-rc.9", true)] // 预发布数值比较（F1 回归场景：rc.10 > rc.9）
+    [InlineData("0.1.2-rc.1", "0.0.0-dev", true)]   // 差异版本（dev 快照）也清：内容可能变化
     public void ShouldInvalidate_DecidesBySemanticVersionDifference(string? lastSeen, string? current, bool expected)
+        => Assert.Equal(expected, ShellLogic.CacheInvalidationPolicy.ShouldInvalidate(lastSeen, current));
+
+    [Theory]
+    // ---- K6：不可信/不可解析的基线或当前版本（账本被写坏/被篡改时）→ **绝不清**
+    //      （宁可漏清一次，绝不在坏基线上行动；也验证任何输入都不会进入 Shell/路径语义）----
+    [InlineData("garbage", "1.0.0", false)]          // 纯垃圾 lastSeen（硬化后不得误清）
+    [InlineData("1.0.0", "garbage", false)]          // 当前版本不可解析 → 不清
+    [InlineData("1.0.0\ngarbage", "1.0.1", false)]   // 内嵌换行 → 不清
+    [InlineData("..", "..", false)]                  // 路径类垃圾 → 不清
+    [InlineData(";rm -rf /", "1.0.0", false)]        // 注入式字符串 → 不清（且永不进入 Shell）
+    [InlineData("v", "1.0.0", false)]                // 只有前缀无可解析编号 → 不清
+    [InlineData("1.0.0", ";rm -rf /", false)]        // 当前版本注入式 → 不清
+    public void ShouldInvalidate_UnplausibleVersion_NeverClears(string? lastSeen, string? current, bool expected)
         => Assert.Equal(expected, ShellLogic.CacheInvalidationPolicy.ShouldInvalidate(lastSeen, current));
 }

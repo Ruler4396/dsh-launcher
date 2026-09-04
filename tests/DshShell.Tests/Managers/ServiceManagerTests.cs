@@ -87,13 +87,15 @@ public class ServiceManagerTests
         Assert.Equal(ShellLogic.ServicePortState.Foreign, sm.ProbePort(3080, "http://127.0.0.1:3080"));
     }
 
-    // ---------------- 任务一：僵尸进程树清理（taskkill /T /F 含 cmd/npx 外壳） ----------------
+    // ---------------- 任务一：僵尸进程树清理（taskkill /T /F，仅杀端口归属 node） ----------------
 
     [Fact]
     public async Task ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree()
     {
         // 回归：Mock PortOpen=true + HTTP 抛超时 → ProbePort 判定 Zombie；
-        // KillZombieTree 触发 taskkill /T /F（杀 node 及其祖先 cmd/npx 外壳），最终端口释放。
+        // KillZombieTree 触发 taskkill /T /F（杀端口归属 node 及其子进程，最终端口释放）。
+        // [2026-09 杀伤审计加固] 祖先链（cmd/npx 外壳）不再参与杀伤——ADR-024 直启后
+        // node 的父进程是启动器自身/用户终端，旧外壳中间层已不存在，杀祖先有自杀/误杀风险。
         var killed = new List<int>();
         var portOpen = true;
         var sm = new ServiceManager(
@@ -102,18 +104,18 @@ public class ServiceManagerTests
             pidLookup: _ => 123,
             identityCheck: _ => true,
             killProcessTree: pid => { killed.Add(pid); portOpen = false; return true; },
-            ancestors: _ => new List<int> { 456, 457 }, // cmd/npx 外壳链
+            ancestors: _ => new List<int> { 456, 457 }, // 旧"cmd/npx 外壳"链（加固后绝不触碰）
             portReleaseTimeout: TimeSpan.FromMilliseconds(300));
 
         // ① 三重验证判定僵尸
         Assert.Equal(ShellLogic.ServicePortState.Zombie, sm.ProbePort(3080, "http://127.0.0.1:3080"));
 
-        // ② 清理触发：taskkill /T /F 语义（杀 node + 祖先外壳）
+        // ② 清理触发：taskkill /T /F 语义——只杀端口归属进程树，祖先外壳绝不沾手
         Assert.True(sm.KillZombieTree(3080));
-        Assert.Contains(123, killed);          // node（监听端口的服务进程）
-        Assert.Contains(456, killed);          // cmd/npx 外壳
-        Assert.Contains(457, killed);
-        Assert.True(portOpen is false);        // 端口最终释放
+        Assert.Equal(new[] { 123 }, killed); // node（监听端口的服务进程）……
+        Assert.DoesNotContain(456, killed);  // ……但祖先（外壳/启动器/终端）一律不动
+        Assert.DoesNotContain(457, killed);
+        Assert.False(portOpen);              // 端口最终释放
     }
 
     [Fact]
