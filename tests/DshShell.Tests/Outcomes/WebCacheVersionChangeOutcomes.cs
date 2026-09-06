@@ -101,19 +101,23 @@ public class WebCacheVersionChangeOutcomes
 
             // ---- 首次导航 + 写入四类"用户数据"证据 ----
             await NavigateAndWaitAsync(web, page);
+            // 回源计数用"相对"语义：CI runner（2 核高负载）上 WebView2 可能因资源重试/预取
+            // 使 /big.js 回源 >1——铁证是"二次导航不回源"，而非"恰好一次"（issue #25 CI 加固）。
+            var firstNavRequests = server.BigJsRequests;
+            Assert.True(firstNavRequests >= 1, $"前置：首导航必须回源 /big.js（实际 {firstNavRequests} 次）");
             Assert.True((await JsAsync(web, $"localStorage.setItem('{KeeperKey}','{KeeperValue}'); localStorage.getItem('{KeeperKey}')")).Contains(KeeperValue),
                 "前置：localStorage 可写");
             Assert.True((await JsAsync(web, "document.cookie")).Contains(CookieName),
                 "前置：Cookie 已由服务端写入");
-            var idbPut = await JsPollAsync(web, IdbPutStart, TimeSpan.FromSeconds(15));
+            var idbPut = await JsPollAsync(web, IdbPutStart, TimeSpan.FromSeconds(30));
             Assert.True(idbPut == "ok", "前置：IndexedDB 可写，实际=" + idbPut);
-            var cachePut = await JsPollAsync(web, CachePutStart, TimeSpan.FromSeconds(15));
+            var cachePut = await JsPollAsync(web, CachePutStart, TimeSpan.FromSeconds(30));
             Assert.True(cachePut == "ok", "前置：CacheStorage 可写，实际=" + cachePut);
 
             // ---- 二次导航 + 落盘等待：证明 max-age 命中缓存（/big.js 不回源）----
             await NavigateAndWaitAsync(web, page);
-            Assert.Equal(1, server.BigJsRequests);
-            await WaitUntilAsync(() => DirBytes(cacheDir) > 128 * 1024, TimeSpan.FromSeconds(15));
+            Assert.Equal(firstNavRequests, server.BigJsRequests); // 铁证：二次导航命中缓存，计数零增长
+            await WaitUntilAsync(() => DirBytes(cacheDir) > 128 * 1024, TimeSpan.FromSeconds(30));
             long cacheBefore = DirBytes(cacheDir);
             Assert.True(cacheBefore > 128 * 1024, $"前置条件：磁盘缓存应有存量（实际 {cacheBefore} B）");
             long codeBefore = DirBytes(codeCacheDir);
@@ -127,7 +131,7 @@ public class WebCacheVersionChangeOutcomes
             WebCacheVersionLedger.Write(current);
 
             // I1a：Cache 目录缩水（引擎删除条目）
-            await WaitUntilAsync(() => DirBytes(cacheDir) < cacheBefore, TimeSpan.FromSeconds(20));
+            await WaitUntilAsync(() => DirBytes(cacheDir) < cacheBefore, TimeSpan.FromSeconds(30));
             Assert.True(DirBytes(cacheDir) < cacheBefore, "缓存条目未删除（目录未缩水）");
 
             // I2：四类用户数据全部完好（页面层证据 + 文件层证据）
@@ -135,9 +139,9 @@ public class WebCacheVersionChangeOutcomes
                 "I2a localStorage 必须完好");
             Assert.True((await JsAsync(web, "document.cookie")).Contains(CookieName),
                 "I2b Cookie 必须完好");
-            var idbGet = await JsPollAsync(web, IdbGetStart, TimeSpan.FromSeconds(15));
+            var idbGet = await JsPollAsync(web, IdbGetStart, TimeSpan.FromSeconds(30));
             Assert.True(idbGet == IdbValue, $"I2c IndexedDB 必须完好，实际={idbGet}");
-            var cacheGet = await JsPollAsync(web, CacheGetStart, TimeSpan.FromSeconds(15));
+            var cacheGet = await JsPollAsync(web, CacheGetStart, TimeSpan.FromSeconds(30));
             Assert.True(cacheGet == CacheBody, $"I2d CacheStorage(Service Worker 缓存)必须完好，实际={cacheGet}");
             Assert.True(DirBytes(lsDir) > 0, "I2e Local Storage LevelDB 目录不得被清空");
             Assert.True(DirBytes(Path.Combine(profileDir, "Service Worker")) >= csDirBefore,
@@ -147,9 +151,10 @@ public class WebCacheVersionChangeOutcomes
             Assert.True(DirBytes(codeCacheDir) >= codeBefore,
                 $"I3 Code Cache 不应被清理触碰: before={codeBefore} after={DirBytes(codeCacheDir)}");
 
-            // I1b：行为级铁证——同 URL 再次导航必然回源
+            // I1b：行为级铁证——同 URL 再次导航必然回源（清理后计数 = 首航 +1，相对断言吸收环境重试）
             await NavigateAndWaitAsync(web, page);
-            Assert.Equal(2, server.BigJsRequests);
+            Assert.True(server.BigJsRequests >= firstNavRequests + 1,
+                $"I1b 清理后再次导航必须回源：before={firstNavRequests} after={server.BigJsRequests}");
 
             // I4a：账本更新 + 同版本不再清
             Assert.Equal("1.0.1", WebCacheVersionLedger.Read());
@@ -159,7 +164,7 @@ public class WebCacheVersionChangeOutcomes
             await WebViewManager.ClearDiskCacheAsync(web);
             Assert.True((await JsAsync(web, $"localStorage.getItem('{KeeperKey}')")).Contains(KeeperValue),
                 "I4b 二次清理后 localStorage 仍必须完好");
-            var idbGet2 = await JsPollAsync(web, IdbGetStart, TimeSpan.FromSeconds(15));
+            var idbGet2 = await JsPollAsync(web, IdbGetStart, TimeSpan.FromSeconds(30));
             Assert.True(idbGet2 == IdbValue, $"I4b 二次清理后 IndexedDB 仍须完好，实际={idbGet2}");
         }
         finally
