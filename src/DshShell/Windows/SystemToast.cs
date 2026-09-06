@@ -207,6 +207,22 @@ internal static class SystemToast
             Logger.Warn("system toast forced-failed (DSH_TEST_FORCE_TOAST_FAIL)");
             return false;
         }
+        // [issue #25] Win10 WPN 崩溃护栏：DSH_TEST_FORCE_TOAST=1 可强制越过（Win11/CI 冒烟
+        // 真 WPN 通路，与 FORCE_TOAST_FAIL 对称）；否则 Win10（build<22000）一律降级——特定
+        // WPN 版本（wpnapps.dll 如 10.0.19041.7663）在 toast 显示路径 native AV（0xc0000005）
+        // 击穿宿主进程，托管层无法拦截；调用方（NotifyPending 等）已有托盘气泡→标题驻留
+        // 回退链，此处直接 return false 进入该链（决策纯函数见 ShellLogic.ToastPolicy）。
+        if (!string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_FORCE_TOAST"), "1",
+                StringComparison.OrdinalIgnoreCase)
+            && !ShellLogic.ToastPolicy.ShouldUseSystemToast(
+                Environment.OSVersion.Version.Major,
+                Environment.OSVersion.Version.Minor,
+                Environment.OSVersion.Version.Build))
+        {
+            Logger.Warn("system toast suppressed on Windows 10 (WPN crash guard, issue #25); " +
+                "caller fallback chain (tray balloon / title dwell) will take over");
+            return false;
+        }
         try
         {
             EnsureAumidRegistered();

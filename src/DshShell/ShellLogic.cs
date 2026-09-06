@@ -135,13 +135,29 @@ public static class ShellLogic
     /// <summary>WebView2 权限策略：自动放行、弹窗分类、安全打开判定。</summary>
     public static class WebViewPolicy
     {
-        /// <summary>权限策略：自动放行的权限项（插件/DSH 依赖），其余保持默认拒绝。</summary>
-        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind) =>
-            kind is CoreWebView2PermissionKind.Notifications
+        /// <summary>
+        /// 权限策略：自动放行的权限项（插件/DSH 依赖），其余保持默认拒绝。
+        /// [issue #25] Win10（build &lt; 22000）**不自动放行 Notifications**：Web 通知
+        /// 经 WebView2 由宿主进程经 WPN（wpnapps.dll）显示系统 toast，特定 WPN 版本
+        /// （如 10.0.19041.7663）在未打包应用路径上 native AV 击穿宿主（托管层无法
+        /// 拦截）；WebView2 无 API 单独禁用通知，只能不授权限（页面侧
+        /// Notification.permission=denied 可感知并自行降级）。Win11 保持放行。
+        /// 纯函数（osBuild 注入可契约测试）。</summary>
+        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind, int osBuild)
+        {
+            if (kind == CoreWebView2PermissionKind.Notifications && osBuild < 22000)
+                return false;
+            return kind is CoreWebView2PermissionKind.Notifications
                 or CoreWebView2PermissionKind.ClipboardRead
                 or CoreWebView2PermissionKind.Autoplay
                 or CoreWebView2PermissionKind.MultipleAutomaticDownloads
                 or CoreWebView2PermissionKind.PersistentStorage;
+        }
+
+        /// <summary>生产入口：真实 OS build（.NET 5+ 的 Environment.OSVersion 返回真实版本，
+        /// 不受 GetVersionEx 兼容层影响）。</summary>
+        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind)
+            => IsAutoGrantedPermission(kind, Environment.OSVersion.Version.Build);
 
         /// <summary>弹窗 URL 分类：外部链接 / 同源弹窗 / 保持默认。</summary>
         internal static PopupTarget ClassifyPopup(string? rawUri)
@@ -2295,5 +2311,21 @@ public static class ShellLogic
                  + $"<text id=\"2\">{esc(body ?? "")}</text>"
                  + "</binding></visual></toast>";
         }
+
+        /// <summary>
+        /// [issue #25] Win10 WPN 崩溃护栏：系统 Toast 是否可用。
+        /// 事故：Win10 上特定 WPN 版本（wpnapps.dll 10.0.19041.7663，2024-2025 更新推送）
+        /// 在未打包应用的 toast 显示路径上 native AV（0xc0000005，偏移固定 0x60c3），
+        /// 击穿宿主 DshWeb.exe——托管层无法拦截 native 崩溃，进程直接死亡进入守护自愈循环。
+        /// 本机（wpnapps 10.0.19041.4522）与 Win11 均不触发，无法在沙盒复现；故以
+        /// "Win10 一律放弃系统 Toast、走调用方既有回退链（托盘气泡→标题驻留）"止损（双保险
+        /// 的另一半见 WebViewPolicy 的 Notifications 权限收紧）。
+        /// Win11（build ≥ 22000）的 WPN 实现不受影响，保持系统 Toast。
+        /// 纯函数（OS 三要素注入可契约测试）；生产端用 Environment.OSVersion 真实值。
+        /// 测试钩子 DSH_TEST_FORCE_TOAST=1（SystemToast 内优先处理）可强制越过本护栏，
+        /// 供 Win11/CI 冒烟真实 WPN 通路（与 DSH_TEST_FORCE_TOAST_FAIL 对称）。
+        /// </summary>
+        public static bool ShouldUseSystemToast(int osMajor, int osMinor, int osBuild)
+            => osMajor == 10 && osBuild >= 22000;
     }
 }
