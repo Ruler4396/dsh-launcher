@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+
+- **Win10 WPN 崩溃护栏（issue #25）**：特定 WPN 版本（`wpnapps.dll 10.0.19041.7663`
+  等 2024-2025 更新推送组件）在 Win10 上显示系统 Toast 时原生崩溃
+  （Application Error 1000：错误模块 `wpnapps.dll`、异常 `0xc0000005`、偏移固定
+  `0x60c3`），击穿宿主 DshWeb.exe 并进入"守护拉起 → 约 30 秒再崩"自愈循环——托管层
+  无法拦截 native 崩溃。双保险止损：
+  - `SystemToast` 在 Win10（build < 22000）放弃系统 Toast：决策下沉为纯函数
+    `ShellLogic.ToastPolicy.ShouldUseSystemToast`，命中即 Warn 留痕并返回 false，
+    调用方（更新/下载等通知）走既有 **托盘气泡 → 标题驻留** 回退链；Win11 不受影响。
+  - `WebViewPolicy` 在 Win10 不再自动放行 **Notifications** 权限（堵 WebView2
+    web 通知 → WPN 的宿主内 toast 路径；页面侧 `Notification.permission=denied`
+    可感知自行降级）。
+  - 测试钩子 `DSH_TEST_FORCE_TOAST=1` 可强制越过护栏（Win11/CI 冒烟真实 WPN 通路，
+    与既有 `DSH_TEST_FORCE_TOAST_FAIL` 对称）。
+  - 说明：本机（wpnapps.dll `10.0.19041.4522`）三条 WPN 通路（更新 Toast 含点击桥 /
+    WebView2 通知 / 自检）均真实走通且不崩，无法在沙盒复现——差异锁定在 WPN 组件
+    版本；此修复为防御性止损，同时建议向用户索取崩溃转储以在后续版本做行级根治。
+
+### 测试
+
+- 新增 `Regression_Issue25_WpnToastGuard.RealOs`（零 Mock）：真实拉起 DshWeb.exe
+  （隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主），Win10 断言
+  护栏留痕 + `toast self-test: shown=False` + 无任何 `toast step` WPN 互操轨迹 +
+  进程存活满观察窗；Win11 断言放行 + 存活。
+- `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 升级为 `(kind, osBuild)`
+  双参契约（Win10 不自动放行 Notifications / Win11 保持放行等 17 例）；
+  新增 `ToastPolicy_ShouldUseSystemToast` 7 例（Win10/Win11/Win7/未知 build 保守拒绝）。
+
 ## [0.4.5] - 2026-09-04
 
 > **重要更新（含安全加固，SECURITY UPDATE）**：自上版 v0.4.3 以来的全部修复与功能**一次交付**，建议所有旧版本用户更新——
