@@ -369,6 +369,27 @@ WebView 导航目标，`Target.Port`/就绪探测/健康监控仍用裸 `Target.
 
 ---
 
+## 10. 2026-09-09 [issue #26]：服务就绪前进程退出 → 180s 盲等 + 误导性 E2002
+
+用户实测形态：MSI 0.4.5 × 全局 dsh（`dsh web` 命令行可正常启动），启动器一直停在
+"正在等待 dsh 服务就绪…"，最终弹 E2002"启动超时：可能是首次下载较慢/网络问题"。根因链（§2 R 节点）：
+壳拉起 dsh 服务进程 → 进程**就绪前退出**（EADDRINUSE / 引擎内部 TypeError / 入口错误等）→
+PollReadiness 只观测 TCP/HTTP + 启动错误标志（`StartupErrorMarkers` 词表，不含 EADDRINUSE 等
+通用 node 崩溃形态）→ 日志判定盲、进程退出状态被无视（统一日志里的
+`service process exited (code=N)` 就躺在那里）→ 盲等完整预算（180s/360s）→ E2002 误导文案。
+
+| # | 节点（§2 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点15** | PollReadiness 轮询循环（§2 R → S{"就绪?"}） | 就绪判定只有 TCP/HTTP/日志三输入，**进程退出观测缺失**：`ServiceManager` 已追踪本会话拉起的进程对象（TrackServiceProcess）且 `Exited` 事件已把退出码落统一日志，但该观测从不参与就绪裁决 | `ServiceManager` 静态追踪器扩展"已退出"标志 + 退出码（`TrackedServiceExitCodeOrMinusOne`）；`PollReadiness` 新增可选退出探针（缺省读追踪器）：TCP/HTTP 未就绪且观测到进程已退出 → 立即返回第五态 `"service-exited"`（不再盲等预算）；组合根 `HandleStartupFailure` 按 `MapVerdictErrorCode` 映射 **E2010**（新码：就绪前退出），弹窗展示真实退出码 + 进程输出首条异常线索 + 日志尾部；清理分支与 timeout/logerror 同集 | `ServiceReadinessContractTests`（裁决串/退出码语义/裁决→错误码映射）、`PollReadinessTests.ServiceProcessExited*`（Fake 探针 + 虚时钟）、`LauncherAppScenarioTests.ServiceExitedBeforeReady_*`（Headless：WaitResult=service-exited + 超时清理触发）、`Regression_Issue26_ServiceExitBeforeReady.RealOs`（零 Mock 真实 node 秒退，断言返回 service-exited 而非 timeout） |
+
+**决策权衡**：退出观测只在"本次会话 Start 拉起的进程"上生效（追踪器替换/复位隔离旧会话），
+且就绪（TCP+HTTP）优先于退出观测——服务健康时进程退出观测不适用；logerror 宽限语义不变
+（进程已退出是更强的失败证据，无需再等宽限）。**身份一致性检查**：修复点15 不触碰发现层/身份
+比较（DshRuntimeIdentity 语义不变），只扩展 `ServiceManager` 进程追踪器与 PollReadiness 裁决输入，
+服务启动命令仍由 Identity 经 BuildArgs 唯一拼装（ADR-024 不变）。
+
+---
+
 ## 如何使用本地图
 
 ### 修 Bug 流程

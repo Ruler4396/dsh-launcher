@@ -87,6 +87,10 @@ public sealed class FakeService : IServiceManager
     public int StartCalls { get; private set; }
     public (DshRuntimeIdentity Identity, int Port, string? LogPath)? LastStartArgs { get; private set; }
 
+    /// <summary>就绪裁定覆盖（issue #26 场景）：非空时 PollReadiness 直接返回该值
+    /// （如 ShellLogic.ServiceReadiness.ServiceExitedVerdict），用于 Headless 断言快速失败路径。</summary>
+    public string? ReadinessVerdict { get; init; }
+
     public bool NeedsStart(int port) => PortState == ShellLogic.ServicePortState.Closed;
 
     public bool Start(DshRuntimeIdentity identity, int port, string? logPath = null)
@@ -97,8 +101,9 @@ public sealed class FakeService : IServiceManager
     }
 
     public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode,
-        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15)
-        => Ready ? "ready" : "timeout";
+        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15,
+        Func<int>? serviceExitCodeProbe = null)
+        => ReadinessVerdict ?? (Ready ? "ready" : "timeout");
 
     public Task<bool> WaitReadyAsync(int port, TimeSpan timeout, CancellationToken ct = default)
         => Task.FromResult(Ready);

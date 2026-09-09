@@ -329,6 +329,31 @@ public static class ShellLogic
         /// </summary>
         internal static int GetPollBudgetSeconds(bool networkDownloadFallback)
             => networkDownloadFallback ? NetworkFallbackPollBudgetSeconds : DefaultPollBudgetSeconds;
+
+        /// <summary>服务进程在就绪前已退出的就绪裁决（issue #26 新增第五态；其余：ready/logerror/timeout/canceled）。</summary>
+        internal const string ServiceExitedVerdict = "service-exited";
+
+        /// <summary>
+        /// "服务进程就绪前退出"是否应判为启动失败（issue #26）。
+        /// dsh web 是长驻服务：壳拉起后、HTTP 就绪前进程退出 = 启动失败（EADDRINUSE / 崩溃 /
+        /// 入口错误等），应立即快速失败，而不是盲等完整轮询预算。
+        /// 约定：exitCodeOrMinusOne &lt; 0 = 未观察到退出（无进程被追踪或进程仍存活）；&gt;= 0 = 已观察到退出。
+        /// </summary>
+        internal static bool IsServiceExitFailFast(int exitCodeOrMinusOne) => exitCodeOrMinusOne >= 0;
+
+        /// <summary>
+        /// 就绪裁决 → 用户可见错误码（issue #26 新增 service-exited → E2010）。
+        /// 与 <see cref="LauncherApp.WaitResult"/> 的值域一一对应；Program.HandleStartupFailure 委托本函数，
+        /// 避免组合根重复 switch 漂移（logerror→E2003 / timeout→E2002 / canceled→E2006 / service-exited→E2010 / 未知→E9001）。
+        /// </summary>
+        internal static string MapVerdictErrorCode(string? waitResult) => waitResult switch
+        {
+            "logerror" => ErrorCodes.E2003,
+            "timeout" => ErrorCodes.E2002,
+            "canceled" => ErrorCodes.E2006,
+            ServiceExitedVerdict => ErrorCodes.E2010,
+            _ => ErrorCodes.E9001,
+        };
     }
 
     /// <summary>

@@ -22,9 +22,27 @@
   - 说明：本机（wpnapps.dll `10.0.19041.4522`）三条 WPN 通路（更新 Toast 含点击桥 /
     WebView2 通知 / 自检）均真实走通且不崩，无法在沙盒复现——差异锁定在 WPN 组件
     版本；此修复为防御性止损，同时建议向用户索取崩溃转储以在后续版本做行级根治。
+- **就绪前服务进程退出的盲等（issue #26）**：壳拉起 dsh 服务后若进程在 HTTP 就绪前退出
+  （EADDRINUSE / 引擎内部崩溃 / 入口错误等），此前 PollReadiness 只观测 TCP/HTTP 与启动错误
+  标志词表——退出输出不含词表（如 `EADDRINUSE`）时日志判定盲，只能**盲等完整轮询预算**
+  （180s/360s），用户全程只见"正在等待 dsh 服务就绪…"，最终被误报为"启动超时：首次下载较慢/
+  网络问题"（E2002）而真实原因（`service process exited (code=N)` + 首行输出）就在日志里。
+  修复：`ServiceManager` 静态进程追踪器扩展"已退出"观测（`TrackedServiceExitCodeOrMinusOne`），
+  `PollReadiness` 就绪前观测到进程退出即返回第五态 `"service-exited"` 快速失败；组合根映射
+  新错误码 **E2010**（`MapVerdictErrorCode` 纯函数 + 契约测试），弹窗真实展示退出码、进程输出
+  首条异常线索与日志尾部，清理分支与 timeout/logerror 一致。就绪（TCP+HTTP）优先于退出观测，
+  服务健康时不受影响；追踪器随新进程替换复位，旧会话退出不污染新会话判定。
 
 ### 测试
 
+- 新增 `ServiceReadinessContractTests`（issue #26 裁决串精确值/退出码语义 6 例/裁决→错误码
+  映射含 E2010、null/未知回退 E9001）；`PollReadinessTests` 新增 `ServiceProcessExited*` 四例
+  （快速失败/exit 0 同样失败/进程存活仍 timeout/就绪短路优先于退出观测，全部虚时钟毫秒级）。
+- 新增 `LauncherAppScenarioTests.ServiceExitedBeforeReady_FailsFast_...`（Headless：WaitResult=
+  `service-exited` + ShuttingDown + 超时清理回调端口透传）。
+- 新增 `Regression_Issue26_ServiceExitBeforeReady.RealOs`（零 Mock）：真实 node 子进程经
+  `ServiceManager.Start` 全链路拉起，输出不含启动错误标志后秒退（code=7），断言 PollReadiness
+  经**生产默认退出探针**返回 `service-exited`（修复前返回 timeout 必红）。
 - 新增 `Regression_Issue25_WpnToastGuard.RealOs`（零 Mock）：真实拉起 DshWeb.exe
   （隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主），Win10 断言
   护栏留痕 + `toast self-test: shown=False` + 无任何 `toast step` WPN 互操轨迹 +

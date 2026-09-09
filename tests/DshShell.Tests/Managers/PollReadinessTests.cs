@@ -1,3 +1,4 @@
+using DshWeb;
 using DshWeb.Managers;
 using Xunit;
 
@@ -30,20 +31,27 @@ public sealed class PollReadinessTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { /* 清理失败忽略 */ }
     }
 
-    /// <summary>构造被测对象：tcp/http 探针全 Fake（不经真实网络）。</summary>
-    private static ServiceManager Create(bool tcpOpen = false, bool httpReady = false)
+    /// <summary>构造被测对象：tcp/http 探针全 Fake（不经真实网络）。
+    /// 退出探针默认注入 -1（未观察到退出），避免静态追踪器被其他真实进程测试污染
+    /// （issue #26 快速失败观测的确定性注入）。</summary>
+    private static ServiceManager Create(bool tcpOpen = false, bool httpReady = false, int exitCode = -1)
         => new(
             tcpProbe: (_, _) => tcpOpen,
             httpProbe: (_, _) => httpReady,
             pollDelay: TimeSpan.FromMilliseconds(1));
+
+    /// <summary>就绪轮询统一入口：注入延迟虚时钟 + 确定性退出探针。</summary>
+    private static string Poll(ServiceManager svc, string logPath, Action<TimeSpan> delay, int exitCode = -1)
+        => svc.PollReadiness(CancellationToken.None, 3080, "http://127.0.0.1:3080", logPath,
+            e2eMode: true, delay: delay, serviceExitCodeProbe: () => exitCode);
 
     [Fact]
     public void ReadyShortCircuits_BeforeAnyLogJudgment()
     {
         File.WriteAllText(_logPath, "npm ERR! poisoned stale line\n"); // 历史污染在场
         var svc = Create(tcpOpen: true, httpReady: true);
-        var result = svc.PollReadiness(CancellationToken.None, 3080, "http://127.0.0.1:3080", _logPath,
-            e2eMode: true, delay: _ => { });
+        // 就绪短路优先于一切判定（含 issue #26 退出观测）：服务健康时进程退出观测不适用
+        var result = Poll(svc, _logPath, _ => { }, exitCode: 7);
         Assert.Equal("ready", result);
     }
 
@@ -55,8 +63,7 @@ public sealed class PollReadinessTests : IDisposable
         File.WriteAllText(_logPath, "[12:00:00.000] [dsh] [warn] upstream retry: ECONNRESET\n" +
                                     "[12:00:01.000] [dsh] npm ERR! code EACCES\n");
         var svc = Create(tcpOpen: false, httpReady: false);
-        var result = svc.PollReadiness(CancellationToken.None, 3080, "http://127.0.0.1:3080", _logPath,
-            e2eMode: true, delay: _ => { });
+        var result = Poll(svc, _logPath, _ => { });
         Assert.Equal("timeout", result);
     }
 
@@ -68,8 +75,7 @@ public sealed class PollReadinessTests : IDisposable
             "{\"ts\":\"2026-08-28T10:00:00Z\",\"level\":\"Error\",\"code\":\"E1012\"," +
             "\"message\":\"npm 全局安装失败。\\n最后错误：\\nnpm ERR! network request failed\"}\n");
         var svc = Create(tcpOpen: false, httpReady: false);
-        var result = svc.PollReadiness(CancellationToken.None, 3080, "http://127.0.0.1:3080", _logPath,
-            e2eMode: true, delay: _ => { });
+        var result = Poll(svc, _logPath, _ => { });
         Assert.Equal("timeout", result);
     }
 
@@ -81,17 +87,56 @@ public sealed class PollReadinessTests : IDisposable
         File.WriteAllText(_logPath, "[12:00:00.000] [dsh] web starting...\n");
         var appended = false;
         var svc = Create(tcpOpen: false, httpReady: false);
-        var result = svc.PollReadiness(CancellationToken.None, 3080, "http://127.0.0.1:3080", _logPath,
-            e2eMode: true,
-            delay: _ =>
+        var result = Poll(svc, _logPath, _ =>
+        {
+            if (!appended)
             {
-                if (!appended)
-                {
-                    appended = true;
-                    File.AppendAllText(_logPath, "[12:00:05.000] [dsh] npm ERR! code ENOSPC\n");
-                }
-            });
+                appended = true;
+                File.AppendAllText(_logPath, "[12:00:05.000] [dsh] npm ERR! code ENOSPC\n");
+            }
+        });
         Assert.Equal("logerror", result);
+    }
+
+    // ---------------- issue #26：就绪前服务进程已退出 → 快速失败（service-exited） ----------------
+
+    [Fact]
+    public void ServiceProcessExitedBeforeReady_FailsFast_ReturnsServiceExited()
+    {
+        // 复现路径：服务已启动但 HTTP 迟迟不就绪；进程退出观测命中（code=7，退出输出不含
+        // 启动错误标志，logerror 不会触发）→ 必须立即返回 service-exited，而不是盲等 20 轮预算。
+        var svc = Create(tcpOpen: false, httpReady: false);
+        var result = Poll(svc, _logPath, _ => { }, exitCode: 7);
+        Assert.Equal(ShellLogic.ServiceReadiness.ServiceExitedVerdict, result);
+    }
+
+    [Fact]
+    public void ServiceProcessExited_WithExitCodeZero_AlsoFailsFast()
+    {
+        // 长驻服务就绪前退出（即使 code=0）也判启动失败：dsh web 不会在就绪前正常退出。
+        var svc = Create(tcpOpen: false, httpReady: false);
+        var result = Poll(svc, _logPath, _ => { }, exitCode: 0);
+        Assert.Equal(ShellLogic.ServiceReadiness.ServiceExitedVerdict, result);
+    }
+
+    [Fact]
+    public void ServiceProcessStillRunning_NoExitObserved_TimesOutAsBefore()
+    {
+        // 阴性对照：进程仍在启动（退出观测 -1）→ 维持原 timeout 语义，不误判快速失败。
+        var svc = Create(tcpOpen: false, httpReady: false);
+        var result = Poll(svc, _logPath, _ => { });
+        Assert.Equal("timeout", result);
+    }
+
+    [Fact]
+    public void ServiceExitObserved_ButLogErrorGraceWins_StillFailsFastAsExit()
+    {
+        // 语义优先级：退出观测与 logerror 宽限不冲突——进程已退出是更强证据（判定顺序上
+        // 退出检查在宽限检查之前），二者任一命中都快速失败；此处锁定退出观测先触发。
+        File.WriteAllText(_logPath, "[12:00:00.000] [dsh] web starting...\n");
+        var svc = Create(tcpOpen: false, httpReady: false);
+        var result = Poll(svc, _logPath, _ => { }, exitCode: 3);
+        Assert.Equal(ShellLogic.ServiceReadiness.ServiceExitedVerdict, result);
     }
 
     [Fact]
@@ -122,7 +167,7 @@ public sealed class PollReadinessTests : IDisposable
         var cts = new CancellationTokenSource();
         cts.Cancel();
         var result = svc.PollReadiness(cts.Token, 3080, "http://127.0.0.1:3080", _logPath,
-            e2eMode: true, delay: _ => { });
+            e2eMode: true, delay: _ => { }, serviceExitCodeProbe: () => -1);
         Assert.Equal("canceled", result);
     }
 }
