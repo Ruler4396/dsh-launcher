@@ -70,7 +70,13 @@ public sealed class ServiceManager : IServiceManager
     /// <summary>
     /// 生产级就绪裁决轮询（自 Program.WaitServiceReady 下沉，逻辑逐位保留）：
     /// TCP+HTTP 探测 + 统一日志错误标志三态（15s 宽限防良性告警误判）+ e2e 20s 上限
-    /// + NpxCache 网络回退预算放宽。返回 "ready"/"canceled"/"logerror"/"timeout"。
+    /// + NpxCache 网络回退预算放宽。返回 "ready"/"canceled"/"logerror"/"timeout"/"service-exited"。
+    /// 【issue #26】**就绪前服务进程已退出**（壳本次拉起的长驻服务在 HTTP 就绪前死亡）→
+    /// 立即返回 "service-exited" 快速失败：旧实现对此盲等完整预算（180s/360s），且退出输出
+    /// 若不含启动错误标志（如 EADDRINUSE / 引擎内部 TypeError）连 logerror 都不触发，
+    /// 用户只能看到"正在等待 dsh 服务就绪…"直到超时（E2002 误导文案）。
+    /// 进程退出观测经注入探针（缺省读 <see cref="TrackedServiceExitCodeOrMinusOne"/> 静态追踪器），
+    /// 与 delay 一样可注入以便 Headless/virtual-clock 测试。
     /// 【F2 修复】错误标志检查改为**增量扫描**：只判定 PollReadiness 入口之后新增的字节，
     /// 且跳过壳自写行（"code":"E####" JSONL）——历史日志中的良性网络词（ECONNRESET 等
     /// dsh 运行期合法输出）不再跨会话污染，消除"慢启动 >15s 即误判 E2003 并误杀服务"。
@@ -80,7 +86,8 @@ public sealed class ServiceManager : IServiceManager
     /// 预算内可达）。
     /// </summary>
     public string PollReadiness(CancellationToken token, int port, string url, string logPath, bool e2eMode,
-        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15)
+        Action<TimeSpan>? delay = null, int logCheckIntervalSeconds = 5, int logErrorGraceSeconds = 15,
+        Func<int>? serviceExitCodeProbe = null)
     {
         var delaySync = delay ?? (static d => Thread.Sleep(d));
         var graceMs = (e2eMode ? 2 : logErrorGraceSeconds) * 1000;
@@ -90,6 +97,9 @@ public sealed class ServiceManager : IServiceManager
         var logErrorSinceMs = 0.0;
         var virtualMs = 0.0;
         using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        // 进程退出观测（issue #26）：生产读静态追踪器（本会话 Start 拉起的服务进程）；
+        // 测试注入确定性探针，避免静态状态跨集合污染。
+        var exitProbe = serviceExitCodeProbe ?? TrackedServiceExitCodeOrMinusOne;
         // 首次运行（dsh 未安装，服务只能经网络下载启动）放宽等待预算 180s → 360s；
         // SelfContained/全局安装维持 180s。
         var networkFallback = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime().Source
@@ -140,6 +150,14 @@ public sealed class ServiceManager : IServiceManager
                     return "ready"; // TCP + HTTP 都已就绪
                 }
                 // HTTP 尚未就绪（前端还在启动），继续等
+            }
+            // 【issue #26】就绪前服务进程已退出 = 启动失败，立即快速失败（不再盲等完整预算）。
+            // 仅在非就绪时判定：HTTP 已就绪（上面已 return）说明服务健康，进程退出观测不适用。
+            var exitCode = exitProbe();
+            if (ShellLogic.ServiceReadiness.IsServiceExitFailFast(exitCode))
+            {
+                Logger.Info($"poll: service process exited before ready (code={exitCode}), failing fast");
+                return ShellLogic.ServiceReadiness.ServiceExitedVerdict;
             }
             if (logErrorSeen && virtualMs - logErrorSinceMs >= graceMs)
             {
@@ -370,8 +388,27 @@ public sealed class ServiceManager : IServiceManager
     }
 
     // ---- 服务进程对象追踪（2026-08-25 P0 修复的构件，见 Start 内注释）----
+    // 【issue #26 扩展】同一追踪器额外承载"进程已退出"观测（volatile 标志 + 退出码），
+    // 供 PollReadiness 就绪前快速失败读取（TrackedServiceExitCodeOrMinusOne）。标志随
+    // 新进程追踪而复位——只反映"本次 Start 拉起的服务"，避免旧进程退出污染新会话判定。
     private static readonly object ServiceProcessGate = new();
     private static System.Diagnostics.Process? _trackedServiceProcess;
+    private static volatile bool _trackedServiceExited;
+    private static volatile int _trackedServiceExitCode = -1;
+
+    /// <summary>
+    /// 读取本次会话拉起的服务进程退出状态（就绪轮询用）：已观察到退出返回退出码（&gt;=0），
+    /// 未启动/进程仍存活/无追踪进程返回 -1。线程安全；与 PollReadiness 的 delay 一样可注入
+    /// 覆盖（Headless 测试用确定性探针避免静态污染）。
+    /// </summary>
+    public static int TrackedServiceExitCodeOrMinusOne()
+    {
+        lock (ServiceProcessGate)
+        {
+            if (_trackedServiceProcess is null || !_trackedServiceExited) return -1;
+            return _trackedServiceExitCode;
+        }
+    }
 
     /// <summary>
     /// 追踪本次拉起的服务进程对象，替换并释放上一个（Dispose 不杀进程，仅释放句柄；
@@ -383,6 +420,9 @@ public sealed class ServiceManager : IServiceManager
         {
             var old = _trackedServiceProcess;
             _trackedServiceProcess = p;
+            // 新进程开始：复位退出观测（旧进程的退出状态绝不影响新会话判定）
+            _trackedServiceExited = false;
+            _trackedServiceExitCode = -1;
             if (old is null) return;
             try { old.Dispose(); }
             catch { /* 句柄已失效：释放失败可安全忽略（预期内操作失败） */ }
@@ -479,6 +519,16 @@ public sealed class ServiceManager : IServiceManager
         try
         {
             var code = process.ExitCode;
+            lock (ServiceProcessGate)
+            {
+                // 【issue #26】把退出观测写入追踪器：PollReadiness 就绪前快速失败读取。
+                // 只在追踪的是本进程时记录（静态替换后旧进程的 Exited 不再影响当前判定）。
+                if (ReferenceEquals(_trackedServiceProcess, process))
+                {
+                    _trackedServiceExited = true;
+                    _trackedServiceExitCode = code;
+                }
+            }
             lock (UnifiedLogAppendGate)
             {
                 Logger.Info($"service process exited (code={code})");

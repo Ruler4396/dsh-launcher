@@ -121,6 +121,34 @@ namespace DshShell.Tests.Managers;
         Assert.Equal(3080, cleanedPort);
     }
 
+    // ---------------- 场景 3b：服务就绪前进程退出（issue #26 快速失败，不盲等预算） ----------------
+
+    [Fact]
+    public async Task ServiceExitedBeforeReady_FailsFast_TransitionsToShuttingDown_StaleCleanupInvoked()
+    {
+        var cleanedPort = -1;
+        // 与生产同构：组合根把就绪裁决注入 ReadinessProbe（生产 = PollReadiness）；
+        // Headless 用 FakeService.PollReadiness 的 ReadinessVerdict 覆盖锁定第五态。
+        var service = new FakeService
+        {
+            PortState = ShellLogic.ServicePortState.Closed, // 需要拉起服务（Start 被调用）
+            ReadinessVerdict = ShellLogic.ServiceReadiness.ServiceExitedVerdict,
+        };
+        var app = new LauncherApp(new FakeRuntime(), service, staleCleanup: port => cleanedPort = port);
+        app.ReadinessProbe = ct => Task.FromResult(
+            service.PollReadiness(ct, 3080, "http://127.0.0.1:3080", "unused.log", e2eMode: true));
+        var states = Trace(app);
+
+        Assert.False(await app.RunStartupAsync());
+        // 与 timeout/logerror 同一失败收敛：ReadinessTimedOut → ShuttingDown（状态机语义不变）
+        Assert.Equal(LifecycleState.ShuttingDown, app.State);
+        Assert.Contains(LifecycleState.ShuttingDown, states);
+        // 快速失败语义锁定：WaitResult 是 service-exited（Program 据此映射 E2010 + 进程输出线索），
+        // 不再被吞成笼统 timeout；组合根超时清理同样被触发（端口透传正确）。
+        Assert.Equal(ShellLogic.ServiceReadiness.ServiceExitedVerdict, app.WaitResult);
+        Assert.Equal(3080, cleanedPort);
+    }
+
     // ---------------- 场景 5：僵尸服务（端口开但 HTTP 死）→ 清理 + 重新拉起 ----------------
     // 根因修复（任务一）：TCP 已开但 HTTP 不通时不再误判"服务健康"傻等 180s——先强杀进程树
     //（taskkill /T /F 含 cmd/npx 外壳），清理成功后再走正常拉起；清理失败快速失败 E2004。

@@ -27,6 +27,7 @@ public static class ErrorCodes
     public const string E2006 = "E2006"; // 启动已取消（服务可能仍在后台下载/启动）
     public const string E2007 = "E2007"; // 崩溃检测：dsh 服务进程异常退出（非零退出码/进程消失）
     public const string E2008 = "E2008"; // 崩溃检测：页面启动自检失败（坏签名/好符号缺席，安全模式可恢复）
+    public const string E2010 = "E2010"; // 启动流水线：dsh 服务进程在就绪前已退出（快速失败，不盲等轮询预算）
     public const string E2011 = "E2011"; // 插件缺失，serviceLifetime 配置已忽略并抹除
     public const string E4001 = "E4001"; // dsh 更新下载（npm pack）失败
     public const string E4002 = "E4002"; // dsh 延迟更新应用失败
@@ -56,6 +57,7 @@ public static class ErrorCodes
         E2006 => "启动已取消。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
         E2007 => "dsh 服务进程异常退出（崩溃检测：非零退出码或进程消失）。",
         E2008 => "dsh 页面启动自检失败（坏签名命中或好符号持续缺席）。若加载了第三方插件，可能由插件不兼容导致（安全模式可恢复）；未加载插件时多与 dsh 版本兼容性有关。",
+        E2010 => "dsh 服务进程在就绪前已退出，启动失败（详见统一日志中的进程输出与退出码）。",
         E2011 => "dsh-launcher-lifetime 插件已卸载，已忽略残留的常驻配置并按默认模式运行。",
         E4001 => "dsh 新版本下载失败。",
         E4002 => "dsh 延迟更新应用失败，将继续使用当前版本。",

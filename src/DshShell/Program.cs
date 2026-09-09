@@ -2024,7 +2024,10 @@ internal static class Program
     {
         var logPath = outcome.LogPath;
         // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
-        if (outcome.WaitResult is "logerror" or "timeout" && outcome.ServiceStartedByShell
+        // 【issue #26】service-exited（就绪前进程已退出）同样需要清理。
+        if ((outcome.WaitResult is "logerror" or "timeout"
+                or ShellLogic.ServiceReadiness.ServiceExitedVerdict)
+            && outcome.ServiceStartedByShell
             && ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", Target.Port))
         {
             var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
@@ -2070,26 +2073,30 @@ internal static class Program
         var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
         // 【issue #24 配套】logerror 根因常在崩溃栈头部（Node uncaught 转储），尾部 12 行只见其尾：
         // 弹窗补"首条报错线索"（首个命中启动错误标志的行），并给出完整日志路径（对齐 timeout 分支）。
-        var errorHint = waitResult == "logerror"
+        // 【issue #26】service-exited 同理：进程输出（可能不含错误标志）首行即是根因线索。
+        var errorHint = waitResult is "logerror" or ShellLogic.ServiceReadiness.ServiceExitedVerdict
             ? ShellLogic.ServiceReadiness.FirstStartupErrorLine(
                 string.Join("\n", ShellLogic.ReadLogTail(logPath, 120)))
             : null;
+        // 【issue #26】就绪前退出：把退出码与进程首行输出真实展示，取代误导性的"下载慢/网络问题"。
+        var serviceExitCode = waitResult == ShellLogic.ServiceReadiness.ServiceExitedVerdict
+            ? Managers.ServiceManager.TrackedServiceExitCodeOrMinusOne()
+            : -1;
         var body = waitResult switch
         {
             "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
             "logerror" => "启动过程报错（dsh 服务未能就绪，多为依赖/下载/权限问题）。\n\n"
                 + (errorHint is null ? "" : "报错线索：\n  " + errorHint + "\n\n")
                 + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
+            ShellLogic.ServiceReadiness.ServiceExitedVerdict =>
+                $"dsh 服务进程在就绪前已退出（退出码 {serviceExitCode}），启动失败。\n\n"
+                + (errorHint is null ? "" : "进程输出首条异常线索：\n  " + errorHint + "\n\n")
+                + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
             _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
                 + "\n\n完整日志：" + logPath,
         };
-        var code = waitResult switch
-        {
-            "logerror" => ErrorCodes.E2003,
-            "timeout" => ErrorCodes.E2002,
-            "canceled" => ErrorCodes.E2006, // P0-1：取消不是内部错误（此前误归 E9001）
-            _ => ErrorCodes.E9001,
-        };
+        // 裁决 → 错误码映射沉在 ShellLogic（契约测试锁定），组合根不再重复 switch。
+        var code = ShellLogic.ServiceReadiness.MapVerdictErrorCode(waitResult);
         // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总
         ShowError(code, "dsh 服务未能就绪。\n\n" + body,
             level: waitResult == "canceled" ? Logger.Level.Info : Logger.Level.Error);
