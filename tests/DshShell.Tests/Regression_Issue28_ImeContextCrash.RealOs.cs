@@ -66,6 +66,41 @@ public class Regression_Issue28_ImeContextCrash_RealOs
         return true;
     }
 
+    /// <summary>
+    /// WinForms 侧"惰性"IME 模式——**不会**落到 <c>ImmSetOpenStatus</c> 的两种取值：
+    /// · <see cref="ImeMode.Disable"/>：窗口上下文已解绑（<c>ImmGetContext == NULL</c>）⇒
+    ///   <c>ImeContext.Disable()</c> 的 <c>IsOpen()</c> 恒 false，只做一次 <c>ImmAssociateContext(NULL)</c>；
+    /// · <see cref="ImeMode.Inherit"/>：当前输入语言表不含 IME（无中日韩输入法的环境，如 GitHub
+    ///   runner / 纯英文机器）时 <c>ImeContext.GetImeMode</c> 的首个分支直接返回它，而
+    ///   <c>SetImeStatus</c> 对 Inherit 立即 return。
+    /// 本机实测（zh-CN 输入语言）：同一窗口 <c>GetImeMode == Close</c>；把线程输入语言切到 en-US 后
+    /// 变 <c>Inherit</c> —— 断言必须接受这两种"惰性"取值，真正的判别力在
+    /// <c>ImmGetContext(hwnd) == NULL</c>（护栏是否生效）。
+    /// </summary>
+    private static bool IsInertImeMode(ImeMode mode) => mode is ImeMode.Disable or ImeMode.Inherit;
+
+    /// <summary>
+    /// 测试专用开关：<c>DSH_TEST_IME_LANG</c>（如 <c>en-US</c>）强制本 STA 线程的输入语言，
+    /// 用于在开发机（中文输入法）上**复现 CI runner 的"无中日韩输入法"分支**
+    /// （该分支下 <c>GetImeMode</c> 返回 Inherit 而非 Disable——2026-09-14 CI 首次红即此因）。
+    /// 不设该变量时零副作用。
+    /// </summary>
+    private static void ApplyForcedInputLanguage()
+    {
+        var lang = Environment.GetEnvironmentVariable("DSH_TEST_IME_LANG");
+        if (string.IsNullOrWhiteSpace(lang)) return;
+        try
+        {
+            InputLanguage.CurrentInputLanguage =
+                InputLanguage.FromCulture(new System.Globalization.CultureInfo(lang));
+            Console.WriteLine($"[ime-test] forced input language = {InputLanguage.CurrentInputLanguage.Culture.Name}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ime-test] force input language failed ({lang}): {ex.Message}");
+        }
+    }
+
     /// <summary>在独立 STA 线程上跑一段真实 WinForms 代码（句柄/消息泵需要 STA）。</summary>
     private static void RunSta(Action body, string what, int timeoutSeconds = 60)
     {
@@ -89,12 +124,22 @@ public class Regression_Issue28_ImeContextCrash_RealOs
     {
         RunSta(() =>
         {
+            ApplyForcedInputLanguage();
             using var form = new Form { Text = "ime-guard-probe", ShowInTaskbar = false };
             var hwnd = form.Handle;
 
             // 前置：给窗口显式关联一个真实 IME 上下文（第三方 IME 给壳窗口挂上下文的等价状态）。
+            // 无 IME 的环境（CI runner 无中日韩输入法）ImmCreateContext 可能返回 0：此时无法构造
+            // "危险态"，但护栏不变量仍须成立——显式留痕走弱化断言，绝不静默通过。
             var himc = ImmCreateContext();
-            Assert.NotEqual(IntPtr.Zero, himc);
+            if (himc == IntPtr.Zero)
+            {
+                _out.WriteLine("SKIP 危险态构造：本机 ImmCreateContext 返回 0（无可用 IME 环境）——仍断言护栏后上下文为空");
+                ImeContextGuard.Harden(form);
+                Assert.False(HasImeContext(hwnd));
+                Assert.True(IsInertImeMode(ImeContext.GetImeMode(hwnd)));
+                return;
+            }
             try
             {
                 ImmAssociateContext(hwnd, himc);
@@ -108,13 +153,16 @@ public class Regression_Issue28_ImeContextCrash_RealOs
                 // 的触发条件（崩溃栈 B）。无中日韩输入法的环境返回 Disable/Inherit，跳过该断言。
                 var dangerState = modeBefore is not (ImeMode.Disable or ImeMode.Inherit);
 
-                // 护栏：解绑该窗口的 IME 上下文，WinForms 侧观察到的模式必须落到 Disable。
+                // 护栏：解绑该窗口的 IME 上下文 → WinForms 侧再也拿到不出一条会落到
+                // ImmSetOpenStatus 的模式（本机语义为 Disable；无 IME 环境为 Inherit）。
                 ImeContextGuard.Harden(form);
                 Assert.False(HasImeContext(hwnd),
                     "ImeContextGuard.Harden 之后窗口不得再持有 IME 上下文（否则 WinForms 仍会走 ImmSetOpenStatus）");
-                Assert.Equal(ImeMode.Disable, ImeContext.GetImeMode(hwnd));
+                var modeAfter = ImeContext.GetImeMode(hwnd);
+                Assert.True(IsInertImeMode(modeAfter),
+                    $"护栏后 WinForms 观察到 ImeMode.{modeAfter}——仍属会驱动 SetImeStatus 的活跃模式");
                 if (dangerState)
-                    _out.WriteLine($"危险态已复现（护栏前 {modeBefore}）→ 护栏后 Disable：WinForms 的 SetImeStatus 路径不可达");
+                    _out.WriteLine($"危险态已复现（护栏前 {modeBefore}）→ 护栏后 {modeAfter}：WinForms 的 SetImeStatus 路径不可达");
             }
             finally
             {
@@ -132,6 +180,7 @@ public class Regression_Issue28_ImeContextCrash_RealOs
         // 即 WinForms 侧的 ImeContext 路径在整个焦点变化周期内都保持短路。
         RunSta(() =>
         {
+            ApplyForcedInputLanguage();
             using var form = new Form { Text = "ime-guard-focus", ShowInTaskbar = false };
             var button = new Button { Text = "focus me", Location = new System.Drawing.Point(10, 10) };
             form.Controls.Add(button);
@@ -156,7 +205,8 @@ public class Regression_Issue28_ImeContextCrash_RealOs
                 _out.WriteLine($"{tag} hwnd=0x{handle.ToInt64():X} himc={(HasImeContext(handle) ? "NON-NULL" : "null")} "
                     + $"mode={ImeContext.GetImeMode(handle)}");
                 Assert.False(HasImeContext(handle), $"{tag} 在获得焦点后又被 IME 关联了上下文（护栏未覆盖焦点路径）");
-                Assert.Equal(ImeMode.Disable, ImeContext.GetImeMode(handle));
+                var mode = ImeContext.GetImeMode(handle);
+                Assert.True(IsInertImeMode(mode), $"{tag} 焦点变化后 WinForms 观察到 ImeMode.{mode}（会驱动 SetImeStatus）");
             }
             form.Close();
         }, "IME 护栏焦点路径验证");
@@ -167,6 +217,7 @@ public class Regression_Issue28_ImeContextCrash_RealOs
     {
         RunSta(() =>
         {
+            ApplyForcedInputLanguage();
             using var dialog = new VersionInfoDialog("0.1.5-rc.1", "0.4.5", dark: true);
             var handles = new List<(string Tag, IntPtr Handle)> { ("版本信息窗", dialog.Handle) };
             Collect(dialog, handles);
@@ -178,7 +229,8 @@ public class Regression_Issue28_ImeContextCrash_RealOs
             {
                 Assert.False(HasImeContext(handle),
                     $"{tag} 仍持有 IME 上下文 → WinForms 焦点变化时会再次调用 ImmSetOpenStatus（崩溃复发）");
-                Assert.Equal(ImeMode.Disable, ImeContext.GetImeMode(handle));
+                var mode = ImeContext.GetImeMode(handle);
+                Assert.True(IsInertImeMode(mode), $"{tag} WinForms 观察到 ImeMode.{mode}（会驱动 SetImeStatus）");
             }
         }, "版本信息窗 IME 上下文检查");
     }
@@ -211,3 +263,5 @@ public class Regression_Issue28_ImeContextCrash_RealOs
         }
     }
 }
+
+

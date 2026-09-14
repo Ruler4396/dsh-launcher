@@ -63,17 +63,22 @@ public class Regression_Issue28_TrayExitRow_RealOs
         }
         clusters.Add((start, prev));
 
-        Assert.Equal(2, clusters.Count);
-        var (s1, e1) = clusters[0];
-        var (s2, e2) = clusters[1];
-        var inkGap = s2 - e1 - 1;
-        var charInk = Math.Max(e1 - s1 + 1, e2 - s2 + 1);
-        _out.WriteLine($"字簇1=[{s1},{e1}] 字簇2=[{s2},{e2}] 墨迹空档={inkGap}px 单字墨迹={charInk}px");
+        // 判据不写死"恰好两簇"：不同兜底字体下单字内部可能有断笔（如「退」的走之底分离），
+        // 以**词内最大空洞 ≤ 半个字宽**为准 —— 既容忍字形差异，又抓得住"字距被内边距放大"这一缺陷。
+        // 修复前：空档 12px / 单字墨迹 14px（比值 0.86）；修复后：空档 3px（比值 ≈0.2）。
+        var charInk = clusters.Max(c => c.End - c.Start + 1);
+        var maxHole = 0;
+        var holeAt = 0;
+        for (var i = 1; i < columns.Count; i++)
+        {
+            var gap = columns[i] - columns[i - 1] - 1;
+            if (gap > maxHole) { maxHole = gap; holeAt = columns[i - 1]; }
+        }
+        _out.WriteLine($"字簇 {clusters.Count} 个：{string.Join(", ", clusters.Select(c => $"[{c.Start},{c.End}]"))}；"
+            + $"最大空洞={maxHole}px @x={holeAt}；单字墨迹={charInk}px");
 
-        // 修复前：空档 ≈ 11px、单字墨迹 ≈ 14px（比值 0.79）；修复后：空档 ≈ 4-5px（比值 ≈0.3）。
-        // 以"空档 ≤ 半个字宽"为闸门：任何重新引入测量/绘制内边距叠加的实现都会超标。
-        Assert.True(inkGap <= charInk * 0.5,
-            $"两字墨迹空档 {inkGap}px 超过半个字宽（{charInk}px 的 50%）——"
+        Assert.True(maxHole <= charInk * 0.5,
+            $"渲染出的\"退出\"内部最大空洞 {maxHole}px 超过半个字宽（{charInk}px 的 50%）——"
             + "测量/绘制内边距又被叠加进字距了（issue #28-1 复发）");
     }
 }
