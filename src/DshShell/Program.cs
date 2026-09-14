@@ -847,6 +847,12 @@ internal static class Program
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
             };
             form.Controls.Add(form.TitleBar);
+            // [issue #28-2 真机回归] 探针窗与真实主窗一样装配 dsh 版本徽标 + 点击回调：
+            // 使 E2E/真机验证可以用**真实鼠标点击**走完
+            // CustomTitleBar 命中测试 → VersionClick → ShowVersionInfoDialog → 弹窗开关 全链路
+            // （此前探针窗无徽标，"点版本号闪退"只能测到弹窗入口，测不到点击命中段）。
+            form.TitleBar._dshVersion = UpdateChecker.ResolveLocalDshVersion() ?? "";
+            form.TitleBar.VersionClick = () => ShowVersionInfoDialog(form);
             // 与真实主窗对齐（见本文件建窗处的 HandleCreated 订阅）：启用 DWM NC 渲染后，
             // 最大化窗口才会向四周外扩 frame——WM_GETMINMAXINFO 的 frame 补偿（pos=work+frame,
             // size=work-2*frame）才成立。探针此前缺此行 → CI（Server runner）上 DWM 不外扩、
@@ -897,7 +903,26 @@ internal static class Program
             {
                 hookTask = Task.Run(() => DshWeb.Win32.UiTestHook.RunAsync(
                     form.Handle, hookCts.Token,
-                    onShutdown: () => form.BeginInvoke(() => form.Close())));
+                    onShutdown: () => form.BeginInvoke(() => form.Close()),
+                    // [issue #28-2 回归] E2E 可经 TestHook 触发"版本徽标点击"的真实入口，
+                    // 断言该弹窗打开/关闭不再打死进程（0xc0000005 现场）。
+                    onShowVersionDialog: () => form.BeginInvoke(new Action(() => ShowVersionInfoDialog(form))),
+                    // 徽标命中矩形（生产 OnPaint 计算值 → 屏幕物理像素）：E2E 据此做真实鼠标点击。
+                    // 经 UI 线程 Invoke 读取，避免跨线程读 Rectangle 结构撕裂。
+                    versionBadgeRect: () =>
+                    {
+                        var bar = form.TitleBar;
+                        if (bar is null || !form.IsHandleCreated) return null;
+                        return (DshWeb.Win32.UiTestHook.VersionBadgeRect?)form.Invoke(
+                            new Func<DshWeb.Win32.UiTestHook.VersionBadgeRect?>(() =>
+                            {
+                                var local = bar.GetVersionBadgeRect();
+                                if (local.IsEmpty) return null;
+                                var screen = bar.RectangleToScreen(local);
+                                return new DshWeb.Win32.UiTestHook.VersionBadgeRect(
+                                    screen.Left, screen.Top, screen.Right, screen.Bottom);
+                            }));
+                    }));
                 Trace($"ui-probe: test hook listening ({DshWeb.Win32.UiTestHook.PipeName(Environment.ProcessId)})");
             }
 
@@ -1082,6 +1107,21 @@ internal static class Program
             },
             ReadinessProbe = ct => Task.Run(() =>
                 service.PollReadiness(ct, Target.Port, Target.Url, UnifiedLogPath, E2EMode), ct),
+            // [issue #28-3 伪重启修复] 健康残留服务是否必须清理重启：三重门控（非外部托管 ×
+            // 账本内（本壳上次拉起且没停干净 = 上次会话异常终止）× 驻留模式要求服务跟随壳）。
+            // 账本判定复用 ServiceManager 的已知服务身份账本（ServiceLifecycleOps.PidFilePath）。
+            RestartHealthyLeftoverPolicy = () =>
+            {
+                if (ServerManagedExternally) return false;
+                var owner = ShellLogic.ProcessManagement.GetProcessIdByPort(Target.Port);
+                if (owner <= 0) return false;
+                var restart = ShellLogic.LifecycleDecisions.ShouldRestartLeftoverService(
+                    ReadLifetimeMode(),
+                    ledgerOwned: IsKnownDshServicePid(owner, Target.Port),
+                    externallyManaged: false);
+                if (restart) Trace($"[leftover] healthy leftover service pid={owner} is ledger-owned and lifetime mode requires shell ownership");
+                return restart;
+            },
         };
     }
 
@@ -1471,6 +1511,9 @@ internal static class Program
                 // 统一 [boot-monitor] 前缀：所有层轨迹在统一日志中可被 grep/场景断言识别
                 trace: message => Trace("[boot-monitor] " + message));
             monitor.Failed += HandleBootHealthFailed;
+            // [issue #28-2 运行期自愈] 健康运行后服务退出（用户在 DSH 界面点自带重启 / 服务自更新 /
+            // 服务崩溃）→ 静默重启服务 + 等新 token 重新导航，绝不弹"启动自检未通过"弹窗。
+            monitor.ServiceExitedWhileRunning += HandleRuntimeServiceExit;
             // [update-guard] 好符号确认健康 → 快照落"已确认"、解除回滚武装
             monitor.HealthyDetected += HandleUpdateConfirmedHealthy;
             // 好符号确认健康 → 清零跨会话连续失败计数（2026-08-25 升级询问的复位通道）
@@ -1792,6 +1835,146 @@ internal static class Program
     private static string WebProfilePackageJsonPath
         => Path.Combine(DshHomeDir, "profiles", "web", "package.json");
 
+    // ---- [issue #28-2] 运行期服务退出静默自愈 ----
+
+    /// <summary>会话内静默自愈连续尝试上限（超过 → 升级为可见询问，绝不无限静默循环）。</summary>
+    private const int MaxRuntimeServiceRestarts = 3;
+
+    /// <summary>上次静默自愈成功（UTC）：超过冷却窗后重置尝试计数——偶发重启不耗尽预算。</summary>
+    private static DateTime _lastRuntimeRestartUtc = DateTime.MinValue;
+    private static readonly TimeSpan RuntimeRestartCooldown = TimeSpan.FromMinutes(10);
+    private static int _runtimeRestartAttempts;
+
+    /// <summary>
+    /// 健康运行期服务退出的自愈入口（<c>BootHealthMonitor.ServiceExitedWhileRunning</c> 回调，
+    /// 触发线程 = 进程事件/轮询线程）：非阻塞、幂等——立即挂起监控（服务已死，HTTP/页面探针随后
+    /// 必然 miss，不能让它们把"运行期重启"判成启动自检失败），后台重启服务并等新 token 导航。
+    /// 失败或连续超限才升级为可见提示（透明：用户永远能知道真实状态）。
+    ///
+    /// 背景（issue #28 第 2 点）：用户在 DSH 插件市场装完插件、点 DSH 自带的重启按钮后，
+    /// 服务进程退出 → 旧实现按 E2007"启动自检未通过"弹"是否重启 dsh 服务"询问框——用户看到的
+    /// 就是"必然出现异常弹窗"。运行期重启属正常运维动作，必须静默自愈。
+    /// </summary>
+    private static void HandleRuntimeServiceExit(int? exitCode)
+    {
+        try
+        {
+            // [F14] 会话已进入退出编排：不再拉起服务（避免退出后留下无主服务）
+            if (SessionCts.IsCancellationRequested)
+            {
+                Trace("runtime-restart: session shutting down; restart skipped");
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            if (now - _lastRuntimeRestartUtc > RuntimeRestartCooldown) _runtimeRestartAttempts = 0;
+            var attempt = Interlocked.Increment(ref _runtimeRestartAttempts);
+
+            if (attempt > MaxRuntimeServiceRestarts)
+            {
+                // 反复退出（例如插件本身让服务起不来）：静默循环毫无意义，交回用户可见的询问
+                var form = GetMainFormForDialog();
+                var headline = $"dsh 服务在运行中反复退出（已自动重启 {MaxRuntimeServiceRestarts} 次，"
+                    + $"最近退出码 {exitCode?.ToString() ?? "未知"}）。";
+                Logger.Warn("[runtime-restart] quiet restart budget exhausted; escalating to visible ask", ErrorCodes.E2007);
+                if (form is not null && form.IsHandleCreated)
+                    form.BeginInvoke(() => AskRestartDshServiceAfterBootFailure(form, headline));
+                else
+                    Logger.Warn("[runtime-restart] no main window; restart ask skipped (logged only)");
+                return;
+            }
+
+            // 立即挂起监控（只在确实要自愈时）：服务已死，HTTP/页面探针随后必然 miss，
+            // 不能让它们把"运行期重启"判成启动自检失败。
+            BootMonitor?.Suspend();
+            Trace($"[runtime-restart] service exit detected (exit code={exitCode?.ToString() ?? "unknown"}); "
+                + $"attempt {attempt}/{MaxRuntimeServiceRestarts}");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var outcome = await RestartDshServiceCoreAsync("runtime-restart");
+                    if (outcome != ServiceRestartOutcome.Ready)
+                    {
+                        if (outcome == ServiceRestartOutcome.Cancelled) return; // 会话收尾中：不打扰
+                        BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
+                        var form = GetMainFormForDialog();
+                        if (form is not null && form.IsHandleCreated)
+                        {
+                            var (code, message) = outcome == ServiceRestartOutcome.StartFailed
+                                ? (ErrorCodes.E2001, "dsh 服务在运行中退出，自动重启失败（无法拉起服务）。请查看统一日志后重新打开 dsh-launcher。")
+                                : (ErrorCodes.E2004, "dsh 服务在运行中退出，自动重启后 60 秒内未就绪。请查看统一日志。");
+                            try { form.BeginInvoke(() => ShowError(code, message, log: false)); }
+                            catch { /* 窗体已关闭 */ }
+                        }
+                        return;
+                    }
+                    _lastRuntimeRestartUtc = DateTime.UtcNow;
+                    Trace("[runtime-restart] service restarted and ready");
+                    var main = GetMainFormForDialog();
+                    if (main is not null && main.IsHandleCreated)
+                    {
+                        try { main.BeginInvoke(() => NavigateMainWebToCurrentServiceUrl()); }
+                        catch { /* 窗体已关闭 */ }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("[runtime-restart] threw: " + ex.Message);
+                    BootMonitor?.Stop();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // 自愈入口本身失败绝不反噬调用方（进程事件线程）
+            Logger.Warn("[runtime-restart] entry failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 壳主动重启 dsh 服务并等到就绪（安全模式切换 / 启动自检失败询问 / 运行期自愈三处共用）：
+    /// Suspend（重启窗口内不判死）→ 停服 → 身份驱动拉起 → 等新 token → 60s 就绪等待 →
+    /// ResumeAfterRestart（重挂进程层；页面层随 Reload 的 NavigationCompleted 重新武装）。
+    /// 只做动作不弹窗：返回结果枚举，由调用方按错误码精确可见化（E2001 拉不起来 / E2004 未就绪 /
+    /// Cancelled 会话已进入退出编排 → 不打扰用户）。
+    /// </summary>
+    private enum ServiceRestartOutcome { Ready, StartFailed, NotReady, Cancelled }
+
+    private static async Task<ServiceRestartOutcome> RestartDshServiceCoreAsync(string reason)
+    {
+        BootMonitor?.Suspend();
+        Trace($"{reason}: stopping service");
+        StopShellService();
+        if (SessionCts.IsCancellationRequested)
+        {
+            Trace($"{reason}: session shutting down; service restart skipped");
+            return ServiceRestartOutcome.Cancelled;
+        }
+        var startOk = StartDshServiceViaIdentity();
+        Trace($"{reason}: identity-driven start returned {startOk}");
+        if (!startOk)
+        {
+            Logger.Error($"dsh 服务重启失败（{reason}）", ErrorCodes.E2001);
+            return ServiceRestartOutcome.StartFailed;
+        }
+        // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
+        WaitForFreshServiceToken(_tokenBeforeServiceRestart);
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
+               && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
+            await Task.Delay(500);
+        if (SessionCts.IsCancellationRequested) return ServiceRestartOutcome.Cancelled;
+        if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
+        {
+            Logger.Error($"{reason}: service not ready within 60s after restart", ErrorCodes.E2004);
+            return ServiceRestartOutcome.NotReady;
+        }
+        BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+        return ServiceRestartOutcome.Ready;
+    }
+
     /// <summary>
     /// 无插件证据的启动自检失败恢复动作：询问后后台重启 dsh 服务，就绪后刷新页面。
     /// 复用安全模式重启的观测语义：Suspend（壳主动重启窗口不判死）→ 停启 → 就绪等待 →
@@ -1818,46 +2001,19 @@ internal static class Program
                         Trace("restart-service(bg): session shutting down; restart skipped");
                         return;
                     }
-                    BootMonitor?.Suspend();
-                    Trace("restart-service(bg): stopping service");
-                    StopShellService();
-                    if (SessionCts.IsCancellationRequested)
+                    var outcome = await RestartDshServiceCoreAsync("restart-service");
+                    if (outcome == ServiceRestartOutcome.Ready)
                     {
-                        BootMonitor?.Stop();
-                        Trace("restart-service(bg): session shutting down; service restart skipped");
+                        try { form.BeginInvoke(() => NavigateMainWebToCurrentServiceUrl()); }
+                        catch { /* 窗体已关闭 */ }
                         return;
                     }
-                    var startOk = StartDshServiceViaIdentity();
-                    Trace($"restart-service(bg): identity-driven start returned {startOk}");
-                    if (!startOk)
-                    {
-                        BootMonitor?.Stop();
-                        try { form.BeginInvoke(() => ShowError(ErrorCodes.E2001,
-                            "dsh 服务重启失败，请查看统一日志后重新打开 dsh-launcher。", log: false)); } catch { }
-                        return;
-                    }
-                    // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
-                    WaitForFreshServiceToken(_tokenBeforeServiceRestart);
-                    var deadline = DateTime.UtcNow.AddSeconds(60);
-                    while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
-                           && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
-                        await Task.Delay(500);
-                    if (!Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
-                    {
-                        Logger.Error("restart-service: service not ready within 60s after reboot", ErrorCodes.E2004);
-                        BootMonitor?.Stop(); // 服务状态未知，停止监控防误报
-                        try { form.BeginInvoke(() => ShowError(ErrorCodes.E2004,
-                            "dsh 服务重启后 60 秒内未就绪，请查看统一日志。", log: false)); } catch { }
-                        return;
-                    }
-                    BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
-                    try
-                    {
-                        form.BeginInvoke(() =>
-                        {
-                            NavigateMainWebToCurrentServiceUrl();
-                        });
-                    }
+                    if (outcome == ServiceRestartOutcome.Cancelled) return; // 会话收尾中：不打扰
+                    BootMonitor?.Stop();
+                    var (code, message) = outcome == ServiceRestartOutcome.StartFailed
+                        ? (ErrorCodes.E2001, "dsh 服务重启失败（无法拉起服务），请查看统一日志后重新打开 dsh-launcher。")
+                        : (ErrorCodes.E2004, "dsh 服务重启后 60 秒内未就绪，请查看统一日志。");
+                    try { form.BeginInvoke(() => ShowError(code, message, log: false)); }
                     catch { /* 窗体已关闭 */ }
                 }
                 catch (Exception ex)

@@ -87,6 +87,11 @@ public sealed class SplashForm : Form
         ShowInTaskbar = true;
         ControlBox = false;
 
+        // [2026-09 IME 崩溃护栏] 壳自有 WinForms 窗口一律不持有 IME 上下文：否则焦点变化时
+        // WinForms 会经 ImeContext.Disable/Enable → ImmSetOpenStatus 落地 ImeMode，第三方 IME 上
+        // 必崩（0xc0000005，见 Win32/ImeContextGuard 注释）。本窗含 Label/Button，必须同护栏。
+        Win32.ImeContextGuard.Harden(this);
+
         // ---- 预渲染：构造时立即设置默认文本/颜色/布局，不依赖任何事件先触发再绘制 ----
         _statusLabel.Text = "正在准备启动…";
         _statusLabel.Location = new Point(16, 12);

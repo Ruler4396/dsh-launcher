@@ -56,6 +56,12 @@ internal sealed class VersionInfoDialog : Form
         // ---- 窗口骨架：dsh 风格（无边框 + 自绘标题栏，跟随壳主题） ----
         var bg = _dark ? DarkBg : LightBg;
         var textColor = _dark ? DarkText : LightText;
+        // [2026-09 崩溃根治 issue #28-2] 本窗体是 0xc0000005（ImmSetOpenStatus）崩溃的现场：
+        // 窗口激活时 WinForms 把焦点给到首个可聚焦控件（LinkLabel → Label.DefaultImeMode=Disable），
+        // UpdateImeContextMode 随即调用 ImeContext.Disable → ImmSetOpenStatus → 第三方 IME 上访问违规，
+        // 进程瞬间消失（用户可见"点版本号卡死→闪退"）。护栏把本窗体及全部子控件的 IME 上下文解绑，
+        // 使 WinForms 侧 ImeContext.GetImeMode 恒为 Disable、IsOpen 恒 false → 该调用永不发生。
+        DshWeb.Win32.ImeContextGuard.Harden(this);
         Text = "版本信息";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;

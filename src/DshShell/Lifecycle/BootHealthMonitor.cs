@@ -134,6 +134,15 @@ public sealed class BootHealthMonitor : IDisposable
     /// <summary>好符号出现（Healthy）时触发一次（组合根记日志/测试断言）。</summary>
     public event Action? HealthyDetected;
 
+    /// <summary>
+    /// [issue #28-2 运行期自愈] 启动自检已通过（Healthy）之后服务进程消失时触发**恰好一次**，
+    /// 参数=退出码（可能为 null）。此时不是"启动自检失败"，而是运行期服务退出
+    /// （用户在 DSH 界面点了自带的重启按钮 / 服务自更新 / 服务崩溃）——组合根据此静默重启服务
+    /// 并等新 token 重新导航，而不是弹"启动自检未通过"的异常弹窗（用户报告的那个弹窗）。
+    /// 自检尚未通过的退出仍走既有 E2007 失败裁决（启动失败必须可见）。
+    /// </summary>
+    public event Action<int?>? ServiceExitedWhileRunning;
+
     public BootHealthState State { get { lock (_sync) return _state; } }
     public BootVerdict? Verdict { get { lock (_sync) return _verdict; } }
 
@@ -202,12 +211,28 @@ public sealed class BootHealthMonitor : IDisposable
     private void OnProcessExited(IBootProcessHandle handle)
     {
         // 幂等：Exited 事件与 HasExited 轮询可能并发命中，进程层失败只报告一次
+        bool running;
         lock (_sync)
         {
             if (_stopped || _suspended || _processFailureReported) return;
             _processFailureReported = true;
+            running = _state == BootHealthState.Healthy;
         }
         var code = handle.TryGetExitCode();
+
+        // [issue #28-2] 启动自检已通过后的服务退出 = 运行期重启（DSH 自带重启/自更新/崩溃）。
+        // 无论退出码是否为 0（DSH 自身重启可能优雅退出），都交给组合根静默自愈：
+        // 之前的实现在这里一律按 E2007"启动自检失败"弹窗，用户点一次 DSH 的重启按钮就必然
+        // 撞上一个"异常弹窗"（issue #28 第 2 点）。
+        if (running)
+        {
+            Logger.Warn($"[boot-monitor] service exited while healthy (exit code={code?.ToString() ?? "unavailable"}); "
+                + "handing over to runtime restart supervision");
+            _trace($"runtime service exit (exit code={code?.ToString() ?? "unavailable"}); supervision handed to composer");
+            ServiceExitedWhileRunning?.Invoke(code);
+            return;
+        }
+
         // 退出码 0 = 优雅退出：正常会话中壳主动停止服务前会 Stop()/Suspend()，
         // 若仍收到 0 退出按可疑处理但降级为 Warn（防误报优先）。
         if (code == 0)
@@ -603,6 +628,9 @@ public sealed class BootHealthMonitor : IDisposable
             _httpConsecutiveMisses = 0;
             _absentStreak = 0;
             _pageArmed = false;
+            // [issue #28-2] 进程层失败幂等闸门必须复位：否则运行期第 2 次服务退出
+            // （再次点 DSH 重启按钮 / 再次自更新）不会被观测到，静默自愈只生效一次。
+            _processFailureReported = false;
         }
         _trace("resumed after service restart");
         if (newPid is > 0) AttachProcess(newPid.Value);
