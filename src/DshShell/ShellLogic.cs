@@ -1514,6 +1514,23 @@ public static class ShellLogic
             => mode == ServiceLifetime.FollowWindow && shellManaged && !externallyManaged;
 
         /// <summary>
+        /// [issue #28-3 伪重启修复] 启动时端口已被**本壳上次会话残留的服务**占用时的决策：
+        /// 是就地清理后重新拉起（true），还是直接接管沿用（false）。
+        ///
+        /// 语义边界（三重门控，缺一不可）：
+        /// - <paramref name="externallyManaged"/>（DSH_WEB_URL 外部托管）→ 永远 false：不碰别人的服务；
+        /// - <paramref name="ledgerOwned"/>（PID 记录在本壳账本里）→ 必须为 true：
+        ///   账本外的健康 node（用户自己在终端 `dsh web` 起的）绝不清理，沿用既有"健康服务不杀也不动"语义；
+        /// - 驻留模式：AlwaysOn（常驻）→ false（"秒进"就是该模式的设计意图，node 本该一直活着）；
+        ///   FollowWindow / Tray → true：这两种模式要求服务跟随壳结束，残留只可能来自上次会话
+        ///   异常终止（崩溃/被杀）。沿用旧进程会让"关窗重开"永远命中同一个 node——
+        ///   用户报告："退出后重启软件是秒进，插件装了却不生效，只有重启系统才好"（伪重启）。
+        ///   就地清理后由启动链正常拉起，插件/配置改动才会真正生效。
+        /// </summary>
+        internal static bool ShouldRestartLeftoverService(ServiceLifetime mode, bool ledgerOwned, bool externallyManaged)
+            => !externallyManaged && ledgerOwned && mode != ServiceLifetime.AlwaysOn;
+
+        /// <summary>
         /// [F21] 单实例 mutex 名：绑定目标服务端口——同端口即同实例组，不同端口
         /// （DSH_WEB_PORT 覆盖）互不干扰。字符串漂移曾无门禁，契约测试锁定格式
         /// （Program 的 FindWindow 主窗定位逻辑依赖与此互恰的窗口标题约定）。
@@ -2352,5 +2369,43 @@ public static class ShellLogic
         /// </summary>
         public static bool ShouldUseSystemToast(int osMajor, int osMinor, int osBuild)
             => osMajor == 10 && osBuild >= 22000;
+    }
+
+    /// <summary>
+    /// 托盘菜单"退出"条目版式纯函数（issue #28-1 回归修复）。
+    ///
+    /// 【事故】用户截图指出托盘右键菜单的"退出"条目 UI 异常：电源图标与"退 出"两字之间
+    /// 出现明显空档，整行观感断裂。根因在渲染侧的"测量/绘制内边距"叠加——
+    /// <c>TextRenderer.MeasureText</c>/<c>DrawText</c> 默认（非 NoPadding）会在两侧各加约 4-5px
+    /// 内边距（实测 Noto Sans SC 10pt：默认 23px vs NoPadding 14px = 每侧 4.5px），
+    /// 旧实现又额外给首字矩形 <c>+4*s</c> 宽度，于是"字距 2px"的设计意图被放大成
+    /// ≈11px（1x）/ 22px（2x）的视觉空档。
+    ///
+    /// 本纯函数只做"给定各段实测宽度 → 居中排布坐标"，与 GDI+ 无关，可契约测试；
+    /// 调用方必须用 <c>TextFormatFlags.NoPadding</c> 测量与绘制，使"矩形边界 = 字形边界"，
+    /// 字距就等于 <paramref name="letterSpacing"/>。
+    /// </summary>
+    public static class TrayMenuLayout
+    {
+        /// <summary>退出条目排布结果：图标中心 X / 两字左边界 X / 内容总宽。</summary>
+        internal readonly record struct ExitRowPlacement(int IconCenterX, int FirstCharX, int SecondCharX, int ContentWidth);
+
+        /// <summary>
+        /// 计算"电源图标 + '退' + letterSpacing + '出'"在条目矩形内的居中排布（单位=像素，左对齐原点）。
+        /// 不变量：<c>SecondCharX - (FirstCharX + firstCharWidth) == letterSpacing</c>（字距不被任何内边距放大）。
+        /// </summary>
+        internal static ExitRowPlacement PlaceExitRow(
+            int itemX, int itemWidth, int iconSize, int gap,
+            int firstCharWidth, int secondCharWidth, int letterSpacing)
+        {
+            var contentWidth = iconSize + gap + firstCharWidth + letterSpacing + secondCharWidth;
+            var startX = itemX + (itemWidth - contentWidth) / 2;
+            var firstX = startX + iconSize + gap;
+            return new ExitRowPlacement(
+                IconCenterX: startX + iconSize / 2,
+                FirstCharX: firstX,
+                SecondCharX: firstX + firstCharWidth + letterSpacing,
+                ContentWidth: contentWidth);
+        }
     }
 }

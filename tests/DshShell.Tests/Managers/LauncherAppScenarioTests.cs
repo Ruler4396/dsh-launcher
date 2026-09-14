@@ -52,8 +52,7 @@ namespace DshShell.Tests.Managers;
     // ---------------- 场景 1b：运行期关停汇入状态机（F13） ----------------
 
     [Fact]
-    public async Task RequestShutdown_AfterRunning_TransitionsToShuttingDown_F13()
-    {
+    public async Task RequestShutdown_AfterRunning_TransitionsToShuttingDown_F13()    {
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
         var states = Trace(app);
         Assert.True(await app.RunStartupAsync());
@@ -252,6 +251,65 @@ namespace DshShell.Tests.Managers;
         var text = File.ReadAllText(pendingPath);
         Assert.Contains("\"version\":\"1.2.3\"", text);
         Assert.Contains("\"tarball\":\"deepseek-ai-dsh-1.2.3.tgz\"", text);
+    }
+
+    // ---------------- [issue #28-3] 健康残留服务：清理重启 vs 沿用接管 ----------------
+
+    [Fact]
+    public async Task HealthyLeftover_ShellOwned_RestartsInsteadOfAdopting_28()
+    {
+        // 端口上已是健康服务 + 策略判定"这是本壳上次会话的残留 + 驻留模式要求服务跟随壳"
+        // → 必须就地清理后重新拉起（插件/配置改动才生效，用户报告的"伪重启"根因）
+        var service = new FakeService { Ready = true, PortState = ShellLogic.ServicePortState.Healthy };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            RestartHealthyLeftoverPolicy = () => true,
+        };
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(1, service.KillZombieCalls);       // 残留被清理
+        Assert.Equal(1, service.StartCalls);            // 随后由本壳重新拉起
+        Assert.True(app.ServiceStartedByShell);         // 关停语义随之为"壳拥有"（不残留无主服务）
+        Assert.Equal(LifecycleState.Running, app.State);
+    }
+
+    [Fact]
+    public async Task HealthyLeftover_NotShellOwned_IsAdoptedUnchanged_28()
+    {
+        // 账本外/常驻模式/外部托管：沿用既有"健康服务不杀也不动"语义（绝不误杀用户自己的 node）
+        var service = new FakeService { Ready = true, PortState = ShellLogic.ServicePortState.Healthy };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            RestartHealthyLeftoverPolicy = () => false,
+        };
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(0, service.KillZombieCalls);
+        Assert.Equal(0, service.StartCalls);
+        Assert.False(app.ServiceStartedByShell);
+        Assert.Equal(LifecycleState.Running, app.State);
+    }
+
+    [Fact]
+    public async Task HealthyLeftover_KillFails_FallsBackToUsableService_28()
+    {
+        // 清理失败（杀不干净/端口未释放）：保底继续用旧服务，绝不把"可用界面"变成"启不来"
+        var service = new FakeService
+        {
+            Ready = true,
+            PortState = ShellLogic.ServicePortState.Healthy,
+            KillZombieResult = false,
+        };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            RestartHealthyLeftoverPolicy = () => true,
+        };
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(1, service.KillZombieCalls);
+        Assert.Equal(0, service.StartCalls);            // 未重新拉起（沿用旧服务）
+        Assert.False(app.ServiceStartedByShell);
+        Assert.Equal(LifecycleState.Running, app.State);
     }
 
     /// <summary>每测试用一次性临时目录（与 UpdateFlowContractTests 同风格）。</summary>

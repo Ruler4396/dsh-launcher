@@ -54,7 +54,69 @@ tag v0.4.0 首推指向无 changelog 小节的提交 → fallback 文案被发�
 
 ---
 
-## 1. 自动更新因果链
+## 0.1 v0.4.6 issue #28 修复批注（2026-09：版本徽标闪退 / 托盘退出条目 / 运行期重启弹窗 / 伪重启）
+
+> 铁律第 1/3 步：先定位 Bug 节点，再标修复点并检查上下游身份传递。
+
+### 落点 1：版本信息窗崩溃链（"点版本号卡死→闪退"，P0）
+```
+CustomTitleBar.OnMouseDown（版本徽标命中）
+  → Program.ShowVersionInfoDialog → VersionInfoDialog.ShowDialog(owner)
+  → 【崩溃节点】WinForms 焦点变化 → Control.WmSetFocus / WmImeKillFocus
+     → ImeContext.SetImeStatus(ImeMode) → ImeContext.Disable/Enable
+     → ImmSetOpenStatus(第三方 IME 的无效 HIMC) → native AV 0xc0000005（coreclr 内）
+     → 进程 fail-fast（E9001 都来不及写）→ 被用户描述为"闪退"
+  → 【修复点】Win32/ImeContextGuard.Harden(form)：句柄创建即 ImmAssociateContext(hwnd, NULL)
+     → ImeContext.GetImeMode(hwnd) == Disable、IsOpen(hwnd) == false
+     → UpdateImeContextMode 短路 / Disable() 跳过 SetOpenStatus / PropagatingImeMode 不初始化
+     → ImmSetOpenStatus 路径整体不可达
+```
+**证据**：事件日志 Application Error 1000（DshWeb.exe / 异常 0xc0000005 / 故障模块 coreclr.dll）
++ .NET Runtime 1026 托管栈（两条路径见 CHANGELOG）；`dsh.log` 中 14:17:20 版本弹窗拉取成功
+与 14:17:24 崩溃时间戳吻合，且两次崩溃栈都含 `ShowVersionInfoDialog ← OnMouseDown`。
+**身份传递检查**：本修复不触碰 `DshRuntimeIdentity`/版本发现链，仅改 UI 层的 IME 上下文归属；
+`DshDiscovery` → `VersionInfoDialog` 的当前版本入参语义不变。
+**回归测试**：`Regression_Issue28_ImeContextCrash.RealOs`（真实 imm32 + 真实窗体/弹窗，零 Mock）。
+
+### 落点 2：运行期服务退出 → 启动自检弹窗（issue #28 第 2 点）
+```
+用户点 DSH 自带重启按钮 → node 服务进程退出
+  → 【误判节点】BootHealthMonitor.OnProcessExited → Report(E2007) → HandleBootHealthFailed
+     → "dsh 启动自检未通过（[E2007]）… 是否重启 dsh 服务？" 弹窗（用户看到的"异常弹窗"）
+  → 【修复点】_state == Healthy 时改抛 ServiceExitedWhileRunning
+     → Program.HandleRuntimeServiceExit：Suspend（探针不判死）→ RestartDshServiceCoreAsync
+        （停服 → StartDshServiceViaIdentity → WaitForFreshServiceToken → 就绪 → ResumeAfterRestart）
+     → 页面重新导航；失败或冷却窗内超 3 次才升级为可见询问
+```
+**身份传递检查**：重启仍走唯一身份入口 `StartDshServiceViaIdentity()`（`DiscoverCurrentRuntime`
+→ `ServiceManager.Start(identity)`），与更新应用/安全模式切换同源；未新增旁路拉起。
+**回归测试**：`Regression_Issue28_RuntimeServiceRestartTests`（Healthy 前后退出语义 + 幂等闸门复位）。
+
+### 落点 3：启动接管残留服务 → 伪重启（issue #28 第 3 点）
+```
+启动 → Splash 流水线 → ServiceManager.ProbePort == Healthy（端口上已有 node 服务）
+  → 【误判节点】needsStart=false → ServiceStartedByShell=false → Program.TryAdoptOrphanService
+     → 沿用上次会话的旧 node（插件/配置改动永不生效；关窗重开"秒进"）
+  → 【修复点】LauncherApp.RestartHealthyLeftoverPolicy（组合根注入）
+     = ShouldRestartLeftoverService(驻留模式) × 账本内 PID × 非外部托管
+     → KillZombieTree（就地清理）→ 按正常链路重新拉起 → ServiceStartedByShell=true
+```
+**身份传递检查**：账本判定复用 `ServiceLifecycleOps.PidFilePath`（与 `TryAdoptOrphanService`
+同一账本，不新增第二真相源）；清理只针对账本内 PID，账本外 node 沿用 F4"绝不误杀"铁律。
+**回归测试**：`ShellLogicServiceLifecycleTests.ShouldRestartLeftoverService_Matrix` +
+`LauncherAppScenarioTests`（清理重启/沿用/清理失败保底 三例）。
+
+### 落点 4：托盘"退出"条目字距异常（issue #28 第 1 点）
+```
+TrayMenuForm.Draw → 【缺陷节点】TextRenderer 默认内边距（每字两侧 ~4-5px）
+  + 首字矩形额外 +4*s → 字距被放大成 ≈11px(1x)/22px(2x)
+  → 【修复点】NoPadding 测量与绘制 + 纯函数 ShellLogic.TrayMenuLayout.PlaceExitRow
+```
+**回归测试**：`TrayMenuLayoutContractTests`（字距精确/居中）+ `Regression_Issue28_TrayExitRow.RealOs`
+（真实渲染像素：两字墨迹空档 ≤ 半个字宽；回退旧实现必红）。
+
+---
+
 
 用户打开壳 → 检测新版 → 下载 → 下次启动自动安装 → **验证 Identity 真的变了**。
 

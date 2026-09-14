@@ -37,8 +37,12 @@ public static class UiTestHook
     /// 启动 NamedPipe 服务循环：每连接处理一条命令后关闭连接。ct 取消即退出。
     /// 由 RunUiProbe 在 Application.Run 前后台任务驱动。
     /// 收到 Shutdown 命令时调用 <paramref name="onShutdown"/>（组合根注入关窗动作，实现优雅退出）。
+    /// 收到 ShowVersionDialog 命令时调用 <paramref name="onShowVersionDialog"/>（组合根注入
+    /// "版本徽标点击"的真实入口 <c>Program.ShowVersionInfoDialog</c>——issue #28-2 崩溃复现路径：
+    /// 该弹窗的打开/关闭正是 0xc0000005 现场，E2E 据此断言进程存活）。
     /// </summary>
-    public static async Task RunAsync(IntPtr hwnd, CancellationToken ct, Action? onShutdown = null)
+    public static async Task RunAsync(IntPtr hwnd, CancellationToken ct, Action? onShutdown = null,
+        Action? onShowVersionDialog = null, Func<VersionBadgeRect?>? versionBadgeRect = null)
     {
         while (!ct.IsCancellationRequested)
         {
@@ -60,7 +64,7 @@ public static class UiTestHook
                 {
                     var line = await reader.ReadLineAsync(ct);
                     if (line is null) break; // 客户端关闭连接 → 本连接结束
-                    var reply = HandleCommand(line, hwnd);
+                    var reply = HandleCommand(line, hwnd, onShowVersionDialog, versionBadgeRect);
                     writer.WriteLine(reply);
                     if (IsShutdownReply(reply)) onShutdown?.Invoke();
                 }
@@ -80,7 +84,15 @@ public static class UiTestHook
         catch { return false; }
     }
 
-    private static string HandleCommand(string line, IntPtr hwnd)
+    /// <summary>版本徽标的屏幕矩形（物理像素；由生产 OnPaint 计算的命中矩形换算而来）。</summary>
+    public readonly record struct VersionBadgeRect(int Left, int Top, int Right, int Bottom)
+    {
+        public int CenterX => (Left + Right) / 2;
+        public int CenterY => (Top + Bottom) / 2;
+    }
+
+    private static string HandleCommand(string line, IntPtr hwnd, Action? onShowVersionDialog,
+        Func<VersionBadgeRect?>? versionBadgeRect)
     {
         try
         {
@@ -91,6 +103,8 @@ public static class UiTestHook
                 "ToggleMaximize" => ToggleMaximize(hwnd),
                 "GetWindowRect" => RectJson(GetWindowRect(hwnd)),
                 "GetWorkArea" => RectJson(GetMonitorWorkArea(hwnd)),
+                "ShowVersionDialog" => InvokeVersionDialog(onShowVersionDialog),
+                "GetVersionBadgeRect" => VersionBadgeRectJson(versionBadgeRect),
                 "Shutdown" => """{"ok":true,"shutdown":true}""",
                 _ => """{"ok":false,"error":"unknown command"}""",
             };
@@ -99,6 +113,23 @@ public static class UiTestHook
         {
             return "{\"ok\":false,\"error\":\"" + JsonEscape(ex.Message) + "\"}";
         }
+    }
+
+    /// <summary>回传版本徽标命中矩形（屏幕物理像素）：E2E 据此做**真实鼠标点击**，
+    /// 走完 CustomTitleBar 命中测试 → VersionClick → 弹窗开关 全链路（issue #28-2）。</summary>
+    private static string VersionBadgeRectJson(Func<VersionBadgeRect?>? versionBadgeRect)
+    {
+        var rect = versionBadgeRect?.Invoke();
+        if (rect is not { } r) return """{"ok":false,"error":"version badge not rendered"}""";
+        return $"{{\"ok\":true,\"left\":{r.Left},\"top\":{r.Top},\"right\":{r.Right},\"bottom\":{r.Bottom}}}";
+    }
+
+    /// <summary>触发真实的"版本徽标点击"路径（模态弹窗，本方法立即返回，不阻塞 pipe 循环）。</summary>
+    private static string InvokeVersionDialog(Action? onShowVersionDialog)
+    {
+        if (onShowVersionDialog is null) return """{"ok":false,"error":"version dialog hook not wired"}""";
+        onShowVersionDialog();
+        return """{"ok":true,"shown":true}""";
     }
 
     private static string ToggleMaximize(IntPtr hwnd)

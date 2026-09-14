@@ -45,6 +45,9 @@ internal sealed class TrayMenuForm : Form
         Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
         BackColor = Color.White;
         _exitFont = CreateExitFont();
+        // [2026-09 IME 崩溃护栏] 托盘菜单弹出时会 Activate() 抢占激活，焦点变化同样会走 WinForms
+        // 的 ImeContext 路径（第三方 IME 上 ImmSetOpenStatus 访问违规），必须解绑 IME 上下文。
+        Win32.ImeContextGuard.Harden(this);
     }
 
     /// <summary>菜单字体回退链：Noto Sans SC（思源黑体）→ DengXian（等线，Win10/11 自带）
@@ -170,21 +173,27 @@ internal sealed class TrayMenuForm : Form
         }
     
         // 内容：红色电源图标 + 黑色"退出"（13px 常规、字距 2px，紧凑版式）
+        // [issue #28-1 回归修复] 测量/绘制必须带 NoPadding：
+        // TextRenderer 默认 flags 会在每侧加 ~4-5px 内边距（实测 Noto Sans SC 10pt：
+        // 默认 23px/字 vs NoPadding 14px/字），旧实现还额外给首字矩形 +4*s 宽度——
+        // 两者叠加把"字距 2px"放大成 ~11px（1x）/ 22px（2x）的视觉空档（用户截图报的
+        // "退出按钮 UI 异常"）。现在矩形边界 = 字形边界，字距严格等于 letterSpacing。
         int iconSize = (int)(18 * s);
         int gap = (int)(12 * s);
         int letterSpacing = (int)(2 * s);
-        var m1 = TextRenderer.MeasureText(g, "退", _exitFont);
-        var m2 = TextRenderer.MeasureText(g, "出", _exitFont);
-        int totalW = iconSize + gap + m1.Width + letterSpacing + m2.Width;
-        int x = item.X + (item.Width - totalW) / 2;
-    
-        DrawPowerIcon(g, x + iconSize / 2f, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
-    
-        int tx = x + iconSize + gap;
-        var r1 = new Rectangle(tx, item.Y, m1.Width + (int)(4 * s), item.Height);
-        TextRenderer.DrawText(g, "退", _exitFont, r1, TextBlack, TextFormatFlags.VerticalCenter);
-        var r2 = new Rectangle(tx + m1.Width + letterSpacing, item.Y, m2.Width + (int)(4 * s), item.Height);
-        TextRenderer.DrawText(g, "出", _exitFont, r2, TextBlack, TextFormatFlags.VerticalCenter);
+        var m1 = TextRenderer.MeasureText(g, "退", _exitFont, Size.Empty, TextFormatFlags.NoPadding);
+        var m2 = TextRenderer.MeasureText(g, "出", _exitFont, Size.Empty, TextFormatFlags.NoPadding);
+        var place = ShellLogic.TrayMenuLayout.PlaceExitRow(
+            item.X, item.Width, iconSize, gap, m1.Width, m2.Width, letterSpacing);
+
+        DrawPowerIcon(g, place.IconCenterX, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
+
+        const TextFormatFlags textFlags = TextFormatFlags.VerticalCenter
+            | TextFormatFlags.NoPadding | TextFormatFlags.Left;
+        var r1 = new Rectangle(place.FirstCharX, item.Y, m1.Width, item.Height);
+        TextRenderer.DrawText(g, "退", _exitFont, r1, TextBlack, textFlags);
+        var r2 = new Rectangle(place.SecondCharX, item.Y, m2.Width, item.Height);
+        TextRenderer.DrawText(g, "出", _exitFont, r2, TextBlack, textFlags);
     }
 
     /// <summary>电源图标，复刻「电源.svg」（#D81E06，顶部开口圆环 + 圆头竖线）。

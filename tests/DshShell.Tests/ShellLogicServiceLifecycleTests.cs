@@ -32,6 +32,24 @@ public class ShellLogicServiceLifecycleTests
         => Assert.True(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
             ShellLogic.ServiceLifetime.FollowWindow, externallyManaged: false, shellManaged: true));
 
+    // ---------------- [issue #28-3] ShouldRestartLeftoverService（伪重启矩阵） ----------------
+    // 语义：端口上已是健康服务 + 本壳账本记录过（上次会话异常终止的残留）+ 驻留模式要求服务跟随壳
+    // → 必须清理重启（否则"关窗重开"永远命中同一个旧 node：秒进但插件不生效）。
+
+    [Theory]
+    [InlineData(2, true, false, true)]    // FollowWindow + 账本内 + 非外部 → 重启（核心修复点）
+    [InlineData(1, true, false, true)]    // Tray + 账本内 + 非外部 → 重启
+    [InlineData(0, true, false, false)]   // AlwaysOn → 不重启（"秒进"是该模式的设计意图）
+    [InlineData(2, false, false, false)]  // 账本外（用户自己在终端 dsh web 起的）→ 绝不清理
+    [InlineData(1, false, false, false)]  // 同上（Tray）
+    [InlineData(2, true, true, false)]    // 外部托管（DSH_WEB_URL）→ 恒不碰
+    [InlineData(0, false, true, false)]   // AlwaysOn + 账本外 + 外部托管 → 不重启
+    public void ShouldRestartLeftoverService_Matrix(int modeInt, bool ledgerOwned, bool external, bool expected)
+    {
+        var mode = (ShellLogic.ServiceLifetime)modeInt;
+        Assert.Equal(expected, ShellLogic.LifecycleDecisions.ShouldRestartLeftoverService(mode, ledgerOwned, external));
+    }
+
     // ---------------- T2: ResolvePendingUpdateAction（矩阵 U2，≥4 例） ----------------
 
     [Fact]

@@ -53,6 +53,14 @@ public sealed class LauncherApp
     /// Headless 测试注入 Fake 断言"超时清理被触发"——见 LauncherAppScenarioTests）。</summary>
     public Action<int>? StaleCleanup => _staleCleanup;
 
+    /// <summary>
+    /// [issue #28-3 伪重启修复] 端口上已是"健康服务"时，是否仍需就地清理并重新拉起。
+    /// 返回 true = "这是本壳上次会话的残留服务，且当前驻留模式要求服务跟随壳"——必须重启才能让
+    /// 插件/配置改动生效（否则用户看到的永远是同一个旧 node：秒进但插件不生效）。
+    /// 组合根注入（内含端口占用者 + 身份账本 + 驻留模式三重门控）；null = 沿用旧语义（健康即接管）。
+    /// </summary>
+    public Func<bool>? RestartHealthyLeftoverPolicy { get; set; }
+
     // ---------------- 目标服务（env 解析，契约与 ShellLogic.ResolveTarget 一致） ----------------
 
     /// <summary>DSH_WEB_PORT 覆盖的端口（缺省 3080）。</summary>
@@ -215,6 +223,28 @@ public sealed class LauncherApp
         var portState = ServerManagedExternally
             ? ShellLogic.ServicePortState.Healthy // 外部托管：不拉起、不清理，直接探测就绪
             : await Task.Run(() => _service.ProbePort(Port, Url), ct);
+
+        // [issue #28-3 伪重启修复] 健康残留服务 + 本壳必须自己持有（FollowWindow/Tray）+
+        // 该服务正是本壳账本记录的残留 → 就地清理，走正常拉起（插件/配置改动才真正生效）。
+        // 三重门控全在纯函数 ShouldRestartLeftoverService 内（外部托管/账本外 node/常驻模式均不清理）。
+        if (portState == ShellLogic.ServicePortState.Healthy && !ServerManagedExternally
+            && RestartHealthyLeftoverPolicy?.Invoke() == true)
+        {
+            progress?.Report("检测到上次会话残留的 dsh 服务，正在重启以加载最新配置…");
+            Logger.Info($"[leftover] shell-owned leftover service on port {Port}; "
+                + "lifetime mode requires shell-owned service → restarting", ctx: new { port = Port });
+            var cleaned = await Task.Run(() => _service.KillZombieTree(Port), ct);
+            if (cleaned)
+            {
+                portState = ShellLogic.ServicePortState.Closed; // 端口已释放 → 正常拉起新服务
+            }
+            else
+            {
+                // 清理失败（杀不干净/端口未释放）：保底继续用旧服务，绝不把可用界面变成启不来
+                Logger.Warn($"[leftover] failed to stop leftover service on port {Port}; continuing with it",
+                    ErrorCodes.E2005, new { port = Port });
+            }
+        }
 
         // Zombie 清理成功 / Closed → 正常拉起；Healthy → 跳过拉起。统一为 bool 决策，
         // 避免 switch 内 goto 穿透到后续语句（HappyPath 测试暴露：break 后落入 StartService 块

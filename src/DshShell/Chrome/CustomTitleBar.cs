@@ -175,6 +175,10 @@ internal sealed class CustomTitleBar : Panel
         }
     }
 
+    /// <summary>版本徽标命中矩形（OnPaint 计算，客户区坐标；空 = 无徽标）。
+    /// 供点击命中测试与 E2E TestHook（真实鼠标点击坐标）读取。</summary>
+    internal Rectangle GetVersionBadgeRect() => _versionRect;
+
     private void ShowSystemMenu(Point p)
     {
         try

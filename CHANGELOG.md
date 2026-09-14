@@ -6,6 +6,49 @@
 
 ### 修复
 
+- **点击标题栏版本徽标导致启动器闪退（issue #28-2，0xc0000005）**：用户报告"点击左上角版本号
+  会卡死无法关闭然后闪退"。事件日志实证（Application Error 1000 + .NET Runtime 1026，异常码
+  `0xc0000005`、故障模块 `coreclr.dll`）两条托管栈均以 `ImmSetOpenStatus` 结尾，且都经过
+  `Program.ShowVersionInfoDialog ← CustomTitleBar.OnMouseDown`：
+  - 弹窗打开：`Label.WndProc WM_SETFOCUS → Control.WmSetFocus → UpdateImeContextMode →
+    ImeContext.SetImeStatus(Disable) → ImeContext.Disable → SetOpenStatus → ImmSetOpenStatus`；
+  - 弹窗关闭：`Label.WndProc WM_KILLFOCUS → Control.WmImeKillFocus → SetImeStatus →
+    SetOpenStatus → ImmSetOpenStatus`。
+  机理：WinForms 按 ImeMode 经 `ImeContext` 落地 IME 状态，而第三方输入法（本机实测手心输入法
+  PalmInput 3.2.9）会给壳自有 WinForms 窗口返回不可用 HIMC，`ImmSetOpenStatus` 随即 native AV
+  ——托管层不可 catch，进程直接消失（连 E9001 都写不出来）。
+  修复：新增 **`Win32/ImeContextGuard`** 护栏，在句柄创建时对壳自有窗口（含全部子控件、含后续
+  `ControlAdded` 动态控件）执行 `ImmAssociateContext(hwnd, NULL)`；此后 WinForms 侧
+  `ImeContext.GetImeMode` 恒为 `Disable`、`IsOpen` 恒 false —— `UpdateImeContextMode` 在
+  `CurrentImeContextMode == newImeContextMode` 处短路、`Disable()` 不再调用 `SetOpenStatus`、
+  `WmImeKillFocus` 的 `PropagatingImeMode` 保持未初始化，整条 `ImmSetOpenStatus` 路径不可达。
+  已接入 `DshShellForm`（主窗/弹窗）、`VersionInfoDialog`、`SplashForm`、`TrayMenuForm`。
+  页面输入法不受影响：Chromium 只在自己的 HWND 上关联输入上下文。
+- **托盘右键菜单"退出"条目 UI 异常（issue #28-1）**：电源图标与"退 出"两字之间出现明显空档
+  （用户截图）。根因是**测量/绘制内边距被叠加进字距**：`TextRenderer` 默认 flags 每字两侧各加
+  ~4-5px（实测 Noto Sans SC 10pt：默认 23px vs `NoPadding` 14px），旧实现又给首字矩形额外
+  `+4*s` 宽度，"字距 2px"被放大成 ≈11px（1x）/ 22px（2x）。修复：测量与绘制统一
+  `TextFormatFlags.NoPadding`（矩形边界=字形边界），排布坐标下沉为纯函数
+  `ShellLogic.TrayMenuLayout.PlaceExitRow`（字距严格等于 letterSpacing + 整行居中，可契约测试）。
+- **服务在运行中被重启 → 必然弹"启动自检未通过"异常弹窗（issue #28 第 2 点）**：用户在 DSH
+  插件市场装完插件、点 DSH 自带的重启按钮后服务进程退出，旧实现一律按 E2007"启动自检失败"
+  弹"是否重启 dsh 服务"询问框。修复：`BootHealthMonitor` 新增
+  `ServiceExitedWhileRunning` 事件——**启动自检已通过（Healthy）之后的任何进程退出（含 exit 0）
+  改走运行期自愈**：组合根立即 `Suspend`（HTTP/页面探针不再判死）→ 身份驱动重启服务 →
+  等新 token → 60s 就绪等待 → `ResumeAfterRestart`（重挂进程层）→ 重新导航页面；
+  仅在自愈失败或同一冷却窗内连续超限（3 次）时才升级为可见提示/询问。自检未通过的退出仍保持
+  E2007 失败裁决（启动失败必须可见）；`ResumeAfterRestart` 同时复位进程层幂等闸门，
+  保证第 2、3 次"点 DSH 重启"仍会被观测到。共用重启链抽为
+  `Program.RestartDshServiceCoreAsync`（安全模式/询问/自愈三处同源）。
+- **伪重启：关窗重开"秒进"且新装插件不生效（issue #28 第 3 点）**：驻留模式为
+  FollowWindow/Tray 时服务本应随壳结束，残留只可能来自上次会话异常终止（崩溃/被杀）；
+  旧实现不区分"残留"与"用户自己的服务"，一律健康即接管——用户于是永远命中同一个旧 node
+  （插件装了不生效，只有重启系统才好）。修复：新增纯函数
+  `ShellLogic.LifecycleDecisions.ShouldRestartLeftoverService`（三重门控：非外部托管 ×
+  本壳 PID 账本内 × 驻留模式要求服务跟随壳），命中即就地清理并按正常链路重新拉起；
+  账本外（用户自己在终端 `dsh web` 起的）与 AlwaysOn（"秒进"是设计意图）一律维持既有
+  "健康服务不杀也不动"语义；清理失败则保底沿用旧服务，绝不把可用界面变成启不来。
+
 - **Win10 WPN 崩溃护栏（issue #25）**：特定 WPN 版本（`wpnapps.dll 10.0.19041.7663`
   等 2024-2025 更新推送组件）在 Win10 上显示系统 Toast 时原生崩溃
   （Application Error 1000：错误模块 `wpnapps.dll`、异常 `0xc0000005`、偏移固定
@@ -34,6 +77,25 @@
   服务健康时不受影响；追踪器随新进程替换复位，旧会话退出不污染新会话判定。
 
 ### 测试
+
+- 新增 `Regression_Issue28_ImeContextCrash.RealOs`（零 Mock，真实 imm32）：① 显式给窗口关联真实
+  IME 上下文 → 护栏解绑后 `ImmGetContext == NULL` 且 `ImeContext.GetImeMode == Disable`（机制证明，
+  本机实测护栏前为 `ImeMode.Close`——正是 `WmImeKillFocus → SetOpenStatus` 的触发态）；
+  ② 真实版本信息窗 14 个窗口句柄（含 `LinkLabel` 崩溃现场）全部无 IME 上下文；
+  ③ 真实 `ShowDialog` 打开/关闭三轮（崩溃路径 A/B）进程存活；④ 真实 Show+Focus 后护栏不被 IME 反向关联。
+- 新增 E2E `UiTestHookE2ETests.RealMouseClick_OnVersionBadge_OpensDialog_AndProcessSurvives_Issue28`
+  （真机验证）：真实 `DshWeb.exe` 探针窗 + **真实鼠标输入**（SetCursorPos + mouse_event）点击标题栏
+  版本徽标 → 断言弹窗出现/关闭且进程存活；配套 TestHook 命令 `GetVersionBadgeRect`（读生产
+  OnPaint 命中矩形，避免测试里复制排版算法）。
+- 新增 `Regression_Issue28_TrayExitRow.RealOs`（零 Mock，真实渲染）：反射调用生产
+  `TrayMenuForm.Draw` 渲染位图，统计"退/出"两字墨迹空档并断言 ≤ 半个字宽——已用旧实现反向验证
+  （空档 12px 必红）。配套 `TrayMenuLayoutContractTests` 锁定纯函数不变量（字距精确 + 居中，10 例）。
+- 新增 `Regression_Issue28_RuntimeServiceRestartTests`（Headless 状态机 4 例）：Healthy 后非零/零
+  退出均抛 `ServiceExitedWhileRunning` 且不判 failed；未 Healthy 仍保持 E2007；`ResumeAfterRestart`
+  复位幂等闸门（第 2 次退出仍被观测）。
+- `ShellLogicServiceLifecycleTests` 新增 `ShouldRestartLeftoverService_Matrix` 7 例；
+  `LauncherAppScenarioTests` 新增健康残留服务三例（壳自有→清理重启 / 非壳自有→沿用接管 /
+  清理失败→保底沿用且界面可用）。
 
 - 新增 `ServiceReadinessContractTests`（issue #26 裁决串精确值/退出码语义 6 例/裁决→错误码
   映射含 E2010、null/未知回退 E9001）；`PollReadinessTests` 新增 `ServiceProcessExited*` 四例

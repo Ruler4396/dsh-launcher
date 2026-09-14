@@ -40,6 +40,11 @@ internal sealed class DshShellForm : Form
         // 本应用页面输入法由 WebView2（Chromium）内部处理，Form 无需 WinForms IME 介入。
         // 重写 ImeMode + 控件级 ImeMode.Disable（Program 建窗处）双保险，跳过 ImeContext。
         ImeMode = ImeMode.Disable;
+        // [2026-09 崩溃根治] ImeMode.Disable 只是"期望语义"——WinForms 仍会经
+        // ImeContext.Disable → ImmSetOpenStatus 落地它，第三方 IME（PalmInput 等）在该调用上
+        // 必崩（Application Error 0xc0000005，托管栈 WmSetFocus/WmImeKillFocus → ImmSetOpenStatus）。
+        // ImeContextGuard 在句柄创建时直接 ImmAssociateContext(NULL)，让整条 ImeContext 路径短路。
+        ImeContextGuard.Harden(this);
     }
 
     protected override CreateParams CreateParams
