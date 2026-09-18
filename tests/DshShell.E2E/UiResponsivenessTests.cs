@@ -46,8 +46,19 @@ public class UiResponsivenessTests
                 cf => cf.ByName("取消"), TimeSpan.FromSeconds(3));
             Assert.NotNull(cancel);
             Assert.False(cancel.IsOffscreen, "取消按钮 IsOffscreen=true（不可见）");
-            Assert.True(cancel.BoundingRectangle.Width >= 60 && cancel.BoundingRectangle.Height >= 20,
-                $"取消按钮 BoundingRectangle 异常（渲染不完整）：{cancel.BoundingRectangle}");
+            // [issue #28-2] 断言改成**派生不变量**。旧写法 `>=60 x >=20` 是抄自 SplashForm 的
+            // 硬编码物理像素常量——而"框不随 DPI 放大"正是缺陷本身，于是它在任何缩放下恒真、
+            // 什么也测不出来。现在要求按钮尺寸/位置与**窗口自身矩形**成比例：
+            // 100% 与 200% 下比例一致（缩放正常）；200% 下若框仍是硬编码 60x22 则必然跌破下限。
+            var winRect = splash.BoundingRectangle;
+            var cancelRect0 = cancel.BoundingRectangle;
+            Assert.True(winRect.Width > 0 && winRect.Height > 0 && cancelRect0.Width > 0,
+                $"UIA 矩形无效：win={winRect} cancel={cancelRect0}");
+            Assert.True(cancelRect0.Right <= winRect.Right + 2 && cancelRect0.Bottom <= winRect.Bottom + 2,
+                $"取消按钮越出窗口矩形：cancel={cancelRect0} win={winRect}");
+            Assert.True(cancelRect0.Width >= winRect.Width * 0.12
+                        && cancelRect0.Height >= winRect.Height * 0.09,
+                $"取消按钮相对窗口过小（控件未随 DPI 放大？issue #28-2）：cancel={cancelRect0} win={winRect}");
 
             // 阶段 0 会覆盖状态文本为"正在准备启动环境…"（v0.4.0 文案）
             var status = await WaitForDescendantAsync(splash,

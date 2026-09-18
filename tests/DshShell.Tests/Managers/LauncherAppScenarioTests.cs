@@ -312,6 +312,40 @@ namespace DshShell.Tests.Managers;
         Assert.Equal(LifecycleState.Running, app.State);
     }
 
+    // ---------------- [issue #28-4] 启动路径与重启路径共用同一条安全模式 profile 判定 ----------------
+
+    [Fact]
+    public async Task StickySafeMode_BootStart_CarriesSameSafeProfileAsRestart_28()
+    {
+        // 事故：粘滞的 safe-mode.json 只被重启路径读到 —— 启动带全套插件，点 DSH 内置重启插件消失。
+        // 现在初始拉起同样经组合根注入的装饰钩子，两侧身份一致。
+        var service = new FakeService { Ready = true, PortState = ShellLogic.ServicePortState.Closed };
+        var app = new LauncherApp(new FakeRuntime(), service)
+        {
+            ServiceIdentityDecorator = id => DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
+                id, safeModeActive: true, @"C:\Users\x\.dsh\profiles\.dsh-safe"),
+        };
+
+        Assert.True(await app.RunStartupAsync());
+        var started = service.LastStartArgs;
+        Assert.NotNull(started);
+        Assert.True(started!.Value.Identity.IsSafeProfile,
+            "粘滞安全模式下初始拉起必须带隔离 profile（与重启路径对称）");
+        Assert.Equal(@"C:\Users\x\.dsh\profiles\.dsh-safe", started!.Value.Identity.ProfilePath);
+    }
+
+    [Fact]
+    public async Task NoDecorator_BootStart_IdentityBitForBitUnchanged_28()
+    {
+        // 未注入钩子（Headless/其它装配方）时逐位不变：本次修复不得改变默认启动身份
+        var service = new FakeService { Ready = true, PortState = ShellLogic.ServicePortState.Closed };
+        var app = new LauncherApp(new FakeRuntime(), service);
+
+        Assert.True(await app.RunStartupAsync());
+        Assert.False(service.LastStartArgs!.Value.Identity.IsSafeProfile);
+        Assert.Equal(IdentityFixtures.Launchable(), service.LastStartArgs!.Value.Identity);
+    }
+
     /// <summary>每测试用一次性临时目录（与 UpdateFlowContractTests 同风格）。</summary>
     private sealed class TempDir : IDisposable
     {
