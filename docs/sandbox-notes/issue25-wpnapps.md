@@ -104,16 +104,28 @@ wpnapps.dll（19041.7663）自身的 toast 路径缺陷。
 
 ## 遗留项（建议）
 
-1. **插件网页通知仍是唯一残留的 WPN 入口**（在 `msedgewebview2.exe` 里，由 Chromium 自己的
-   实现渲染，与宿主进程内的手写 WinRT 不是同一条路）。如果将来有 reporter 给出
-   "网页通知触发崩溃"的证据，正解是 `CoreWebView2.NotificationReceived` + `Handled=true`
-   接过来喂给 `NoticeCard`（本仓库锁的 WebView2 SDK `1.0.4129.50` 已有
-   `CoreWebView2NotificationReceivedEventArgs.Handled`）。本次没有这么做，理由是
-   "无法确定第三方插件是否走这条路"——而卡片已经是**不依赖托盘**的可靠呈现面，
-   真要接管时不再有上次"没托盘就静默丢弃"的障碍。
+1. **插件网页通知不由壳代管，且"代管"在原理上做不到全覆盖**——两条独立理由，都已核实：
+   - `CoreWebView2.NotificationReceived` 官方定义是 **"for non-persistent notifications"**
+     （`ReportClicked` 同样限定 non-persistent）。也就是说它只覆盖窗口内 `new Notification()`；
+     Service Worker 的 `showNotification()` 属于**持久通知**，不经这个事件，仍由 Chromium
+     自己经 WPN 渲染。置 `Handled=true` 挡不住这一半。
+   - dsh 插件跑在 **dsh 的 node 服务进程**里（`~/.dsh/profiles/*`，由 ServiceManager 拉起），
+     不在 WebView2 沙箱内。它在服务端自己发通知（自带 WPN 调用、PowerShell、任何 npm 包）
+     根本不经过壳，壳无从接管。
+   结论：**通知无法收敛成一条链路**，所以不做接管、也不拒权限（拒权限只会把"能用的功能"
+   换成"看不见的功能"，防护价值为零）。实测数据：本机 Win10 上放行权限后
+   `Notification.permission=granted`、`new Notification()` 构造成功并在屏幕上出现系统通知；
+   而宿主 `DshWeb.exe` 与全部 6 个 `msedgewebview2.exe` 进程**均未加载 wpnapps.dll**
+   （有界探针：只扫这两类 PID、硬墙钟上限）。"网页通知到底在哪个进程触碰 WPN"仍未钉死，
+   但它落在浏览器进程的话最坏现象是 `BrowserProcessExited`——而
+   `WebViewManager.ProcessFailed` 目前只处理 Render/Gpu 三类，**BrowserProcessExited 无人接**，
+   现象是永久白屏无自愈。**这条才是值得补的**（与 issue #25 不同的独立缺陷）。
 2. 向 reporter 索要 WER LocalDumps 崩溃转储（`HKLM\...\LocalDumps\DshWeb.exe`），确认
    `0x60c3`（Win10）/ `0x53fb`（Win11）处调用栈。通路已删除，行级根因不再是修复前提，
    但对上游反馈与"确认我们拆的是不是唯一入口"仍有价值。
 3. 卡片的已知限制：只保留最新一条可见（历史进队列，溢出丢最旧），错过就靠标题栏标记兜；
    点卡片即触发动作并收起，没有"稍后再说"按钮。若 bot 消息类通知将来需要成堆可见，
    要加的是通知中心，不是第二条通道。
+4. 观感并存（用户实测看到）：壳通知 = 右下角白底自绘卡片、不进通知中心、自动收起；
+   插件网页通知 = 左下角 OS 深色 toast、进通知中心。两套外观/两个角落是"不接管"的既定代价，
+   不是重复提示（内容不同）。旧版在 Win10 上因拒权限看不到前者、在 Win11 上两者同为系统 toast。
