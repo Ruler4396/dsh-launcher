@@ -391,10 +391,23 @@ internal static class Program
 
         // 正常模式启动：清理历史遗留的隔离 profile（Task 4）。安全模式启动时 SafeProfile.Build
         // 会幂等重建，故此处清理无副作用；若本次为安全模式则保留（服务正在使用）。
+        // [issue #28-4 数据销毁护栏] 不再无条件递归删除：在安全模式会话里装的插件就落在
+        // .dsh-safe 自己目录里（pnpm 实体化 node_modules），旧实现等于每次正常启动都
+        // 物理销毁用户刚装的东西。只有"目录里仍是壳自己写的、未被改动的产物"才允许删。
         if (!SafeMode.IsActive && SafeProfile.SafeProfileExists())
         {
-            SafeProfile.Cleanup();
-            Trace("SAFEMODE: cleaned up stale safe profile (normal mode launch)");
+            var (onlyLauncherArtifacts, manifestUnchanged) = SafeProfile.InspectForCleanup(SafeMode.Tier);
+            if (ShellLogic.SafeProfileCleanupPolicy.ShouldDelete(
+                    SafeMode.IsActive, onlyLauncherArtifacts, manifestUnchanged))
+            {
+                SafeProfile.Cleanup();
+                Trace("SAFEMODE: cleaned up stale safe profile (normal mode launch)");
+            }
+            else
+            {
+                Logger.Warn($"SAFEMODE: 隔离 profile 中存在非壳生成的内容（可能是在安全模式期间安装的插件），"
+                    + $"已保留目录不删：{SafeProfile.SafeProfileDir}", ErrorCodes.E1010);
+            }
         }
 
         // 测试标记：DSH_TEST_INSTANCE=1 时添加窗口标题后缀
@@ -461,7 +474,7 @@ internal static class Program
             // 服务清理后台执行（原为 UI 线程同步 StopShellService，卡 1.5s+）
             BeginShutdownAsync(GetMainFormForDialog());
         };
-        WindowManager.Instance.TrayMenuFactory = exitAction => new TrayMenuForm(exitAction);
+        WindowManager.Instance.TrayMenuFactory = (exitAction, deviceDpi) => new TrayMenuForm(exitAction, deviceDpi);
         WindowManager.Instance.VerifyDependencies();
         if (ReadLifetimeMode() == ShellLogic.ServiceLifetime.Tray)
         {
@@ -481,7 +494,19 @@ internal static class Program
         ApplyThemeIcon(form);
         form.HandleCreated += (_, _) => ApplyThemeIcon(form);
         WindowManager.Instance.RegisterThemeWatcher(form);
-        form.Shown += (_, _) => Trace("main form shown");
+        // [issue #28-4] 粘滞安全模式现在在启动路径上也会真正生效（与重启路径对称），因此必须
+        // 同时可见：否则用户看到的就是"插件凭空消失、界面上没有任何解释"。横幅 + 一条可点击
+        // 退出的通知（没有退出通道，对称遵守等于把用户永久困在降级态）。一次性：Shown 只挂一次。
+        var safeModeNoticeSent = false;
+        form.Shown += (_, _) =>
+        {
+            Trace("main form shown");
+            if (SafeMode.IsActive && !safeModeNoticeSent)
+            {
+                safeModeNoticeSent = true;
+                AnnounceSafeModeActive(form);
+            }
+        };
 
         form.FormClosing += (_, e) =>
         {
@@ -802,12 +827,19 @@ internal static class Program
             var wa = Screen.FromHandle(form.Handle).WorkingArea;
             var b = form.Bounds;
             var ok = b.X == wa.X && b.Y == wa.Y && b.Width == wa.Width && b.Height == wa.Height;
-            var msg = $"UI-SELFTEST pass={ok} bound=({b.X},{b.Y},{b.Width}x{b.Height}) workarea=({wa.X},{wa.Y},{wa.Width}x{wa.Height})";
+
+            // 第二遍（issue #28-2）：Splash 启动窗"文字必须装得进控件框"的实测自检。
+            // 在 100% 屏上它必然通过（新旧实现都是）——它的价值是在**高分屏开发机/真机**上
+            // 直接变红；跨 DPI 的缩放正确性由 SplashLayoutContractTests 在 CI 钉死。
+            var splashOk = RunSplashLayoutSelftest();
+
+            var msg = $"UI-SELFTEST pass={ok && splashOk} geometry={ok} splashLayout={splashOk} "
+                + $"bound=({b.X},{b.Y},{b.Width}x{b.Height}) workarea=({wa.X},{wa.Y},{wa.Width}x{wa.Height})";
             Logger.Info(msg);
             Console.WriteLine(msg);
-            WriteSelftestResult(ok, msg);
+            WriteSelftestResult(ok && splashOk, msg);
             form.Close();
-            return ok ? 0 : 1;
+            return (ok && splashOk) ? 0 : 1;
         }
         catch (Exception ex)
         {
@@ -817,6 +849,38 @@ internal static class Program
             WriteSelftestResult(false, msg);
             return 2;
         }
+    }
+
+    /// <summary>
+    /// [issue #28-2] Splash 启动窗布局自检：按**当前宿主 DPI** 实测每个控件的文字墨迹，
+    /// 断言它装得进自己的框。旧实现把 380×180 / 60×22 写成硬编码物理像素而字体是 point
+    /// （随 DPI 变大），200% 屏上"取消"按钮被自己的文字撑破——用户截图里的"按钮基本看不到"。
+    /// 流水线注入"永不完成"的 Task：自检不拉起任何真实服务、不碰网络与进程。
+    /// </summary>
+    private static bool RunSplashLayoutSelftest()
+    {
+        using var splash = new SplashForm(
+            (_, _, _) => new TaskCompletionSource<SplashForm.Outcome>().Task, visible: false);
+        splash.Show();
+        splash.Refresh();
+
+        var g = splash.Layout;
+        using var gfx = splash.CreateGraphics();
+        bool Fits(string text, Font font, Rectangle box)
+        {
+            var ink = TextRenderer.MeasureText(gfx, text, font, Size.Empty, TextFormatFlags.NoPadding);
+            var fits = ink.Width <= box.Width && ink.Height <= box.Height;
+            Console.WriteLine($"UI-SELFTEST splash {(fits ? "ok " : "FAIL")} \"{text}\" ink={ink.Width}x{ink.Height}"
+                + $" box={box.Width}x{box.Height} dpi={splash.DeviceDpi}");
+            return fits;
+        }
+
+        var ok = Fits("取消", splash.Font, g.Cancel)
+            && Fits("正在准备启动…", splash.Font, g.Status)
+            && Fits("是", splash.Font, g.ConfirmYes)
+            && Fits("否", splash.Font, g.ConfirmNo);
+        splash.Close();
+        return ok;
     }
 
     /// <summary>
@@ -1122,6 +1186,11 @@ internal static class Program
                 if (restart) Trace($"[leftover] healthy leftover service pid={owner} is ledger-owned and lifetime mode requires shell ownership");
                 return restart;
             },
+            // [issue #28-4] 初始拉起与所有重启路径共用同一条 profile 判定（SafeModeLaunchPolicy）。
+            // 修复前 "--profile .dsh-safe" 只在重启路径生效 → 同一份粘滞 safe-mode.json 下
+            // "托盘退出重开插件都在，点 DSH 内置重启插件消失"。
+            ServiceIdentityDecorator = id => DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
+                id, SafeMode.IsActive, SafeProfile.SafeProfileDir),
         };
     }
 
@@ -1248,18 +1317,25 @@ internal static class Program
     /// 安全模式激活时以隔离 profile 身份（--profile .dsh-safe）重启。
     /// 返回 false = 拉起失败（E2001）。旧 wscript/start-dsh.vbs 中间层已彻底移除——
     /// 启动命令只信 Identity.NodeExePath × Identity.DshEntryJsPath。
+    /// [issue #28-4] profile 判定不再内联在此：统一走 <c>SafeModeLaunchPolicy.Decorate</c>，
+    /// 与 <c>LauncherApp.ServiceIdentityDecorator</c>（初始拉起）同源，杜绝"启动带全套插件、
+    /// 重启掉插件"的不对称。<paramref name="usedSafeProfile"/> = 实际用于拉起的那份身份是否
+    /// 带隔离 profile —— 安全模式可见性横幅的唯一凭据（以真正跑起来的进程为准）。
     /// </summary>
-    private static bool StartDshServiceViaIdentity()
+    private static bool StartDshServiceViaIdentity(out bool usedSafeProfile)
     {
-        var identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime();
-        if (SafeMode.IsActive)
-            identity = identity.WithProfile(SafeProfile.SafeProfileDir);
+        var identity = DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
+            DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime(), SafeMode.IsActive, SafeProfile.SafeProfileDir);
+        usedSafeProfile = identity.IsSafeProfile;
         var ok = ShellService.Start(identity, Target.Port, UnifiedLogPath);
         if (ok) Trace(identity.IsSafeProfile
             ? "service start via identity (SAFE profile)"
             : "service start via identity");
         return ok;
     }
+
+    /// <summary>无 profile 关注点的调用方用的薄壳重载。</summary>
+    private static bool StartDshServiceViaIdentity() => StartDshServiceViaIdentity(out _);
 
     /// <summary>组合根共享的服务 Manager 实例（无状态；安全模式/回滚/重启询问等主窗流程复用）。</summary>
     private static readonly ServiceManager ShellService = new();
@@ -1373,6 +1449,104 @@ internal static class Program
     }
 
     /// <summary>
+    /// [issue #28-4] 安全模式可见性收口：标题栏横幅按"实际用于拉起进程的那份身份"开关。
+    /// 此前它只在 <see cref="TryStartSafeMode"/> 内部设置——粘滞激活的启动会话、以及所有经
+    /// <see cref="StartDshServiceViaIdentity"/> 降级成 .dsh-safe 的重启路径全部漏网，
+    /// 用户实测到的现象就是"插件凭空消失，界面上没有任何解释"。
+    /// </summary>
+    private static void ApplySafeModeVisibility(bool safeProfileActive)
+    {
+        var form = GetMainFormForDialog();
+        if (form is null || !form.IsHandleCreated) return;
+        try
+        {
+            form.BeginInvoke(() =>
+            {
+                if (form.IsDisposed) return;
+                var title = safeProfileActive ? "DeepSeek Harness（安全模式）" : "DeepSeek Harness";
+                if (form.TitleBar is not null) form.TitleBar._titleText = title;
+                form.Text = title;
+                form.TitleBar?.Invalidate();
+            });
+        }
+        catch (Exception ex) { Logger.Warn("safe-mode visibility update failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// [issue #28-4] 安全模式对用户可见 + 给一条退出通道。启动路径现在与重启路径**对称地**
+    /// 遵守粘滞的 safe-mode.json，因此必须同时告诉用户"插件不在"是安全模式所致、以及怎么退出；
+    /// 没有退出通道，对称遵守等于把用户永久困在降级态。
+    /// </summary>
+    private static void AnnounceSafeModeActive(DshShellForm form)
+    {
+        ApplySafeModeVisibility(true);
+        var body = "第三方插件已临时禁用（上次会话进入过安全模式，本次启动沿用了它）。\n"
+                 + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。\n\n"
+                 + "是否现在退出安全模式，并按正常配置重启 dsh 服务？";
+        var shown = SystemToast.TryShow(form, "dsh 已以安全模式启动",
+            body + "\n（点击本通知即退出安全模式并重启）",
+            TimeSpan.FromSeconds(25),
+            onClick: () => ExitSafeModeRequested(form));
+        if (shown)
+        {
+            Logger.Info("safe-mode notice toast shown: 第三方插件已临时禁用（可点击退出）");
+            return;
+        }
+        // [issue #25 与 #28-4 的交互后果] 系统 Toast 默认关闭后，上面那条 onClick 曾是**全仓库
+        // 唯一**的 UI 退出安全模式入口（ApplySafeModeVisibility 只改标题文字，不可点）——
+        // 继续只留一行日志，等于把用户永久困在降级态。故降级为模态弹窗保住这条通道。
+        Logger.Warn("safe-mode notice toast unavailable; falling back to modal exit prompt");
+        if (E2EMode)
+        {
+            Trace("safe-mode modal suppressed in E2E/probe mode (modal hardening)");
+            return;
+        }
+        try
+        {
+            try { form.Activate(); } catch { /* 窗体尚未可见 */ }
+            var r = MessageBox.Show(form, body, "dsh 已以安全模式启动",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            Trace($"safe-mode modal answered: {r}");
+            if (r == DialogResult.Yes) ExitSafeModeRequested(form);
+            else Logger.Info("safe-mode notice: user chose to stay in safe mode");
+        }
+        catch (Exception ex)
+        {
+            // 弹窗本身失败（窗体已关闭等）：留痕，绝不让通知链路抛进启动流程
+            Logger.Warn("safe-mode modal fallback failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>[issue #28-4] 用户从通知点击退出安全模式：解粘滞 → 以正常 profile 重启服务 → 撤横幅。
+    /// 重启核心内部会按新身份重画可见性（Deactivate 后 usedSafeProfile=false）。</summary>
+    private static void ExitSafeModeRequested(DshShellForm form)
+    {
+        if (!SafeMode.IsActive)
+        {
+            ApplySafeModeVisibility(false); // 状态已不激活（他处已解粘滞）：只清横幅，不白重启
+            return;
+        }
+        SafeMode.Deactivate();
+        Trace("SAFEMODE: user exited safe mode via notice → restarting service with normal profile");
+        _ = Task.Run(async () =>
+        {
+            var outcome = await RestartDshServiceCoreAsync("exit-safe-mode");
+            if (outcome is ServiceRestartOutcome.StartFailed or ServiceRestartOutcome.NotReady)
+            {
+                var (code, message) = outcome == ServiceRestartOutcome.StartFailed
+                    ? (ErrorCodes.E2001, "退出安全模式失败：无法以正常配置拉起 dsh 服务。请查看统一日志后重新打开 dsh-launcher。")
+                    : (ErrorCodes.E2004, "退出安全模式后 dsh 服务 60 秒内未就绪，请查看统一日志。");
+                try { form.BeginInvoke(() => ShowError(code, message, log: false)); }
+                catch { /* 窗体已关闭 */ }
+                return;
+            }
+            if (outcome == ServiceRestartOutcome.Cancelled) return; // 会话收尾中：不打扰
+            try { form.BeginInvoke(() => NavigateMainWebToCurrentServiceUrl()); }
+            catch { /* 窗体已关闭 */ }
+        });
+    }
+
+    /// <summary>
     /// 在后台线程执行一次给定梯级的安全模式启动（ADR-022 分级策略）。
     /// 步骤：构建该梯级 .dsh-safe → Activate(落盘) → 停旧服务 → 以 --profile 重启 →
     /// 双重观测（readiness + 崩溃签名消失）。全部通过才返回 true。
@@ -1456,28 +1630,31 @@ internal static class Program
             }
 
             // —— 只有真正通过双重观测（readiness + 崩溃签名消失）才标注安全模式横幅 ——
+            // [issue #28-4] 账本必须改指这次新拉起的服务：否则下一次运行期退出会被误判成
+            // 启动自检失败（E2004/E2007），进而升级询问安全模式——正是本条缺陷的自我强化链。
+            RecordServicePid();
+            _lastShellRestartUtc = DateTime.UtcNow;
             // ADR-023：恢复监控（清终态回 Pending、attach 新进程；页面层随下方 Reload 的
             // NavigationCompleted 重新武装）——安全模式下的服务同样受崩溃检测保护。
-            BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+            var safePid = ResolveServicePidBestEffort();
+            if (safePid <= 0)
+                Logger.Warn("SAFEMODE: service pid unresolved after safe-mode start; boot monitor resumes "
+                    + "WITHOUT process layer (http/page layers still armed)", ErrorCodes.E2005,
+                    new { port = Target.Port });
+            BootMonitor?.ResumeAfterRestart(safePid);
+            ApplySafeModeVisibility(true);
             try
             {
+                // 刷新页面（此时服务已按 --profile .dsh-safe 正常提供核心 UI）
                 form.BeginInvoke(() =>
                 {
-                    try
+                    if (WebViewManager.MainWeb?.CoreWebView2 is not null)
                     {
-                        if (form.TitleBar is not null) form.TitleBar._titleText = "DeepSeek Harness（安全模式）";
-                        form.Text = "DeepSeek Harness（安全模式）";
-                        form.TitleBar?.Invalidate();
-                        // 刷新页面（此时服务已按 --profile .dsh-safe 正常提供核心 UI）
-                        if (WebViewManager.MainWeb?.CoreWebView2 is not null)
-                        {
-                            NavigateMainWebToCurrentServiceUrl();
-                        }
+                        NavigateMainWebToCurrentServiceUrl();
                     }
-                    catch { }
                 });
             }
-            catch { }
+            catch (Exception ex) { Logger.Warn("safe-mode page reload dispatch failed: " + ex.Message); }
             return true;
         }
         catch (Exception ex)
@@ -1612,6 +1789,24 @@ internal static class Program
 
             // 1) 证据落盘：safe-mode-state.json 的 lastFailure 字段（原子写，崩溃/重启仍可查）
             PersistBootFailureEvidence(verdict);
+
+            // 1.5) [issue #28-4] 壳自己刚重启过服务 → 只来自 HTTP 探测回死的证据落在静默窗内时
+            // 不计入连续失败、不升级询问。事故形态：自愈重启后账本没跟上 → 进程层 attach 到死
+            // pid → 下一次 DSH 内置重启被 HTTP 层判成启动自检失败 → 计数推进 → 询问安全模式 →
+            // .dsh-safe 把用户刚装的插件剥掉。进程层/页面层证据（真崩溃签名）永不豁免。
+            var sinceShellRestart = _lastShellRestartUtc == DateTime.MinValue
+                ? -1d : (DateTime.UtcNow - _lastShellRestartUtc).TotalSeconds;
+            var httpOnlyEvidence = verdict.Evidence.Count > 0
+                && verdict.Evidence.All(e => e.Layer == DshWeb.Lifecycle.BootLayer.Http);
+            if (ShellLogic.BootRecoveryPolicy.SuppressLauncherInduced(httpOnlyEvidence, sinceShellRestart,
+                    ShellLogic.BootRecoveryPolicy.LauncherInducedQuietSeconds))
+            {
+                Logger.Warn($"[boot-monitor] suppressing launcher-induced verdict [{verdict.ErrorCode}]: "
+                    + $"HTTP-only evidence {sinceShellRestart:F1}s after a shell-initiated service restart "
+                    + "(failure not counted, no ask). 若反复出现请查统一日志。");
+                return;
+            }
+
             // 连续失败计数推进（Failed 路径恰好一次；吸收态 VerdictUpdated 重写不计数）。
             // 跨会话持久化在 safe-mode.json——事故形态是"每次重开壳都崩"，会话内计数抓不住。
             SafeMode.RegisterBootFailure();
@@ -1773,7 +1968,14 @@ internal static class Program
             // [2026-08-29 token 栅栏] 旧版服务重启后等横幅（或超时回退），避免空窗期错误页驻留
             WaitForFreshServiceToken(_tokenBeforeServiceRestart);
 
-            BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+            // [issue #28-4] 回滚同样换了一个服务进程：账本/PID 必须跟上，否则运行期退出被误判
+            RecordServicePid();
+            _lastShellRestartUtc = DateTime.UtcNow;
+            var rollbackPid = ResolveServicePidBestEffort();
+            if (rollbackPid <= 0)
+                Logger.Warn("[update-rollback] service pid unresolved after rollback restart; boot monitor "
+                    + "resumes WITHOUT process layer", ErrorCodes.E2005, new { port = Target.Port });
+            BootMonitor?.ResumeAfterRestart(rollbackPid);
             try
             {
                 var form = GetMainFormForDialog();
@@ -1846,6 +2048,13 @@ internal static class Program
     private static int _runtimeRestartAttempts;
 
     /// <summary>
+    /// [issue #28-4] 上次"壳主动重启服务并确认就绪"的时刻（UTC）；MinValue = 本会话从未发生过。
+    /// 用于 <c>BootRecoveryPolicy.SuppressLauncherInduced</c> 的静默窗取数——时间戳事实，
+    /// 不做流程控制标志（架构铁律：严禁 static bool 控流程）。
+    /// </summary>
+    private static DateTime _lastShellRestartUtc = DateTime.MinValue;
+
+    /// <summary>
     /// 健康运行期服务退出的自愈入口（<c>BootHealthMonitor.ServiceExitedWhileRunning</c> 回调，
     /// 触发线程 = 进程事件/轮询线程）：非阻塞、幂等——立即挂起监控（服务已死，HTTP/页面探针随后
     /// 必然 miss，不能让它们把"运行期重启"判成启动自检失败），后台重启服务并等新 token 导航。
@@ -1894,7 +2103,9 @@ internal static class Program
             {
                 try
                 {
-                    var outcome = await RestartDshServiceCoreAsync("runtime-restart");
+                    // [issue #28-4] 只有这条路径允许"接管自我重新拉起的新进程"：DSH 内置重启/自更新
+                    // 的实现就是服务进程自我退出并再拉起，端口上的新进程是我们自己的服务。
+                    var outcome = await RestartDshServiceCoreAsync("runtime-restart", expectSelfRespawn: true);
                     if (outcome != ServiceRestartOutcome.Ready)
                     {
                         if (outcome == ServiceRestartOutcome.Cancelled) return; // 会话收尾中：不打扰
@@ -1942,25 +2153,47 @@ internal static class Program
     /// </summary>
     private enum ServiceRestartOutcome { Ready, StartFailed, NotReady, Cancelled }
 
-    private static async Task<ServiceRestartOutcome> RestartDshServiceCoreAsync(string reason)
+    /// <summary>[issue #28-4] 接管"dsh 自行重新拉起的服务"时的 token 横幅等待上限（毫秒）。
+    /// 该进程不是本壳拉起的，横幅只有靠 dsh 把子进程 stdout 继承进本壳管道才看得到；
+    /// 拿不到就按既有语义回退裸 URL，绝不为此把"已经能用的服务"卡住 15 秒。</summary>
+    private const int AdoptedServiceTokenWaitMs = 4000;
+
+    private static async Task<ServiceRestartOutcome> RestartDshServiceCoreAsync(string reason,
+        bool expectSelfRespawn = false)
     {
         BootMonitor?.Suspend();
         Trace($"{reason}: stopping service");
-        StopShellService();
+        var stop = StopShellService(expectSelfRespawn);
         if (SessionCts.IsCancellationRequested)
         {
             Trace($"{reason}: session shutting down; service restart skipped");
             return ServiceRestartOutcome.Cancelled;
         }
-        var startOk = StartDshServiceViaIdentity();
-        Trace($"{reason}: identity-driven start returned {startOk}");
-        if (!startOk)
+        bool usedSafeProfile;
+        var adoptedPid = stop.AdoptedReplacementPid;
+        if (adoptedPid > 0)
         {
-            Logger.Error($"dsh 服务重启失败（{reason}）", ErrorCodes.E2001);
-            return ServiceRestartOutcome.StartFailed;
+            // [issue #28-4] 端口已被"更新的、已应答的"dsh 服务占据 = 被停进程自我重新拉起
+            // （DSH 内置重启/自更新的实现方式）。接管它，不再重复拉起——重复拉起只会再制造
+            // 一次端口争抢，而旧实现在此把它的整棵子进程树（含正在装插件的 npm/pnpm）强杀干净。
+            usedSafeProfile = SafeMode.IsActive; // 自重启继承原进程的 --profile 参数
+            Trace($"{reason}: adopted self-respawned service pid={adoptedPid}; start skipped");
         }
-        // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
-        WaitForFreshServiceToken(_tokenBeforeServiceRestart);
+        else
+        {
+            var startOk = StartDshServiceViaIdentity(out usedSafeProfile);
+            Trace($"{reason}: identity-driven start returned {startOk}");
+            if (!startOk)
+            {
+                Logger.Error($"dsh 服务重启失败（{reason}）", ErrorCodes.E2001);
+                return ServiceRestartOutcome.StartFailed;
+            }
+        }
+        // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）。
+        // 接管场景必须缩短等待：横幅只有在 dsh 把自己子进程的 stdout 继承进本壳管道时才拿得到；
+        // 拿不到就快速回退裸 URL，不能让"已经可用的服务"空等满 15s（用户观感=点了重启卡住）。
+        WaitForFreshServiceToken(_tokenBeforeServiceRestart,
+            timeoutMs: adoptedPid > 0 ? AdoptedServiceTokenWaitMs : 15000);
         var deadline = DateTime.UtcNow.AddSeconds(60);
         while (DateTime.UtcNow < deadline && !SessionCts.IsCancellationRequested
                && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
@@ -1971,7 +2204,20 @@ internal static class Program
             Logger.Error($"{reason}: service not ready within 60s after restart", ErrorCodes.E2004);
             return ServiceRestartOutcome.NotReady;
         }
-        BootMonitor?.ResumeAfterRestart(ResolveServicePidBestEffort());
+        // [issue #28-4 根因链断点] 账本与内存 PID 必须指向**新进程**，否则：
+        // ① 下面的 ResumeAfterRestart 会 attach 到已死的旧 pid（进程层监控就此失明）；
+        // ② 下一次 DSH 内置重启不再被识别为"运行期退出"，而被 HTTP 层判成 E2004 启动自检失败
+        //    → RegisterBootFailure → 询问进安全模式 → 粘滞的 .dsh-safe 把用户刚装的插件剥掉。
+        RecordServicePid();
+        _lastShellRestartUtc = DateTime.UtcNow;
+        var pid = ResolveServicePidBestEffort();
+        if (pid <= 0)
+            Logger.Warn($"{reason}: service pid unresolved after restart; boot monitor resumes WITHOUT "
+                + "process layer (http/page layers still armed)", ErrorCodes.E2005, new { port = Target.Port });
+        BootMonitor?.ResumeAfterRestart(pid);
+        // [issue #28-4] 重启后安全模式横幅必须跟上：此前只有 TryStartSafeMode 会写标题，
+        // 经重启路径降级成 .dsh-safe 时用户看到的是"插件凭空消失且毫无解释"。
+        ApplySafeModeVisibility(usedSafeProfile);
         return ServiceRestartOutcome.Ready;
     }
 
@@ -2311,7 +2557,10 @@ internal static class Program
                     {
                         var ver = signal["launcher:".Length..].Trim().TrimStart('v');
                         var lr = new UpdateChecker.LauncherRelease(ver, IsSecurity: true);
-                        if (UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                        // [issue #28-1] 与真实路径同一道门：本地版本未知（源码构建无 .git / git 不可用）
+                        // 时不得弹"检测到重要安全更新 X（当前 ?）"。
+                        if (ShellLogic.LauncherUpdateNoticePolicy.ShouldNotifyLauncherSecurity(
+                                UpdateChecker.CurrentLauncherVersion, lr.Version, lr.IsSecurity))
                             form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
                                 UpdateChecker.CurrentLauncherVersion ?? "?"));
                         else
@@ -2353,13 +2602,17 @@ internal static class Program
                 try
                 {
                     var lr = await UpdateChecker.FetchLatestLauncherReleaseFallbackAsync();
-                    if (lr is not null && lr.IsSecurity
-                        && UpdateChecker.CompareVersions(lr.Version, UpdateChecker.CurrentLauncherVersion) > 0)
+                    // [issue #28-1] 判定沉在纯函数门里：本地版本**未知**（源码构建探测失败）时静默，
+                    // 不再把 null 当 0.0.0 弹"检测到重要安全更新 0.4.5（当前 ?）"。留痕以便归因。
+                    if (lr is not null && ShellLogic.LauncherUpdateNoticePolicy.ShouldNotifyLauncherSecurity(
+                            UpdateChecker.CurrentLauncherVersion, lr.Version, lr.IsSecurity))
                     {
                         form.BeginInvoke(() => NotifyPending(PendingUpdate.LauncherSecurity, lr.Version,
                             UpdateChecker.CurrentLauncherVersion ?? "?"));
                         return;
                     }
+                    if (lr is not null && lr.IsSecurity && UpdateChecker.CurrentLauncherVersion is null)
+                        Trace("launcher security notice suppressed: local version unknown (source build / probe failed)");
                 }
                 catch (Exception ex)
                 {
@@ -2666,13 +2919,20 @@ internal static class Program
                     }
                     StagedUpdate.ClearPending();
                     Logger.Info($"staged dsh update applied (restart): {version}");
-                    StartDshServiceViaIdentity(); // 按身份直启新版本服务（ADR-024）
-                    // [2026-08-29 token 栅栏] 新进程横幅到位后再刷新（见 WaitForFreshServiceToken）
-                    WaitForFreshServiceToken(_tokenBeforeServiceRestart);
-                    // 等待就绪后刷新页面（最长 60s）
-                    var deadline = DateTime.UtcNow.AddSeconds(60);
-                    while (DateTime.UtcNow < deadline && !Managers.ServiceLifecycleOps.IsReady(Target.Port, Target.Url))
-                        await Task.Delay(500);
+                    // [issue #28-4] 复用统一重启核心（ADR-024：拉起只走 StartDshServiceViaIdentity）。
+                    // 手写"停-起-等"的旧版本缺 Suspend/Resume 与 PID 账本刷新：更新应用后的服务
+                    // 因此脱离进程层监控，下一次运行期退出会被误判成启动自检失败。
+                    var restartOutcome = await RestartDshServiceCoreAsync("apply-restart");
+                    if (restartOutcome == ServiceRestartOutcome.Cancelled) return; // 会话收尾中
+                    if (restartOutcome != ServiceRestartOutcome.Ready)
+                    {
+                        var (failCode, failMsg) = restartOutcome == ServiceRestartOutcome.StartFailed
+                            ? (ErrorCodes.E2001, $"dsh {version} 已安装，但服务重启失败（无法拉起服务）。请查看统一日志后重新打开 dsh-launcher。")
+                            : (ErrorCodes.E2004, $"dsh {version} 已安装，但重启后 60 秒内未就绪，请查看统一日志。");
+                        try { form.BeginInvoke(() => ShowError(failCode, failMsg, log: false)); }
+                        catch { /* 窗体已关闭 */ }
+                        return;
+                    }
                     try
                     {
                         form.BeginInvoke(() =>
@@ -3075,15 +3335,19 @@ internal static class Program
 
     /// <summary>
     /// 停止"壳本次会话拉起的"dsh 服务：优先内存缓存的 PID，端口反查兜底；温和 taskkill 未停
-    /// 则强制 /f /T；端口释放限时探测 + 占用者认领兜底；杀不干净保留 pid 文件由下次启动清扫。
-    /// 实现见 ServiceLifecycleOps.StopService（ADR-024 迁移，逻辑逐行保持原语义）。
+    /// 则强制 /f /T；端口释放限时探测 + 占用者处置兜底；杀不干净保留 pid 文件由下次启动清扫。
+    /// 实现见 ServiceLifecycleOps.StopService（ADR-024 迁移）。
+    /// [issue #28-4] <paramref name="expectSelfRespawn"/> 仅由"运行期自愈重启"传 true：
+    /// DSH 内置重启/自更新会让服务自我重新拉起，此时端口上的新进程是**我们自己人**，
+    /// 必须接管而不是整树强杀（强杀会打断它正在进行的插件安装）。
     /// </summary>
-    private static void StopShellService()
+    private static Managers.ServiceLifecycleOps.StopResult StopShellService(bool expectSelfRespawn = false)
     {
         // [2026-08-29 token 栅栏] 停服即记录"重启前 token"基线：随后的 WaitForFreshServiceToken
         // 以此判断新进程横幅是否已到（每次服务进程重启都会换新 token）。
         _tokenBeforeServiceRestart = _serviceTokenUrl;
-        Managers.ServiceLifecycleOps.StopService(DataDir, Target.Port, _servicePid);
+        return Managers.ServiceLifecycleOps.StopService(DataDir, Target.Port, Target.Url, _servicePid,
+            allowReplacementAdoption: expectSelfRespawn);
     }
 
     // ---- 关窗/退出异步化（2026-08 用户回归：点关闭后 UI 线程同步停服务卡 1.5s+） ----

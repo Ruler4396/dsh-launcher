@@ -19,7 +19,14 @@
     <!-- Per-Monitor V2 DPI awareness（WinForms 运行时配置，150% 缩放下 WebView2 按
          真实 DPI 渲染，与浏览器一致，否则位图拉伸导致模糊 issue #2）。
          注意：WinForms 10 会从自定义 manifest 删除 DPI 段（WFO0003），
-         必须用 ApplicationHighDpiMode / Application.SetHighDpiMode 配置。 -->
+         必须用 ApplicationHighDpiMode / Application.SetHighDpiMode 配置。
+         ⚠ 本属性当前是**死配置**（issue #28-2 排查结论）：项目里没有生成的
+         ApplicationConfiguration.Initialize()，runtimeconfig.json 也不含 DPI 键；
+         真正生效的是 Program.InitializeProcessEnvironment 里在建任何窗口**之前**调用的
+         user32!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+         （ADR-003 INVARIANT；改走 P/Invoke 的原因见 CHANGELOG 0.4.x"SetHighDpiMode 失效"条）。
+         保留本行只作为意图声明；**不要**据此以为 WinForms 会自动缩放某个窗体——
+         每个窗口的缩放都要自己算（见 ShellLogic.SplashLayout / TrayMenuLayout）。 -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 

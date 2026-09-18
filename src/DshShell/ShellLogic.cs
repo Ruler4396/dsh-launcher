@@ -888,6 +888,15 @@ public static class ShellLogic
                 var c = va.Num[i].CompareTo(vb.Num[i]);
                 if (c != 0) return c;
             }
+            // [issue #28-1] 核心相等时，git describe 形态的 dev 构建（-<n>-g<sha>）排在**任何**
+            // 非 dev 变体之上：tag 之后第 n 个提交的源码构建，语义上就新于该 tag 本身。
+            // 修复前它被当成 prerelease 判成"旧于 tag"，且距离尾段被 --abbrev=0 直接丢掉，
+            // 源码构建因此会被催"检测到重要安全更新 0.4.5（当前 ?）"。
+            if (va.DevDistance >= 0 || vb.DevDistance >= 0)
+            {
+                if (va.DevDistance >= 0 && vb.DevDistance >= 0) return va.DevDistance.CompareTo(vb.DevDistance);
+                return va.DevDistance >= 0 ? 1 : -1;
+            }
             // 核心相等 → 比较 prerelease：无 prerelease > 有 prerelease
             if (va.Pre.Length == 0 && vb.Pre.Length == 0) return 0;
             if (va.Pre.Length == 0) return 1;
@@ -901,7 +910,20 @@ public static class ShellLogic
             return va.Pre.Length.CompareTo(vb.Pre.Length); // 段多者更大（1.0.0-rc.1 < 1.0.0-rc.1.1）
         }
 
-        private readonly record struct SemVer(int[] Num, string[] Pre);
+        /// <summary>
+        /// 版本号是否"可判定"：非空且核心至少有一段数字。null/空/"abc" 一律 false。
+        /// [issue #28-1] 比较器对未知值 fail-open 成 0.0.0 是有意的（发现/就绪链不能因解析失败中断），
+        /// 但**提醒决策**不得复用这个 fail-open——"我不知道自己是什么版本"推不出"我很旧"。
+        /// </summary>
+        public static bool IsResolvable(string? raw) => Parse(raw).Resolvable;
+
+        private readonly record struct SemVer(int[] Num, string[] Pre, int DevDistance, bool Resolvable);
+
+        /// <summary>git describe 的距离尾段：<c>-&lt;n&gt;-g&lt;sha&gt;[-dirty]</c>。
+        /// 纯数字 prerelease（<c>1.0.0-1</c>）与 <c>rc</c> 形态都不含 <c>g&lt;sha&gt;</c> 段，不会误命中。</summary>
+        private static readonly System.Text.RegularExpressions.Regex DevBuildTail = new(
+            @"^(\d+)-g[0-9a-fA-F]{7,}(-dirty)?$",
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
         private static SemVer Parse(string? raw)
         {
@@ -919,12 +941,25 @@ public static class ShellLogic
             {
                 if (int.TryParse(parts[i], out var n)) { nums[i] = n; valid = true; }
             }
-            if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
-            if (parts.Length == 1 && parts[0].Length == 0) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>());
+            if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>(), -1, Resolvable: false);
+            if (parts.Length == 1 && parts[0].Length == 0)
+                return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>(), -1, Resolvable: false);
+
+            // dev 构建：把距离尾段从 prerelease 里摘出来（否则会被判成"旧于同名正式版"）
+            var devDistance = -1;
+            if (pre.Length > 0)
+            {
+                var m = DevBuildTail.Match(pre);
+                if (m.Success)
+                {
+                    devDistance = int.Parse(m.Groups[1].Value);
+                    return new SemVer(nums, Array.Empty<string>(), devDistance, Resolvable: true);
+                }
+            }
             var preParts = pre.Length == 0
                 ? Array.Empty<string>()
                 : pre.Split('.').Where(p => p.Length > 0).ToArray();
-            return new SemVer(nums, preParts);
+            return new SemVer(nums, preParts, devDistance, Resolvable: true);
         }
 
         private static int ComparePrePart(string a, string b)
@@ -936,6 +971,29 @@ public static class ShellLogic
             if (bNum) return 1;
             return string.CompareOrdinal(a, b);                  // 字母数字段 → 字典序
         }
+    }
+
+    /// <summary>
+    /// 启动器安全更新提醒门（issue #28-1，纯函数 + 契约测试锁定）。
+    ///
+    /// 【事故】报告人按维护者给的命令从源码构建（<c>dotnet build</c>，无 CI 注入版本号），
+    /// 打开就被弹模态框："检测到重要安全更新 0.4.5（当前 ?）"。文案里那个 <c>?</c> 就是根因：
+    /// 本地版本解析失败返回 null（SDK 默认 1.0.0 被 <c>StripDevDefaultVersion</c> 判为开发构建
+    /// → 回退 <c>git describe</c> → 无 .git / git 不可用 / 超时 → null），而
+    /// <c>CompareVersions("0.4.5", null)</c> 把 null fail-open 成 0.0.0 → "有安全更新"成立。
+    ///
+    /// 本门把两件事分开：比较器对未知值 fail-open 是**有意**的（发现/就绪链不能因解析失败中断），
+    /// 但"提醒决策"必须要求两侧版本都可判定——"我不知道自己是什么版本"推不出"我很旧"。
+    /// 这也让 <c>UpdateChecker</c> 顶部"缺失信息不产生『有新版本』的误报"的自述第一次成立
+    /// （旧实现只防住了远端缺失这一半）。
+    /// </summary>
+    public static class LauncherUpdateNoticePolicy
+    {
+        public static bool ShouldNotifyLauncherSecurity(string? current, string? latest, bool isSecurity)
+            => isSecurity
+               && VersionPolicy.IsResolvable(current)
+               && VersionPolicy.IsResolvable(latest)
+               && VersionPolicy.CompareVersions(latest, current) > 0;
     }
 
     /// <summary>
@@ -1568,6 +1626,9 @@ public static class ShellLogic
         /// <summary>连续匿名启动失败达到该次数后升级为安全模式询问（事故实测 3 次会话 4 次崩溃）。</summary>
         public const int AnonymousFailureSafeModeThreshold = 3;
 
+        /// <summary>壳主动重启服务后的"HTTP 回死"静默窗（秒）：窗内仅 HTTP 层的证据不计入失败计数。</summary>
+        public const int LauncherInducedQuietSeconds = 20;
+
         /// <summary>恢复动作：进入安全模式阶梯，或仅重启 dsh 服务。</summary>
         public enum RecoveryAsk
         {
@@ -1583,6 +1644,127 @@ public static class ShellLogic
             if (pluginInvolved) return RecoveryAsk.AskSafeMode;
             if (consecutiveFailures >= AnonymousFailureSafeModeThreshold) return RecoveryAsk.AskSafeMode;
             return RecoveryAsk.AskRestartService;
+        }
+
+        /// <summary>
+        /// [issue #28-4] 壳自己造成的服务空窗是否豁免失败计数（true = 豁免：不 ++、不升级询问）。
+        ///
+        /// 【事故】壳主动重启（运行期自愈/安全模式/回滚）后不刷新 PID 账本 → 健康监控 attach 到
+        /// 已死的旧 pid → 下一次 DSH 内置重启不再被进程层观测为"运行期退出"，而是被 HTTP 轮询
+        /// 判成 E2004 启动自检失败 → RegisterBootFailure + Decide(pluginInvolved=true) → 询问进
+        /// 安全模式 → 粘滞的 .dsh-safe 把用户刚装的插件剥掉。壳自己在重启服务，却在数它当失败。
+        ///
+        /// 豁免条件极窄：**只有**"证据仅来自 HTTP 层"且落在壳主动重启后的静默窗内才豁免。
+        /// 进程层退出码与页面层崩溃签名是真崩溃证据，永不豁免（否则等于把 issue #26/#28-2
+        /// 修好的 fail-fast 又关掉）。
+        /// </summary>
+        /// <param name="httpLayerOnly">本次 failed 裁决的证据是否只来自 HTTP 探测回死。</param>
+        /// <param name="secondsSinceShellInitiatedRestart">距上次壳主动重启就绪的秒数；
+        /// 本会话从未发生过壳主动重启时传负数。</param>
+        public static bool SuppressLauncherInduced(
+            bool httpLayerOnly, double secondsSinceShellInitiatedRestart, int quietWindowSeconds)
+        {
+            if (!httpLayerOnly) return false;
+            if (secondsSinceShellInitiatedRestart < 0) return false;
+            return secondsSinceShellInitiatedRestart <= quietWindowSeconds;
+        }
+    }
+
+    /// <summary>
+    /// 壳主动重启服务时的端口占用者处置策略（issue #28-4 纯函数，契约测试锁定）。
+    /// </summary>
+    public static class ServiceRestartPolicy
+    {
+        /// <summary>新占用者"尚未应答"时最多再等多久（dsh 自重启 respawn 后 HTTP 起来前的窗口）。</summary>
+        public const double OccupantAdoptionGraceSeconds = 8;
+
+        /// <summary>端口占用者处置决策。</summary>
+        public enum OccupantDecision
+        {
+            /// <summary>按既有防误杀原语强杀进程树（taskkill /T /F）。</summary>
+            Kill,
+            /// <summary>年幼且尚未应答：宽限轮询后再判。</summary>
+            WaitGrace,
+            /// <summary>它是更新且已能应答的 dsh 服务：接管它，别再杀。</summary>
+            AdoptReplacement,
+        }
+
+        /// <summary>
+        /// 停服后端口仍被**另一个** PID 占用时，该杀还是该接管？
+        ///
+        /// 【事故】DSH 内置重启的实现是服务进程自我退出并重新拉起。壳这边看到"健康服务退出了"
+        /// → 自愈重启 → StopShellService 反查端口，占用者已是 dsh 自己刚拉起的**新**进程
+        /// （可能仍在跑 npm/pnpm 子进程完成插件安装）→ 旧实现无条件 <c>taskkill /T /F</c> 全树，
+        /// 把刚装一半的插件拦腰截断。这是全仓唯一能把插件安装"打断"而非"隐藏"的机制。
+        ///
+        /// 规则：占用者就是账本里那个进程（优雅终止没生效）→ 杀；它已能应答就绪探测 → 接管；
+        /// 它年幼且还没应答 → 等宽限；它老了又不应答 → 杀（真僵尸）。年龄未知（进程消失/权限）
+        /// 保守按"等宽限"处理，到期仍不应答才杀。
+        /// </summary>
+        /// <param name="occupantAgeSeconds">占用者进程启动至今的秒数；读不到传负数。</param>
+        /// <param name="replacementHealthy">占用者是否已通过 dsh 就绪探测（HTTP 有响应）。
+        /// 调用方必须同时确认它是 node 服务进程，本函数不再做身份判定。</param>
+        public static OccupantDecision DecideOccupantReclaim(
+            int occupantPid, int rememberedPid, double occupantAgeSeconds,
+            bool replacementHealthy, double graceSeconds)
+        {
+            if (occupantPid <= 0) return OccupantDecision.Kill;
+            if (occupantPid == rememberedPid) return OccupantDecision.Kill;
+            if (replacementHealthy) return OccupantDecision.AdoptReplacement;
+            // 年龄达到（而非仅超过）宽限即视为到期：等满一个完整宽限周期仍不应答才是真僵尸
+            if (occupantAgeSeconds >= 0 && occupantAgeSeconds >= graceSeconds) return OccupantDecision.Kill;
+            return OccupantDecision.WaitGrace;
+        }
+    }
+
+    /// <summary>安全模式隔离 profile（.dsh-safe）的清理决策（issue #28-4 纯函数）。</summary>
+    public static class SafeProfileCleanupPolicy
+    {
+        /// <summary>
+        /// 正常模式启动时是否可以递归删除 <c>.dsh-safe</c>？
+        ///
+        /// 【事故】旧实现只判"当前不在安全模式"就 <c>Directory.Delete(recursive: true)</c>。
+        /// 若用户在安全模式会话里装了插件，pnpm 会把 bundle 声明与 node_modules 实体写进
+        /// <c>.dsh-safe</c> 本身 → 下次正常启动把它整个删掉 = 物理销毁用户刚装的东西。
+        ///
+        /// 因此只有"壳自己写的产物、且没被改动"才允许删：安全模式激活中（服务正在用它）、
+        /// 目录里出现壳没写过的文件/子目录、或清单与壳会生成的内容不一致，三种情况一律保留
+        /// 并响亮留痕（绝不静默删）。
+        /// </summary>
+        public static bool ShouldDelete(bool safeModeActive, bool onlyLauncherArtifacts, bool manifestUnchanged)
+            => !safeModeActive && onlyLauncherArtifacts && manifestUnchanged;
+
+        /// <summary>
+        /// 现有 <c>.dsh-safe/package.json</c> 是否仍等价于壳会生成的内容：可解析、bundles 序列逐项相同、
+        /// 且没有多出 <c>dependencies</c>/<c>devDependencies</c>（dsh plugin add 会写这两段）。
+        /// <paramref name="manifestJson"/> 为 null/空 = 清单不存在 → 视为等价（没有东西可被销毁）。
+        /// 解析失败一律按"不等价"（保守方向：宁可留下陈旧目录，绝不可误删用户装出来的插件）。
+        /// </summary>
+        public static bool SafeProfileManifestEquivalent(string? manifestJson, IReadOnlyList<string> expectedBundles)
+        {
+            if (string.IsNullOrWhiteSpace(manifestJson)) return true;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(manifestJson);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return false;
+                if (root.TryGetProperty("dependencies", out _) || root.TryGetProperty("devDependencies", out _))
+                    return false; // 安装痕迹：有人在安全模式会话里装过东西
+                if (!root.TryGetProperty("dsh", out var dsh)
+                    || !dsh.TryGetProperty("profile", out var profile)
+                    || !profile.TryGetProperty("bundles", out var bundles)
+                    || bundles.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    return false;
+                var actual = bundles.EnumerateArray().Select(e => e.GetString()).ToList();
+                if (actual.Count != expectedBundles.Count) return false;
+                for (var i = 0; i < actual.Count; i++)
+                    if (!string.Equals(actual[i], expectedBundles[i], StringComparison.Ordinal)) return false;
+                return true;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return false; // 损坏清单：按"可能被改过"处理（保守方向同上）
+            }
         }
     }
 
@@ -2372,6 +2554,64 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// Splash 启动窗布局纯函数（issue #28-2 高 DPI 根治）。设计基准 = 96dpi 逻辑像素
+    /// （v0.4.2 紧凑版式：窗体 380×180、边距统一 16px）。
+    ///
+    /// 【事故】<c>SplashForm</c> 是全仓唯一完全没有 DPI 处理的窗口：窗体与每个子控件都是
+    /// 硬编码物理像素，而字体是 point（继承默认 9pt）→ 高 DPI 屏上文字变大、框不变，
+    /// 报告人截图里"取消"按钮被裁成一条乱码。现在缩放折算只发生在本函数里（一次），
+    /// 渲染侧按返回的像素矩形与 <see cref="Geometry.EmPx"/> 摆放，零算术、可跨缩放契约测试。
+    /// </summary>
+    public static class SplashLayout
+    {
+        public const int DesignClientWidth = 380;
+        public const int DesignClientHeight = 180;
+        public const int DesignMargin = 16;
+        /// <summary>正文字号（point，原为继承的默认 9pt Segoe UI）。</summary>
+        public const double DesignEmPt = 9.0;
+
+        public readonly record struct Geometry(
+            int ScalePercent,
+            Size ClientSize,
+            Rectangle Status,
+            Rectangle Bar,
+            Rectangle Cancel,
+            Rectangle ConfirmPanel,
+            Rectangle ConfirmTitle,
+            Rectangle ConfirmText,
+            Rectangle ConfirmYes,
+            Rectangle ConfirmNo,
+            int EmPx,
+            int ConfirmTitleEmPx);
+
+        public static Geometry Compute(int deviceDpi)
+        {
+            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
+            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            int px(float design) => (int)Math.Round(design * s);
+
+            var clientW = px(DesignClientWidth);
+            var margin = px(DesignMargin);
+            var contentW = clientW - margin * 2;
+
+            return new Geometry(
+                ScalePercent: (int)Math.Round(s * 100f),
+                ClientSize: new Size(clientW, px(DesignClientHeight)),
+                Status: new Rectangle(margin, px(12), contentW, px(32)),
+                Bar: new Rectangle(margin, px(50), contentW, px(10)),
+                Cancel: new Rectangle(px(302), px(148), px(60), px(22)),
+                ConfirmPanel: new Rectangle(margin, px(66), contentW, px(76)),
+                // 面板内子控件坐标是面板相对值（与旧实现一致）
+                ConfirmTitle: new Rectangle(0, px(2), contentW, px(16)),
+                ConfirmText: new Rectangle(0, px(22), contentW, px(32)),
+                ConfirmYes: new Rectangle(px(220), px(52), px(62), px(22)),
+                ConfirmNo: new Rectangle(px(284), px(52), px(62), px(22)),
+                EmPx: (int)Math.Round(DesignEmPt * 96.0 / 72.0 * s),
+                ConfirmTitleEmPx: (int)Math.Round(DesignEmPt * 96.0 / 72.0 * s));
+        }
+    }
+
+    /// <summary>
     /// 托盘菜单"退出"条目版式纯函数（issue #28-1 回归修复）。
     ///
     /// 【事故】用户截图指出托盘右键菜单的"退出"条目 UI 异常：电源图标与"退 出"两字之间
@@ -2387,19 +2627,108 @@ public static class ShellLogic
     /// </summary>
     public static class TrayMenuLayout
     {
+        // ---- 设计基准（96dpi 逻辑像素；与 tray-preview.html 的比例体系一致，勿与物理像素混用）----
+        public const int DesignMenuWidth = 116;
+        public const int DesignMenuHeight = 40;
+        public const int DesignCornerRadius = 12;
+        public const int DesignItemInset = 5;
+        public const int DesignItemRadius = 6;
+        public const int DesignShadowMargin = 10;
+        public const int DesignIconBox = 18;
+        public const int DesignIconGap = 12;
+        public const int DesignLetterSpacing = 2;
+        /// <summary>设计字号（point）。折算物理像素只允许在本纯函数里做一次（× dpi/96），
+        /// 渲染侧一律按 <see cref="Geometry.EmPx"/> 用 <c>GraphicsUnit.Pixel</c> 建字体。</summary>
+        public const double DesignEmPt = 10.0;
+
+        /// <summary>
+        /// 一次渲染所需的全部几何，单位一律**物理像素**。纯函数（deviceDpi → 几何），
+        /// 因此可以脱离真实显示器在 {96,120,144,168,192,240} 上做线性缩放契约测试。
+        /// </summary>
+        public readonly record struct Geometry(
+            int ScalePercent,
+            int FormWidth,
+            int FormHeight,
+            Rectangle Content,
+            Rectangle Item,
+            int CornerRadius,
+            int ItemRadius,
+            int ShadowMargin,
+            int IconSize,
+            int Gap,
+            int LetterSpacing,
+            int EmPx,
+            int Shadow1Dy,
+            int Shadow1Spread,
+            int Shadow2Dy,
+            int Shadow2Spread);
+
+        /// <summary>
+        /// [issue #28-3 二次缩放根治] 由目标显示器的 DPI 算出全部几何。
+        ///
+        /// 【事故】报告人 200% 屏上托盘菜单依旧异常：卡片与电源图标按 s 放大，
+        /// "退出"两字却按 s² 放大（实测墨迹宽 = 设计值的 2.04 倍）。根因是渲染侧把
+        /// 已经乘过 <c>_s</c> 的**点数**字号交给一个自带 DPI 的 Graphics 再折算一次。
+        /// 现在字号折算只发生在这里（一次，且只依赖 deviceDpi），渲染侧零算术。
+        ///
+        /// dpi ≤ 0（取不到显示器信息）按 96 处理；缩放夹 [0.5, 8]——旧实现只向上夹
+        /// <c>Math.Max(1f, …)</c>，混屏下 100% 副屏上的菜单会被主屏的 200% 放大。
+        /// </summary>
+        public static Geometry ComputeGeometry(int deviceDpi)
+        {
+            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
+            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            int px(float design) => (int)Math.Round(design * s);
+
+            var shadow = px(DesignShadowMargin);
+            var content = new Rectangle(shadow, shadow, px(DesignMenuWidth), px(DesignMenuHeight));
+            var inset = px(DesignItemInset);
+            var item = new Rectangle(content.X + inset, content.Y + inset,
+                content.Width - inset * 2, content.Height - inset * 2);
+            // point → 物理像素：1pt = 1/72in，96dpi 下 1in = 96px（唯一一次折算，之后全是像素）
+            var emPx = (int)Math.Round(DesignEmPt * 96.0 / 72.0 * s);
+
+            return new Geometry(
+                ScalePercent: (int)Math.Round(s * 100f),
+                FormWidth: content.Width + shadow * 2,
+                FormHeight: content.Height + shadow * 2,
+                Content: content,
+                Item: item,
+                CornerRadius: px(DesignCornerRadius),
+                ItemRadius: px(DesignItemRadius),
+                ShadowMargin: shadow,
+                IconSize: px(DesignIconBox),
+                Gap: px(DesignIconGap),
+                LetterSpacing: px(DesignLetterSpacing),
+                EmPx: emPx,
+                Shadow1Dy: px(5f),
+                Shadow1Spread: px(8f),
+                Shadow2Dy: px(2f),
+                Shadow2Spread: px(3f));
+        }
+
+        /// <summary>电源图标几何：环中线半径与描边宽（设计值 5.2px / 1.8px @96dpi）。</summary>
+        public static (float Radius, float Stroke) IconGeometry(int deviceDpi)
+        {
+            var s = Math.Clamp((deviceDpi <= 0 ? 96 : deviceDpi) / 96f, 0.5f, 8f);
+            return (5.2f * s, 1.8f * s);
+        }
+
         /// <summary>退出条目排布结果：图标中心 X / 两字左边界 X / 内容总宽。</summary>
         internal readonly record struct ExitRowPlacement(int IconCenterX, int FirstCharX, int SecondCharX, int ContentWidth);
 
         /// <summary>
         /// 计算"电源图标 + '退' + letterSpacing + '出'"在条目矩形内的居中排布（单位=像素，左对齐原点）。
         /// 不变量：<c>SecondCharX - (FirstCharX + firstCharWidth) == letterSpacing</c>（字距不被任何内边距放大）。
+        /// [issue #28-3] 内容宽超过条目宽时**左对齐**（居中偏移夹到 0）：旧实现算出负的 startX，
+        /// 图标会被画到白色卡片之外（高 DPI 下文字偏大时必然触发）。
         /// </summary>
         internal static ExitRowPlacement PlaceExitRow(
             int itemX, int itemWidth, int iconSize, int gap,
             int firstCharWidth, int secondCharWidth, int letterSpacing)
         {
             var contentWidth = iconSize + gap + firstCharWidth + letterSpacing + secondCharWidth;
-            var startX = itemX + (itemWidth - contentWidth) / 2;
+            var startX = itemX + Math.Max(0, (itemWidth - contentWidth) / 2);
             var firstX = startX + iconSize + gap;
             return new ExitRowPlacement(
                 IconCenterX: startX + iconSize / 2,

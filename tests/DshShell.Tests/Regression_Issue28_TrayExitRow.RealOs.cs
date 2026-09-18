@@ -29,7 +29,9 @@ public class Regression_Issue28_TrayExitRow_RealOs
     [Fact]
     public void RealOs_TrayExitRow_GlyphGap_IsTrackingNotPadding()
     {
-        using var form = new TrayMenuForm(() => { });
+        // 显式 96 DPI（= 100%）：菜单缩放现在是构造参数，不再从宿主 DC 采样
+        // （宿主 DPI 决定的断言在 CI 上不可复现；跨 DPI 的回归由 Regression_Issue28_TrayMenuHighDpi 覆盖）
+        using var form = new TrayMenuForm(() => { }, deviceDpi: 96);
         var draw = typeof(TrayMenuForm).GetMethod("Draw", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(draw);
 

@@ -61,6 +61,16 @@ public sealed class LauncherApp
     /// </summary>
     public Func<bool>? RestartHealthyLeftoverPolicy { get; set; }
 
+    /// <summary>
+    /// [issue #28-4 插件消失修复] 服务身份装饰钩子（组合根注入）：初始拉起前最后一次改写身份的机会。
+    ///
+    /// 唯一用途是把粘滞的安全模式状态**对称地**应用到启动路径。此前 "--profile .dsh-safe" 的判定
+    /// 只存在于重启路径（Program.StartDshServiceViaIdentity），启动路径完全不套 —— 同一份
+    /// safe-mode.json 下用户实测到"托盘退出重开插件都在，点 DSH 内置重启插件凭空消失"。
+    /// null = 不改写（Headless 测试与外部托管路径保持原语义，逐位不变）。
+    /// </summary>
+    public Func<DshWeb.Domain.DshRuntimeIdentity, DshWeb.Domain.DshRuntimeIdentity>? ServiceIdentityDecorator { get; set; }
+
     // ---------------- 目标服务（env 解析，契约与 ShellLogic.ResolveTarget 一致） ----------------
 
     /// <summary>DSH_WEB_PORT 覆盖的端口（缺省 3080）。</summary>
@@ -78,6 +88,12 @@ public sealed class LauncherApp
     public string? LastErrorDetail { get; private set; }
     public string? WaitResult { get; private set; }
     public bool ServiceStartedByShell { get; private set; }
+
+    /// <summary>
+    /// [issue #28-4] 身份装饰统一入口：未注入钩子时原样返回（Headless/外部托管逐位不变）。
+    /// </summary>
+    private DshWeb.Domain.DshRuntimeIdentity DecorateIdentity(DshWeb.Domain.DshRuntimeIdentity identity)
+        => ServiceIdentityDecorator is { } decorate ? decorate(identity) : identity;
 
     /// <summary>组合根默认装配（测试可换自身构建的 Manager）。</summary>
     public LauncherApp(
@@ -192,6 +208,8 @@ public sealed class LauncherApp
             return false;
         }
         var identity = rt.Identity!;
+        // [issue #28-4] 与重启路径同源的身份装饰（组合根注入；null 时逐位不变）
+        identity = DecorateIdentity(identity);
         _lifecycle.Fire(LifecycleTrigger.RuntimeResolved); // → StartingService
 
         // ---- 首装链（ADR-024）：身份为 NpxCache（本机无任何物理安装）时经更新引擎
@@ -212,7 +230,7 @@ public sealed class LauncherApp
                 _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
                 return false;
             }
-            identity = DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime(); // 发现链立见新装 shim/版本
+            identity = DecorateIdentity(DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime()); // 发现链立见新装 shim/版本
         }
 
         // ---- StartingService：端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）。

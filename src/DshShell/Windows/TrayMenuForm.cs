@@ -13,14 +13,11 @@ namespace DshWeb.Windows;
 /// </summary>
 internal sealed class TrayMenuForm : Form
 {
-    // 紧凑版（单功能按钮）：约缩小 20%；图标加粗、文字去加粗，视觉平衡。
-    // 所有尺寸仍按 tray-preview.html 的比例体系等比缩减，DPI 缩放不变。
-    private const int MenuWidth = 116;  // 原 142 等比缩减
-    private const int MenuHeight = 40;  // 原 58
-    private const int CornerRadius = 12; // 原 16
-    private const int ItemInset = 5;     // .menu 的 padding:4 + 1px 边框 → .exit 条目内缩
-    private const int ItemRadius = 6;    // 原 8
-    private const int Shadow = 10;       // 阴影边距（逻辑，容纳 0 6px 16px 的扩散）
+    // 全部尺寸/字号的设计基准与折算规则沉在纯函数 ShellLogic.TrayMenuLayout（契约测试锁定）：
+    // 本类只消费"物理像素"几何，不再自己乘缩放系数——历史上正是这里"点数 × DPI 系数"与
+    // 绘制 DC 自带的 DPI 相乘，导致高 DPI 屏上文字按 s² 放大（issue #28-3 用户截图）。
+    private ShellLogic.TrayMenuLayout.Geometry _g;
+    private int _deviceDpi;
 
     private static readonly Color TextDanger = Color.FromArgb(216, 30, 6);    // #D81E06 电源.svg 的亮红
     private static readonly Color TextBlack = Color.FromArgb(31, 41, 55);     // #1F2937 退出文字黑
@@ -28,51 +25,69 @@ internal sealed class TrayMenuForm : Form
     private static readonly Color HoverFill = Color.FromArgb(20, 220, 38, 38); // .exit:hover rgba(220,38,38,.08)
 
     private readonly Action _onExit;
-    private readonly float _s; // DPI 缩放（96 为 1）
-    private readonly Font _exitFont;
+    private Font _exitFont;
     private System.Windows.Forms.Timer? _fadeTimer; // 淡入动画，完成后 Dispose（B3）
     private bool _hoverExit;
     private byte _alpha = 255;
 
-    public TrayMenuForm(Action onExit)
+    /// <param name="deviceDpi">菜单**将要出现的那块显示器**的 DPI（由 WindowManager 按光标位置
+    /// 反查）。旧实现用 CreateGraphics() 在构造时采样，那时 Location 还是 (0,0) → 恒取主屏 DPI，
+    /// 混屏（主屏 200% + 副屏 100%）下副屏上的菜单尺寸完全错。0 = 未知，按 96 处理。</param>
+    public TrayMenuForm(Action onExit, int deviceDpi)
     {
         _onExit = onExit;
-        using (var g = CreateGraphics()) _s = Math.Max(1f, g.DpiX / 96f);
+        _deviceDpi = deviceDpi <= 0 ? 96 : deviceDpi;
+        _g = ShellLogic.TrayMenuLayout.ComputeGeometry(_deviceDpi);
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        Size = new Size((int)((MenuWidth + Shadow * 2) * _s), (int)((MenuHeight + Shadow * 2) * _s));
+        Size = new Size(_g.FormWidth, _g.FormHeight);
         BackColor = Color.White;
-        _exitFont = CreateExitFont();
+        _exitFont = CreateExitFont(_g.EmPx);
         // [2026-09 IME 崩溃护栏] 托盘菜单弹出时会 Activate() 抢占激活，焦点变化同样会走 WinForms
         // 的 ImeContext 路径（第三方 IME 上 ImmSetOpenStatus 访问违规），必须解绑 IME 上下文。
         Win32.ImeContextGuard.Harden(this);
+    }
+
+    /// <summary>跨显示器弹出时按新 DPI 重算几何、字号与窗体尺寸（PMv2 下 WinForms 不会自动缩放
+    /// 一个手工布局的自绘窗口）。</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        if (e.DeviceDpiOld == e.DeviceDpiNew) return;
+        _deviceDpi = e.DeviceDpiNew;
+        _g = ShellLogic.TrayMenuLayout.ComputeGeometry(_deviceDpi);
+        _exitFont.Dispose();
+        _exitFont = CreateExitFont(_g.EmPx);
+        Size = new Size(_g.FormWidth, _g.FormHeight);
+        Render();
     }
 
     /// <summary>菜单字体回退链：Noto Sans SC（思源黑体）→ DengXian（等线，Win10/11 自带）
     /// → Microsoft YaHei UI → 系统默认，统一 Regular（400）单画——v0.2.3 再降一档：
     /// 前版 Medium(500)/伪粗体双画实测仍偏粗，与图标描边（1.8px）视觉不再平衡。
     /// 其他电脑缺字体时静默降级，不会回退成默认丑字体，也不会抛异常。
-    /// 思源/等线为 TrueType 各字重独立 family，按 family 名检测存在性。</summary>
-    private Font CreateExitFont()
+    /// 【字号单位】一律 <c>GraphicsUnit.Pixel</c>：像素字号与绘制 DC 的 DPI 无关，
+    /// 缩放折算只在 <see cref="ShellLogic.TrayMenuLayout.ComputeGeometry"/> 里发生一次。</summary>
+    private static Font CreateExitFont(int emPx)
     {
         try
         {
             var families = FontFamily.Families;
             // 1) 思源黑体：商务现代，Regular 字重清爽
             var noto = Array.Find(families, f => string.Equals(f.Name, "Noto Sans SC", StringComparison.OrdinalIgnoreCase));
-            if (noto is not null) return new Font(noto, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
+            if (noto is not null) return new Font(noto, emPx, FontStyle.Regular, GraphicsUnit.Pixel);
             // 2) 等线：Win10/11 自带
             var deng = Array.Find(families, f => string.Equals(f.Name, "DengXian", StringComparison.OrdinalIgnoreCase));
-            if (deng is not null) return new Font(deng, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
+            if (deng is not null) return new Font(deng, emPx, FontStyle.Regular, GraphicsUnit.Pixel);
             // 3) 微软雅黑：最通用兜底
             var yahei = Array.Find(families, f => string.Equals(f.Name, "Microsoft YaHei UI", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(f.Name, "Microsoft YaHei", StringComparison.OrdinalIgnoreCase));
-            if (yahei is not null) return new Font(yahei, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
+            if (yahei is not null) return new Font(yahei, emPx, FontStyle.Regular, GraphicsUnit.Pixel);
         }
         catch { /* 字体枚举失败走默认 */ }
-        return new Font(FontFamily.GenericSansSerif, 10f * _s, FontStyle.Regular, GraphicsUnit.Point);
+        return new Font(FontFamily.GenericSansSerif, emPx, FontStyle.Regular, GraphicsUnit.Pixel);
     }
 
     protected override CreateParams CreateParams
@@ -127,6 +142,10 @@ internal sealed class TrayMenuForm : Form
         try
         {
             using var bmp = new Bitmap(Width, Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            // [issue #28-3] 显式把画布钉在 96 DPI：绘制 DC 自带 DPI 时，字号会被再折算一次，
+            // 与几何里已经乘过的缩放相乘 → 高 DPI 屏上文字按 s² 放大。像素字号 + 96 DPI 画布
+            // 让"一次折算"成为结构性保证，也让渲染结果可在 96 DPI 的 CI 上按任意目标 DPI 复现。
+            bmp.SetResolution(96f, 96f);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -143,18 +162,16 @@ internal sealed class TrayMenuForm : Form
 
     private void Draw(Graphics g)
     {
-        float s = _s;
-        var content = new Rectangle((int)(Shadow * s), (int)(Shadow * s), (int)(MenuWidth * s), (int)(MenuHeight * s));
-        int cr = (int)(CornerRadius * s);
+        var geo = _g;
+        var content = geo.Content;
+        int cr = geo.CornerRadius;
+        var item = geo.Item;
 
-        var item = new Rectangle(content.X + (int)(ItemInset * s), content.Y + (int)(ItemInset * s),
-            content.Width - (int)(ItemInset * 2 * s), content.Height - (int)(ItemInset * 2 * s));
-    
         // 柔和两级阴影（box-shadow 两级等比缩减；GDI+ 无原生高斯模糊，
         // 用多层扩张圆角矩形模拟衰减）
-        DrawShadowLayer(g, content, cr, 5, 8, s);
-        DrawShadowLayer(g, content, cr, 2, 3, s);
-    
+        DrawShadowLayer(g, content, cr, geo.Shadow1Dy, geo.Shadow1Spread);
+        DrawShadowLayer(g, content, cr, geo.Shadow2Dy, geo.Shadow2Spread);
+
         // 白底 + 1px 边框（.menu: #fff + #E5E7EB）
         using (var bgPath = RoundedRect(content, cr))
         {
@@ -163,30 +180,28 @@ internal sealed class TrayMenuForm : Form
             using var pen = new Pen(BorderColor);
             g.DrawPath(pen, bgPath);
         }
-    
+
         // hover：只铺 .exit 条目区域（内缩 5、圆角 8，与 CSS 一致）
         if (_hoverExit)
         {
             using var hb = new SolidBrush(HoverFill);
-            using var hoverPath = RoundedRect(item, (int)(ItemRadius * s));
+            using var hoverPath = RoundedRect(item, geo.ItemRadius);
             g.FillPath(hb, hoverPath);
         }
-    
-        // 内容：红色电源图标 + 黑色"退出"（13px 常规、字距 2px，紧凑版式）
+
+        // 内容：红色电源图标 + 黑色"退出"（字号 = 10pt@96dpi 折算后的像素、字距 2px，紧凑版式）
         // [issue #28-1 回归修复] 测量/绘制必须带 NoPadding：
         // TextRenderer 默认 flags 会在每侧加 ~4-5px 内边距（实测 Noto Sans SC 10pt：
         // 默认 23px/字 vs NoPadding 14px/字），旧实现还额外给首字矩形 +4*s 宽度——
         // 两者叠加把"字距 2px"放大成 ~11px（1x）/ 22px（2x）的视觉空档（用户截图报的
         // "退出按钮 UI 异常"）。现在矩形边界 = 字形边界，字距严格等于 letterSpacing。
-        int iconSize = (int)(18 * s);
-        int gap = (int)(12 * s);
-        int letterSpacing = (int)(2 * s);
         var m1 = TextRenderer.MeasureText(g, "退", _exitFont, Size.Empty, TextFormatFlags.NoPadding);
         var m2 = TextRenderer.MeasureText(g, "出", _exitFont, Size.Empty, TextFormatFlags.NoPadding);
         var place = ShellLogic.TrayMenuLayout.PlaceExitRow(
-            item.X, item.Width, iconSize, gap, m1.Width, m2.Width, letterSpacing);
+            item.X, item.Width, geo.IconSize, geo.Gap, m1.Width, m2.Width, geo.LetterSpacing);
 
-        DrawPowerIcon(g, place.IconCenterX, item.Y + item.Height / 2f, 5.2f * s, 1.8f * s);
+        var (iconRadius, iconStroke) = ShellLogic.TrayMenuLayout.IconGeometry(_deviceDpi);
+        DrawPowerIcon(g, place.IconCenterX, item.Y + item.Height / 2f, iconRadius, iconStroke);
 
         const TextFormatFlags textFlags = TextFormatFlags.VerticalCenter
             | TextFormatFlags.NoPadding | TextFormatFlags.Left;
@@ -215,15 +230,16 @@ internal sealed class TrayMenuForm : Form
         g.DrawLine(pen, cx, cy - r * 1.22f, cx, cy - r * 0.23f);
     }
 
-    /// <summary>多层扩张圆角矩形模拟柔和投影（dy 垂直偏移、spread 最大扩散，均为逻辑 px）。</summary>
-    private static void DrawShadowLayer(Graphics g, Rectangle content, int cr, int dy, int spread, float s)
+    /// <summary>多层扩张圆角矩形模拟柔和投影（dy 垂直偏移、spread 最大扩散，单位=物理像素，
+    /// 缩放折算已在 <see cref="ShellLogic.TrayMenuLayout.ComputeGeometry"/> 完成）。</summary>
+    private static void DrawShadowLayer(Graphics g, Rectangle content, int cr, int dyPx, int spreadPx)
     {
         const int steps = 6;
         for (int i = steps; i >= 1; i--)
         {
-            int e = (int)(spread * s * i / steps);
+            int e = spreadPx * i / steps;
             var r = Rectangle.Inflate(content, e, e);
-            r.Offset(0, (int)(dy * s));
+            r.Offset(0, dyPx);
             using var b = new SolidBrush(Color.FromArgb(6, 0, 0, 0));
             using var p = RoundedRect(r, cr + e);
             g.FillPath(b, p);
@@ -242,8 +258,7 @@ internal sealed class TrayMenuForm : Form
         return path;
     }
 
-    private bool HitExit(Point p) => new Rectangle((int)((Shadow + ItemInset) * _s), (int)((Shadow + ItemInset) * _s),
-        (int)((MenuWidth - ItemInset * 2) * _s), (int)((MenuHeight - ItemInset * 2) * _s)).Contains(p);
+    private bool HitExit(Point p) => _g.Item.Contains(p);
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
