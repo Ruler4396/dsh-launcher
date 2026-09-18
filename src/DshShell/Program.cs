@@ -724,12 +724,14 @@ internal static class Program
 
         ScheduleUpdateCheck(form);
 
-        // [DSH_TEST_TOAST=1] 通知链路自检：直接走一次 SystemToast（分步轨迹见 SystemToast.cs）
-        if (string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_TOAST"), "1", StringComparison.OrdinalIgnoreCase))
+        // [DSH_TEST_NOTICE_CARD=1] 通知链路自检：走一次真实卡片呈现（回归测试用固定入口，
+        // 断言"通知走通且进程内没有加载 wpnapps.dll"）。旧的 DSH_TEST_TOAST 随 SystemToast 一起删除。
+        if (string.Equals(Environment.GetEnvironmentVariable("DSH_TEST_NOTICE_CARD"), "1",
+                StringComparison.OrdinalIgnoreCase))
         {
-            var ok = Windows.SystemToast.TryShow(form, "dsh-launcher toast 自检",
-                $"通知链路自检 {DateTime.Now:HH:mm:ss}（DSH_TEST_TOAST）", TimeSpan.FromSeconds(15), null);
-            Trace($"toast self-test: shown={ok}");
+            var ok = Windows.NoticeCard.Present(form, "dsh-launcher 通知自检",
+                $"通知卡片自检 {DateTime.Now:HH:mm:ss}（DSH_TEST_NOTICE_CARD）", TimeSpan.FromSeconds(15));
+            Trace($"notice card self-test: presented={ok}");
         }
 
         // ---- 任务一：插件崩溃安全模式接线 ----
@@ -1480,41 +1482,19 @@ internal static class Program
     private static void AnnounceSafeModeActive(DshShellForm form)
     {
         ApplySafeModeVisibility(true);
-        var body = "第三方插件已临时禁用（上次会话进入过安全模式，本次启动沿用了它）。\n"
-                 + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。\n\n"
-                 + "是否现在退出安全模式，并按正常配置重启 dsh 服务？";
-        var shown = SystemToast.TryShow(form, "dsh 已以安全模式启动",
-            body + "\n（点击本通知即退出安全模式并重启）",
+        // [issue #25 收口] 唯一通知通道，且这条通知**自带退出动作**：标题栏的"（安全模式）"
+        // 只是文字、不可点，若通知没有可点动作，用户就没有任何 UI 途径离开降级态（#28-4 原话：
+        // "没有退出通道，对称遵守等于把用户永久困在降级态"）。安全模式是粘滞的，每次启动都会
+        // 重新告知一次，所以错过一张卡片不等于永久失去入口——不需要再留模态弹窗作为第二条通道。
+        var presented = Windows.NoticeCard.Present(form, "dsh 已以安全模式启动",
+            "第三方插件已临时禁用（上次会话进入过安全模式，本次启动沿用了它）。\n"
+            + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。",
             TimeSpan.FromSeconds(25),
-            onClick: () => ExitSafeModeRequested(form));
-        if (shown)
-        {
-            Logger.Info("safe-mode notice toast shown: 第三方插件已临时禁用（可点击退出）");
-            return;
-        }
-        // [issue #25 与 #28-4 的交互后果] 系统 Toast 默认关闭后，上面那条 onClick 曾是**全仓库
-        // 唯一**的 UI 退出安全模式入口（ApplySafeModeVisibility 只改标题文字，不可点）——
-        // 继续只留一行日志，等于把用户永久困在降级态。故降级为模态弹窗保住这条通道。
-        Logger.Warn("safe-mode notice toast unavailable; falling back to modal exit prompt");
-        if (E2EMode)
-        {
-            Trace("safe-mode modal suppressed in E2E/probe mode (modal hardening)");
-            return;
-        }
-        try
-        {
-            try { form.Activate(); } catch { /* 窗体尚未可见 */ }
-            var r = MessageBox.Show(form, body, "dsh 已以安全模式启动",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            Trace($"safe-mode modal answered: {r}");
-            if (r == DialogResult.Yes) ExitSafeModeRequested(form);
-            else Logger.Info("safe-mode notice: user chose to stay in safe mode");
-        }
-        catch (Exception ex)
-        {
-            // 弹窗本身失败（窗体已关闭等）：留痕，绝不让通知链路抛进启动流程
-            Logger.Warn("safe-mode modal fallback failed: " + ex.Message);
-        }
+            onAction: () => ExitSafeModeRequested(form),
+            actionText: "点击此处退出安全模式并重启");
+        Logger.Info(presented
+            ? "safe-mode notice presented: 第三方插件已临时禁用（点击可退出）"
+            : "safe-mode notice not presented; title bar 安全模式 marker is the only cue");
     }
 
     /// <summary>[issue #28-4] 用户从通知点击退出安全模式：解粘滞 → 以正常 profile 重启服务 → 撤横幅。
@@ -2665,14 +2645,11 @@ internal static class Program
         });
     }
 
-    /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：系统通知告知落盘位置，
-    /// 不自动打开——防恶意页面触发下载后自动执行本地代码（S2 修复）。
-    /// [v0.4.1] 从托盘气泡迁移到系统 Toast（不再依赖托盘图标）。</summary>
+    /// <summary>下载完成但非"无害扩展名"（可能含可执行代码）时的提示：告知落盘位置，
+    /// 不自动打开——防恶意页面触发下载后自动执行本地代码（S2 修复）。</summary>
     private static void NotifyDownloadComplete(string filePath)
-    {
-        SystemToast.TryShow(_pendingForm, "下载完成",
-            "文件已保存：\n" + filePath, TimeSpan.FromSeconds(8), onClick: null);
-    }
+        => Windows.NoticeCard.Present(_pendingForm, "下载完成",
+            "文件已保存：\n" + filePath, TimeSpan.FromSeconds(8));
 
     private static void NotifyPending(PendingUpdate type, string latest, string local)
     {
@@ -2682,58 +2659,43 @@ internal static class Program
         var (title, body) = type == PendingUpdate.LauncherSecurity
             ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
             : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
-        // [2026-08-29 便携版分流] 便携 ZIP：无开始菜单快捷方式/AUMID 关联，系统 Toast 在部分
-        // 环境被拒（实测 0x80070490）→ 直接模态弹窗保证可达；MSI（Program Files）保持
-        // Toast → 托盘气泡 → 标题驻留链。
+        // 便携 ZIP：这里是**决策**对话框（要用户点是/否：下不下载、跳不跳过该版本），
+        // 不是通知——卡片不承载决策语义，故保留模态形态（v0.4.1 便携版分流不变）。
         if (ShellLogic.RuntimeConfig.IsPortableInstallWithTestOverride())
         {
             ShowPortableUpdateDialog(title, body, type, latest);
             return;
         }
-        // [v0.4.1] 系统 Toast 替代托盘气泡：通知不再依赖托盘图标（此前非 tray 常驻模式下
-        // TrayIcon 恒为 null，更新气泡被静默丢弃——rc6→rc7 无提示根因）。
-        // 点击 → OnPendingBalloonClicked（SystemToast 内部编组回 UI 线程），语义与原 BalloonTipClicked 一致。
-        var shown = SystemToast.TryShow(_pendingForm, title, body,
-            TimeSpan.FromSeconds(25), // 驻留 25s，安全更新要让人看到
-            () => OnPendingBalloonClicked(null, EventArgs.Empty));
-        if (shown)
-        {
-            Logger.Info($"update toast shown: {title} / {body.Replace("\n", " ")}");
-            return;
-        }
-        // [2026-08-29 多种方式兜底] toast 失败（实测系统通知平台在部分上下文拒绝）：
-        // ① 托盘气泡（TrayManager 已建托盘时）；② 主窗标题栏驻留标记（托盘不可用的最后防线）。
-        Logger.Warn("update toast unavailable; falling back to tray balloon / title dwell");
+        // [issue #25 收口] 唯一通知通道：自绘卡片。点击 = 原"点击此处在后台下载更新"
+        // （OnPendingBalloonClicked），语义与当年 BalloonTipClicked / Toast 激活一致。
+        if (Windows.NoticeCard.Present(_pendingForm, title, body,
+                TimeSpan.FromSeconds(25),      // 驻留 25s，安全更新要让人看到
+                () => OnPendingBalloonClicked(null, EventArgs.Empty)))
+            Logger.Info($"update notice presented: {title} / {body.Replace("\n", " ")}");
+        // 标题栏标记是**状态指示**（卡片会自动收起，错过的人仍要看得出"有更新待处理"），
+        // 不构成第二条通知通道。
+        ApplyPendingTitleMark(type);
+    }
+
+    /// <summary>有待处理更新时的标题栏标记。重复轮询不叠加（同一条标记只上一次）。</summary>
+    private static void ApplyPendingTitleMark(PendingUpdate type)
+    {
         try
         {
-            if (Managers.WindowManager.Instance.TrayIcon is { } tray)
+            if (_pendingForm is null || _pendingForm.IsDisposed) return;
+            var mark = type == PendingUpdate.LauncherSecurity ? "（有安全更新）" : "（有更新）";
+            if (_pendingForm.Text.Contains(mark, StringComparison.Ordinal)) return;
+            if (_pendingForm is DshWeb.Windows.DshShellForm shell && shell.TitleBar is not null)
             {
-                tray.ShowBalloonTip(15000, title, body, System.Windows.Forms.ToolTipIcon.Info);
-                Logger.Info($"update balloon fallback shown: {title}");
-                return;
+                shell.TitleBar._titleText += mark;
+                shell.TitleBar.Invalidate();
             }
+            _pendingForm.Text += mark;
+            Logger.Info($"update notice state marked on title bar: {mark}");
         }
         catch (Exception ex)
         {
-            Logger.Warn("update balloon fallback failed: " + ex.Message);
-        }
-        try
-        {
-            if (_pendingForm is not null && !_pendingForm.IsDisposed)
-            {
-                var mark = type == PendingUpdate.LauncherSecurity ? "（有安全更新）" : "（有更新）";
-                if (_pendingForm is DshWeb.Windows.DshShellForm shell && shell.TitleBar is not null)
-                {
-                    shell.TitleBar._titleText += mark;
-                    shell.TitleBar.Invalidate();
-                }
-                _pendingForm.Text += mark;
-                Logger.Info($"update notice pinned to title bar: {mark}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn("update title dwell failed: " + ex.Message);
+            Logger.Warn("update title mark failed: " + ex.Message);
         }
     }
 
@@ -2821,12 +2783,12 @@ internal static class Program
                     "suppressing balloon. Manual: npm install -g @deepseek-ai/dsh@" + version);
                 return;
             }
-            // [v0.4.1] 系统 Toast 替代托盘气泡（不依赖托盘图标；TryShow 绝不抛出）
-            var shown = SystemToast.TryShow(_pendingForm, "dsh 更新待应用",
+            // [issue #25 收口] 唯一通知通道：自绘卡片（不依赖托盘、不碰 WPN、不阻塞消息泵）
+            var shown = Windows.NoticeCard.Present(_pendingForm, "dsh 更新待应用",
                 $"dsh {version} 主程序已下载。下次重启启动器后自动安装（需联网解析依赖，预计 1-2 分钟）。",
-                TimeSpan.FromSeconds(15), onClick: null);
+                TimeSpan.FromSeconds(15));
             if (!shown)
-                Logger.Warn("pending-apply toast unavailable", ctx: new { version });
+                Logger.Warn("pending-apply notice not presented", ctx: new { version });
         }
         catch (Exception ex)
         {
@@ -3105,10 +3067,9 @@ internal static class Program
             _sessionStagedVersions.Add(latest);
 
             var balloon = $"dsh {latest} 已在后台构建完成。下次重启启动器时将自动切换（秒级）。";
-            // [v0.4.1] 系统 Toast 替代托盘气泡（TryShow 内部自行编组线程，绝不抛出）；
-            // [2026-08 回归修复] 记录 Toast 是否成功——失败时标题栏驻留是唯一可见反馈。
-            var toastShown = SystemToast.TryShow(form, "dsh 更新已就绪", balloon, TimeSpan.FromSeconds(8), onClick: null);
-            Logger.Info($"update success notification: toast={toastShown}; title bar dwell={BuildTerminalDwellMs}ms");
+            // [issue #25 收口] 唯一通知通道；失败时仍有标题栏 Ready 终态驻留兜着（下方）。
+            var noticeShown = Windows.NoticeCard.Present(form, "dsh 更新已就绪", balloon, TimeSpan.FromSeconds(8));
+            Logger.Info($"update success notification: card={noticeShown}; title bar dwell={BuildTerminalDwellMs}ms");
             Logger.Info($"dsh runtime build complete: {latest}",
                 ctx: new { tool = buildTool, bin = binEntry, buildDir });
 
@@ -3170,12 +3131,16 @@ internal static class Program
 
         try
         {
-            var toastShown = SystemToast.TryShow(form, "dsh 更新构建失败",
+            var noticeShown = Windows.NoticeCard.Present(form, "dsh 更新构建失败",
                 $"dsh {latest} 后台构建失败。{(preserved ? "已保留下载，下次启动启动器时将自动重试。" : "可重新点击更新重试。")}",
-                TimeSpan.FromSeconds(8), onClick: null);
-            Logger.Info($"update failure notification: toast={toastShown}, preserved={preserved}");
+                TimeSpan.FromSeconds(8));
+            Logger.Info($"update failure notification: card={noticeShown}, preserved={preserved}");
         }
-        catch { /* Toast 失败不阻断 */ }
+        catch (Exception ex)
+        {
+            // 通知失败不阻断——但留痕（空 catch 违反铁律三），下方 E4001 模态仍会告知用户
+            Logger.Warn("update failure notice card failed; E4001 dialog still reports it: " + ex.Message);
+        }
 
         try
         {

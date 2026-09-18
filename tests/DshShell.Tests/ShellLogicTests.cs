@@ -70,43 +70,39 @@ public class ShellLogicTests
     public void ClassifyPopup_ReturnsExpected(string? raw, ShellLogic.PopupTarget expected) =>
         Assert.Equal(expected, ShellLogic.WebViewPolicy.ClassifyPopup(raw));
 
-    // ---------- 权限策略 ----------
+    // ---------- 权限自动放行白名单 ----------
 
-    // [issue #25] Win10（build<22000）不自动放行 Notifications（WPN 崩溃护栏）；
-    // Win11（build≥22000）维持原策略。
+    // [issue #25] Notifications 恒放行：拒权限不是这个崩溃的防护手段（护栏只切宿主自己
+    // 那条未打包 toast 路径），呈现通道的接管见 WebViewManager.NotificationReceived。
     [Theory]
-    [InlineData(CoreWebView2PermissionKind.Notifications, 19045, false)]   // Win10: 护栏生效
-    [InlineData(CoreWebView2PermissionKind.Notifications, 22000, true)]    // Win11: 保持放行
-    [InlineData(CoreWebView2PermissionKind.Notifications, 22631, true)]
-    [InlineData(CoreWebView2PermissionKind.ClipboardRead, 19045, true)]
-    [InlineData(CoreWebView2PermissionKind.ClipboardRead, 22000, true)]
-    [InlineData(CoreWebView2PermissionKind.Autoplay, 19045, true)]
-    [InlineData(CoreWebView2PermissionKind.MultipleAutomaticDownloads, 19045, true)]
-    [InlineData(CoreWebView2PermissionKind.PersistentStorage, 19045, true)]
-    [InlineData(CoreWebView2PermissionKind.Microphone, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.Camera, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.Geolocation, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.OtherSensors, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.MidiSystemExclusiveMessages, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.FileReadWrite, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.LocalFonts, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.WindowManagement, 19045, false)]
-    [InlineData(CoreWebView2PermissionKind.UnknownPermission, 19045, false)]
-    public void IsAutoGrantedPermission_MatchesPolicy(CoreWebView2PermissionKind kind, int osBuild, bool expected) =>
-        Assert.Equal(expected, ShellLogic.WebViewPolicy.IsAutoGrantedPermission(kind, osBuild));
+    [InlineData(CoreWebView2PermissionKind.Notifications, true)]
+    [InlineData(CoreWebView2PermissionKind.ClipboardRead, true)]
+    [InlineData(CoreWebView2PermissionKind.Autoplay, true)]
+    [InlineData(CoreWebView2PermissionKind.MultipleAutomaticDownloads, true)]
+    [InlineData(CoreWebView2PermissionKind.PersistentStorage, true)]
+    [InlineData(CoreWebView2PermissionKind.Microphone, false)]
+    [InlineData(CoreWebView2PermissionKind.Camera, false)]
+    [InlineData(CoreWebView2PermissionKind.Geolocation, false)]
+    [InlineData(CoreWebView2PermissionKind.OtherSensors, false)]
+    [InlineData(CoreWebView2PermissionKind.MidiSystemExclusiveMessages, false)]
+    [InlineData(CoreWebView2PermissionKind.FileReadWrite, false)]
+    [InlineData(CoreWebView2PermissionKind.LocalFonts, false)]
+    [InlineData(CoreWebView2PermissionKind.WindowManagement, false)]
+    [InlineData(CoreWebView2PermissionKind.UnknownPermission, false)]
+    public void IsAutoGrantedPermission_MatchesPolicy(
+        CoreWebView2PermissionKind kind, bool expected) =>
+        Assert.Equal(expected, ShellLogic.WebViewPolicy.IsAutoGrantedPermission(kind));
 
-    // ---------- 系统 Toast 可用性（issue #25 WPN 崩溃护栏） ----------
-
-    [Theory]
-    [InlineData(10, 0, 19041, false)]   // Win10 2004
-    [InlineData(10, 0, 19045, false)]   // Win10 22H2（reporter 崩溃版本线）
-    [InlineData(10, 0, 22000, true)]    // Win11 21H2
-    [InlineData(10, 0, 22631, true)]    // Win11 23H2
-    [InlineData(6, 1, 7601, false)]     // Win7
-    [InlineData(6, 3, 9600, false)]     // Win8.1
-    [InlineData(10, 0, 0, false)]       // 未知 build 保守拒绝
-    public void ToastPolicy_ShouldUseSystemToast(int major, int minor, int build, bool expected) =>
-        Assert.Equal(expected, ShellLogic.ToastPolicy.ShouldUseSystemToast(major, minor, build));
+    /// <summary>
+    /// [issue #25] 网页通知权限**不得**被当成崩溃防护手段：壳自己的通知通道已整体从
+    /// WPN/系统 Toast 迁到自绘卡片（wpnapps.dll 永不加载，见
+    /// Regression_Issue25_WpnToastGuard_RealOs），所以这里既没有可关的 Toast，也不该再拒权限。
+    /// 单独锁一条，防止将来有人"顺手把通知权限也拒了"。
+    /// </summary>
+    [Fact]
+    public void WebNotificationPermission_StaysGranted_Issue25()
+        => Assert.True(ShellLogic.WebViewPolicy.IsAutoGrantedPermission(
+            CoreWebView2PermissionKind.Notifications));
 
     // ---------- 下载文件名推导 ----------
 

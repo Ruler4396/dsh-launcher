@@ -202,17 +202,6 @@ public sealed class WindowManager : IWindowManager
         }
     }
 
-    /// <summary>托盘气泡通知（下载完成等）。</summary>
-    public void ShowBalloonTip(int timeout, string title, string body, ToolTipIcon icon)
-    {
-        try
-        {
-            if (_trayIcon is null) return;
-            _trayIcon.ShowBalloonTip(timeout, title, body, icon);
-        }
-        catch { /* 气泡失败忽略 */ }
-    }
-
     /// <summary>真实退出时释放托盘。</summary>
     public void DisposeTray()
     {

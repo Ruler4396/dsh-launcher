@@ -37,7 +37,8 @@ function Assert-True([bool]$Cond, [string]$Msg) {
 Write-Host "== 0. 环境卫生（清除壳注入的 DSH_* 进程变量）==" -ForegroundColor Cyan
 foreach ($hygieneVar in 'DSH_WEB_URL','DSH_WEB_PORT','DSH_VERSION','DSH_TEST_SPLASH_DELAY_MS',
                         'DSH_SERVICE_CMD','DSH_SANDBOX','DSH_NO_UI','DSH_E2E','DSH_TEST_FORCE_MANAGED',
-                        'DSH_TEST_FAKE_APPLY','DSH_TEST_INSTANCE','DSH_PROFILE') {
+                        'DSH_TEST_FAKE_APPLY','DSH_TEST_INSTANCE','DSH_PROFILE',
+                        'DSH_TEST_NOTICE_CARD','DSH_TEST_TOAST') {
     if (Test-Path "Env:$hygieneVar") {
         Write-Host ("  [clean] " + $hygieneVar)
         Remove-Item "Env:$hygieneVar" -ErrorAction SilentlyContinue
@@ -123,6 +124,24 @@ Assert-True ($shellSrc -match '--diagnose') "壳支持 --diagnose 诊断导出"
 Assert-True ($appEnvSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级；探测现居 AppEnvironment.ReadLifetimeMode）"
 Assert-True ($shellSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged）"
 Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-web.log 路径"
+
+# ---- issue #25 收口：通知只有一条通道（自绘卡片），WPN/系统 Toast 通路整体移除 ----
+# 崩溃是 wpnapps.dll 内的 native AV（0xc0000005），托管层拦不住且发生在 Show() 返回之后，
+# 所以"加开关"不算修好——只要通路还在，被越过就复发。
+# 只拦**代码引用**（成员访问/类型名/DllImport），注释里讲事故经过保留 wpnapps 字样是有
+# 搜索价值的线索，不该被判违规。
+$srcAll = @(Get-ChildItem (Join-Path $root "src\DshShell") -Recurse -Filter *.cs |
+            Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' })
+$wpnHits = @($srcAll | Where-Object {
+    (Get-Content $_.FullName -Raw) -match 'SystemToast\.|Windows\.UI\.Notifications|CreateToastNotifier|ToastNotificationManager|DllImport\("[^"]*wpnapps' } |
+    ForEach-Object { $_.Name })
+Assert-True ($wpnHits.Count -eq 0) "壳源码不得再引用 WPN/系统 Toast 通路（命中：$($wpnHits -join ', ')）"
+Assert-True (Test-Path (Join-Path $root "src\DshShell\Windows\NoticeCard.cs")) "唯一通知实现 NoticeCard.cs 必须存在"
+$noticeCardSrc = Get-Content (Join-Path $root "src\DshShell\Windows\NoticeCard.cs") -Raw
+Assert-True ($noticeCardSrc -match 'ShowWithoutActivation') "通知卡片非模态：显示时不抢焦点"
+Assert-True ($noticeCardSrc -match 'ShellLogic\.NoticeCardLayout') "通知卡片几何只消费纯函数（不得自乘 DPI 系数）"
+$traySrc = Get-Content (Join-Path $root "src\DshShell\Managers\WindowManager.cs") -Raw
+Assert-True ($traySrc -notmatch 'ShowBalloonTip') "托盘气泡不再是通知通道（避免第二套呈现实现回潮）"
 
 # ---- Task 0.2.5 完成态静态断言（重构收尾时启用，重构中保持"旧结构基线"锁定）----
 # 目标（Step 6 收尾）：Program.cs 不再含 `: Form` 子类、WndProc、CreateParams、WebView2 事件接线，
