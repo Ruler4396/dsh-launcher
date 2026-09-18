@@ -49,6 +49,73 @@
   账本外（用户自己在终端 `dsh web` 起的）与 AlwaysOn（"秒进"是设计意图）一律维持既有
   "健康服务不杀也不动"语义；清理失败则保底沿用旧服务，绝不把可用界面变成启不来。
 
+- **装完插件点 DSH 内置"重启"→ 插件直接消失（issue #28 复测第 5 条，重大）**：报告人复测
+  确认伪重启已修，但改用 DSH 页面自带的重启后**新装插件凭空消失**，且界面上没有任何解释。
+  三处根因一并修复：
+  1. **启动/重启不对称**：全仓唯一的 `WithProfile(.dsh-safe)` 判定只写在重启路径
+     （`Program.StartDshServiceViaIdentity`），初始启动走 `LauncherApp` 完全不套 profile。
+     于是一份跨会话粘滞的 `safe-mode.json` 造成"托盘退出重开插件都在、点内置重启插件没了"
+     ——`.dsh-safe` 按设计剥离所有非 `@deepseek-ai` bundle。现判定下沉为
+     `Domain/SafeModeLaunchPolicy.Decorate`，启动经新注入点 `LauncherApp.ServiceIdentityDecorator`
+     与重启**同源对称**；同时补上可见性：标题栏「（安全模式）」横幅改由"真正用于拉起进程的那份
+     身份"驱动（`ApplySafeModeVisibility`），并新增一条可点击退出的系统通知
+     （`SafeMode.IsActive` 此前在启动路径上完全静默）。
+  2. **重启后 PID 账本不刷新**：`RestartDshServiceCoreAsync` 就绪后从不 `RecordServicePid`，
+     `_servicePid` 也不更新 → `ResumeAfterRestart` attach 到**已死的旧 pid**（attach 失败按设计
+     只 Warn）→ 新服务脱离进程层监控且不在账本内 → 下一次内置重启不再被识别为"运行期退出"，
+     而被判成 E2004/E2007 启动自检失败 → 连续失败计数推进 → 询问进安全模式 → 回到 ①。
+     现在自愈/安全模式/回滚/更新应用四条重启路径统一在就绪后刷新账本与内存 PID，
+     解析不到 PID 时响亮留痕；`BootRecoveryPolicy.SuppressLauncherInduced` 另加静默窗：
+     壳自己刚重启过服务时，**仅来自 HTTP 探测回死**的证据在 20s 窗内不计入失败、不升级询问
+     （进程层/页面层真崩溃签名永不豁免）。
+  3. **停服强杀打断插件安装**：DSH 内置重启的实现是服务自我退出并重新拉起，旧 `StopService`
+     发现端口被"另一个 pid"占据时无条件 `taskkill /T /F` 整树——那棵子树里可能正在跑
+     npm/pnpm 完成插件安装。现按纯函数 `ServiceRestartPolicy.DecideOccupantReclaim` 处置：
+     更新的、已能应答就绪探测的服务**接管并写入账本**（不再重复拉起、更不杀它），
+     年幼未应答的先等宽限，老了又不应答的才杀；关窗/退出路径不允许接管，整树回收语义不变。
+  另修**数据销毁**隐患：正常模式启动此前无条件递归删除 `.dsh-safe`，而在安全模式会话里装的
+  插件就落在该目录内（pnpm 实体化 `node_modules`）——等于每次启动都销毁用户刚装的东西。
+  现经 `SafeProfileBuilder.InspectForCleanup` + `SafeProfileCleanupPolicy` 判定，目录内出现
+  非壳生成的产物或清单被改过时一律保留并带 `[E1010]` 留痕。
+  测试：契约（4 个新纯函数矩阵）+ Headless（粘滞态装饰启动身份）+ Outcome
+  （`SafeModeSymmetryOutcomes`：启动与重启命令行字节一致、被改过的 `.dsh-safe` 物理存活）+
+  零 Mock RealOS（`Regression_Issue28_RestartPidLedgerRefresh`：真 node + 真账本 + 接管后
+  插件安装子进程存活/不允许接管时整树仍被杀的正负对照 + 真实进程句柄下"attach 哪个 pid
+  决定路由"）。
+- **源码构建被弹"检测到重要安全更新 0.4.5（当前 ?）"（issue #28 复测第 2 条）**：报告人按
+  维护者给的命令从源码构建后反被催更新。弹窗文案里那个 `?` 就是根因：本地版本解析为 `null`
+  （SDK 默认 `1.0.0` 判为开发构建 → 回退 `git describe` → 无 `.git`/git 不可用/超时 → null），
+  而 `CompareVersions("0.4.5", null)` 把 null fail-open 成 `0.0.0` → "有安全更新"成立。
+  修复：① 新增判定门 `ShellLogic.LauncherUpdateNoticePolicy`——**本地版本未知一律静默**
+  （比较器的 fail-open 是发现/就绪链需要的，但提醒决策不该复用），并留痕
+  `launcher security notice suppressed: local version unknown`；② `git describe` 不再用
+  `--abbrev=0`，保留距离尾段（`0.4.5-6-g15f60daf`），`VersionPolicy` 把 `-<n>-g<sha>[-dirty]`
+  定义为 post-release dev 构建并排在同名正式版之上（源码构建从此"新于"最近 tag）。
+  版本信息窗"当前未知 → 有新版本"的既有语义按约定保持不变（该结论被契约与 Outcome 测试锁定）。
+- **托盘右键菜单在高分屏上"依旧异常"（issue #28 复测第 4 条）**：字距（#28-1）已修，但报告人
+  200% 屏上卡片与电源图标按 s 放大、"退出"两字却按 **s²** 放大（逐像素量其截图：图标墨迹宽
+  25px 比例正常，"退"墨迹宽 48px = 设计值 12·s 的 2.04 倍）。根因：字号写成
+  `GraphicsUnit.Point` 且已乘过 `_s`，绘制 DC 自带的 DPI 又折算一次（全仓唯一此写法的窗口）。
+  修复：全部几何与字号折算下沉为纯函数 `ShellLogic.TrayMenuLayout.ComputeGeometry(deviceDpi)`，
+  渲染侧改用 `GraphicsUnit.Pixel` 并把画布分辨率显式钉为 96（一次折算，结构性杜绝二次缩放）；
+  缩放来源从"构造时 `CreateGraphics()` 采样主屏"改为 `Win32/MonitorDpi.GetForPoint`（按光标
+  所在显示器），并补 `OnDpiChanged` 重算；`PlaceExitRow` 溢出时钳制居中偏移，图标不再被画到
+  白卡片外。测试：契约（{96,120,144,168,192,240} 线性缩放 + 溢出钳制）+ 真实渲染 RealOS
+  （同一菜单在 96/192 分辨率画布上墨迹宽度必须一致、墨迹宽随目标 DPI 线性增长、图标存在且
+  不越出卡片——这些断言在 96 DPI 的 CI runner 上同样有效，因目标 DPI 是构造参数）。
+  取证工具 `sandbox/tray-render` 支持 `--dpi` 多缩放对照图，产物改落仓库内 `out/`。
+- **启动窗（Splash）在高分屏上"按钮基本看不到"（issue #28 复测第 3 条）**：`SplashForm` 是全仓
+  唯一零 DPI 处理的窗口——380×180 窗体、60×22 取消按钮全是硬编码**物理像素**，而字体是 point
+  （随 DPI 变大），200% 屏上文字撑破按钮（截图里"取消"被裁成一条乱码）。修复：布局下沉为纯函数
+  `ShellLogic.SplashLayout.Compute(deviceDpi)`，像素单位字体 + `OnDpiChanged` 重算；同时去掉
+  该窗的 `ControlStyles.UserPaint`（它既不 override `OnPaint` 也不设 `BackColor`，等于拿走客户区
+  绘制权又不画）并显式设底色。另在 `DshShell.csproj` 标注 `ApplicationHighDpiMode` 实为**死配置**
+  （全仓无 `ApplicationConfiguration.Initialize()`，真正生效的是 ADR-003 的裸
+  `SetProcessDpiAwarenessContext`），避免后人误以为 WinForms 会自动缩放窗体。
+  测试：契约（线性缩放 + 控件互不越界 + 边距一致）+ `--ui-selftest` 第二遍实测"文字墨迹 ≤ 控件框"
+  （高分屏真机变红）+ E2E 把 `>=60x20` 这条抄自缺陷常量的同义反复断言改成**派生不变量**
+  （按钮尺寸/位置与窗口矩形成比例）。
+
 - **Win10 WPN 崩溃护栏（issue #25）**：特定 WPN 版本（`wpnapps.dll 10.0.19041.7663`
   等 2024-2025 更新推送组件）在 Win10 上显示系统 Toast 时原生崩溃
   （Application Error 1000：错误模块 `wpnapps.dll`、异常 `0xc0000005`、偏移固定
