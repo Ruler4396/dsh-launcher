@@ -62,7 +62,7 @@ public class NoticeCardLayoutContractTests
         var p = ShellLogic.NoticeCardLayout.Place(g, 18, 32, hasAction: true);
         Assert.Equal(p.TitleRect.Bottom + g.Gap, p.BodyRect.Top);
         Assert.Equal(p.BodyRect.Bottom + g.Gap, p.ActionRect.Top);
-        Assert.Equal(p.TitleRect.Height, 18);
+        Assert.Equal(18, p.TitleRect.Height);
         Assert.Equal(p.ActionRect.Height, g.ActionHeight);
         // 三段都在窗口内（× 也不例外）——超出就是被 Region 裁掉的"看不见的按钮"
         Assert.True(p.ActionRect.Bottom <= p.Height);

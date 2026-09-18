@@ -115,9 +115,13 @@ public class WebCacheVersionChangeOutcomes
             Assert.True(cachePut == "ok", "前置：CacheStorage 可写，实际=" + cachePut);
 
             // ---- 二次导航 + 落盘等待：证明 max-age 命中缓存（/big.js 不回源）----
-            await NavigateAndWaitAsync(web, page);
-            Assert.Equal(firstNavRequests, server.BigJsRequests); // 铁证：二次导航命中缓存，计数零增长
+            // 落盘等待**必须在二次导航之前**：CI runner（2 核高负载）上 2MB 响应可能还没写进
+            // 磁盘缓存，此时二次导航仍会回源，"计数零增长"就变成假红（本机必绿、CI 必红）。
+            // 铁证语义不变——缓存确实落盘之后，再导航一次不得回源。
             await WaitUntilAsync(() => DirBytes(cacheDir) > 128 * 1024, TimeSpan.FromSeconds(30));
+            var requestsBeforeSecondNav = server.BigJsRequests;
+            await NavigateAndWaitAsync(web, page);
+            Assert.Equal(requestsBeforeSecondNav, server.BigJsRequests); // 铁证：二次导航命中缓存，计数零增长
             long cacheBefore = DirBytes(cacheDir);
             Assert.True(cacheBefore > 128 * 1024, $"前置条件：磁盘缓存应有存量（实际 {cacheBefore} B）");
             long codeBefore = DirBytes(codeCacheDir);
