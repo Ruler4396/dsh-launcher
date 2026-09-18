@@ -140,6 +140,7 @@ Assert-True (Test-Path (Join-Path $root "src\DshShell\Windows\NoticeCard.cs")) "
 $noticeCardSrc = Get-Content (Join-Path $root "src\DshShell\Windows\NoticeCard.cs") -Raw
 Assert-True ($noticeCardSrc -match 'ShowWithoutActivation') "通知卡片非模态：显示时不抢焦点"
 Assert-True ($noticeCardSrc -match 'ShellLogic\.NoticeCardLayout') "通知卡片几何只消费纯函数（不得自乘 DPI 系数）"
+Assert-True ($noticeCardSrc -match 'NoticeDedupe\.ShouldSuppress') "通知对象必须过去重闸门（保证不重复提示）"
 $traySrc = Get-Content (Join-Path $root "src\DshShell\Managers\WindowManager.cs") -Raw
 Assert-True ($traySrc -notmatch 'ShowBalloonTip') "托盘气泡不再是通知通道（避免第二套呈现实现回潮）"
 

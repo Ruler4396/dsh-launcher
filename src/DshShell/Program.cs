@@ -732,6 +732,13 @@ internal static class Program
             var ok = Windows.NoticeCard.Present(form, "dsh-launcher 通知自检",
                 $"通知卡片自检 {DateTime.Now:HH:mm:ss}（DSH_TEST_NOTICE_CARD）", TimeSpan.FromSeconds(15));
             Trace($"notice card self-test: presented={ok}");
+            // 去重实证：同一条内容连送两次，第二次必须落在冷却窗里被抑制
+            //（回归测试断言 dsh.log 出现 "notice suppressed as duplicate"）。
+            // 正文固定不含时间戳，否则键会随秒变化、断言不稳定。
+            for (var i = 0; i < 2; i++)
+                Windows.NoticeCard.Present(form, "dsh-launcher 通知去重自检",
+                    "同一条内容在冷却窗内只应呈现一次（DSH_TEST_NOTICE_CARD）",
+                    TimeSpan.FromSeconds(15));
         }
 
         // ---- 任务一：插件崩溃安全模式接线 ----

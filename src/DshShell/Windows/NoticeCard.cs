@@ -31,7 +31,12 @@ internal sealed class NoticeCard : Form
     private static readonly Queue<Item> _pending = new();
 
     private readonly record struct Item(
-        string Title, string Body, int ExpiresMs, Action? OnAction, string ActionText);
+        string Title, string Body, int ExpiresMs, Action? OnAction, string ActionText, string Key);
+
+    /// <summary>最近**受理**的内容键与时刻：同一条内容在冷却窗内只受理一次（正在显示的
+    /// 与已排队的都算，见 PresentOnUi）。静态——它是"唯一对象"的去重状态。</summary>
+    private static string? _lastKey;
+    private static DateTimeOffset _lastAcceptedUtc;
 
     private ShellLogic.NoticeCardLayout.Geometry _g;
     private ShellLogic.NoticeCardLayout.Placement _p;
@@ -91,11 +96,14 @@ internal sealed class NoticeCard : Form
     {
         try
         {
+            var title_ = title ?? "";
+            var body_ = body ?? "";
             var item = new Item(
-                title ?? "", body ?? "",
+                title_, body_,
                 (int)Math.Clamp(expireAfter.TotalMilliseconds, 3_000, 120_000),
                 onAction,
-                onAction is null ? "" : (string.IsNullOrWhiteSpace(actionText) ? "点击查看" : actionText!));
+                onAction is null ? "" : (string.IsNullOrWhiteSpace(actionText) ? "点击查看" : actionText!),
+                ShellLogic.NoticeDedupe.Key(title_, body_));
 
             if (owner is null || owner.IsDisposed || !owner.IsHandleCreated)
             {
@@ -119,6 +127,22 @@ internal sealed class NoticeCard : Form
 
     private static void PresentOnUi(Form owner, Item item)
     {
+        // 去重闸门：同一条内容在冷却窗内只受理一次。正在显示的与已排队的都受这一条约束
+        // （受理时刻在下方统一登记），所以调用方重复轮询/重复信号不会刷屏。
+        // 抑制必须留痕——静默丢通知比重复通知更难排查。
+        var now = DateTimeOffset.UtcNow;
+        if (ShellLogic.NoticeDedupe.ShouldSuppress(
+                item.Key, _lastKey, _lastAcceptedUtc, now))
+        {
+            Logger.Info("notice suppressed as duplicate (within cooldown)", ctx: new
+            {
+                title = item.Title,
+                cooldownSeconds = ShellLogic.NoticeDedupe.DefaultCooldownSeconds,
+                sinceAcceptedSeconds = (int)(now - _lastAcceptedUtc).TotalSeconds,
+            });
+            return;
+        }
+
         if (_shared is { IsDisposed: false } shared && shared._current is not null)
         {
             // 已有卡片在显示：只排队，不开第二个窗口（"只维护一个对象"）。
@@ -128,6 +152,7 @@ internal sealed class NoticeCard : Form
                 Logger.Warn("notice card queue full; oldest notice dropped", ctx: new { dropped.Title });
             }
             _pending.Enqueue(item);
+            Accept(item, now);
             return;
         }
         if (_shared is null || _shared.IsDisposed)
@@ -136,7 +161,15 @@ internal sealed class NoticeCard : Form
             _shared = new NoticeCard(MonitorDpi.ForPoint(
                 new Point(work.Left + work.Width / 2, work.Top + work.Height / 2)));
         }
+        Accept(item, now);
         _shared.ShowItem(owner, item);
+    }
+
+    /// <summary>登记"这条内容已受理"——显示与排队都算，作为去重闸门的时间基准。</summary>
+    private static void Accept(Item item, DateTimeOffset at)
+    {
+        _lastKey = item.Key;
+        _lastAcceptedUtc = at;
     }
 
     /// <summary>owner 已销毁/最小化时退回主屏工作区——通知定位绝不能抛进调用方。</summary>
