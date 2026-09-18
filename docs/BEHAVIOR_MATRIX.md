@@ -42,7 +42,7 @@
 
 | # | 行为 | 触发 | 迁移落点 | 单测 | e2e | test.ps1 | 冒烟 |
 |---|---|---|---|---|---|---|---|
-| W1 | 权限自动授权白名单（`IsAutoGrantedPermission`） | PermissionRequested | `WebViewManager.InitializeAsync` 事件接线 | ✅ 现有 SecurityBoundaryTests | — | 完成态断言 WebView2 事件接线不在 Program | ✅ 弹窗开闭 |
+| W1 | 权限自动授权白名单（`IsAutoGrantedPermission`） | PermissionRequested | `WebViewManager.InitializeAsync` 事件接线 | ✅ 现有 `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy`（issue #25：Notifications 恒放行，护栏只切呈现通道不切权限） | — | 完成态断言 WebView2 事件接线不在 Program | ✅ 弹窗开闭 |
 | W2 | 弹窗分类：外部浏览器 / 壳内弹窗（`ClassifyPopup`） | NewWindowRequested | 同上 | ✅ 现有 SecurityBoundaryTests | — | 同上 | ✅ 弹窗开闭 |
 | W3 | 下载名推导 + 安全打开白名单（`IsSafeToOpen`，.exe/.html 不自动开） | DownloadStarting | 同上 | ✅ 现有 SecurityBoundaryTests | — | 同上 | ✅ 下载 .txt 自动开 / .exe 仅提示 |
 | W4 | 导航白名单（S3：仅 127.0.0.1/localhost，外部转浏览器） | NavigationStarting | 同上 | ✅ 现有 SecurityBoundaryTests | — | 同上 | ✅ 外部链接转浏览器 |

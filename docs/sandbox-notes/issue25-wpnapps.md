@@ -18,7 +18,8 @@
 | 项 | 值 |
 |---|---|
 | 本机 OS | Windows 10 22H2（10.0.19045） |
-| 本机 wpnapps.dll | **10.0.19041.4522**（2022 年组件；reporter 为 19041.7663，2024-2025 更新推送） |
+| 本机 wpnapps.dll | **10.0.19041.4522**（2022 年组件；reporter #1 为 19041.7663，2024-2025 更新推送） |
+| reporter #2 环境 | Windows 11 25H2（10.0.26200.9457）+ wpnapps.dll **10.0.26100.9278**，偏移 `0x53fb`，2026-09-18 单日 12 组 Event 1000+1026 全同签名（WER bucket 1839361804423943695）——**推翻初版"Win11 不受影响"假设** |
 | DshWeb 代码 | 仓库 HEAD（SystemToast.cs 自 reporter 构建 55bfe533 起零改动） |
 | 运行形态 | DshWeb.exe Debug 构建（本场景 `launcher/` 副本） |
 | .NET | 10.0.303 SDK |
@@ -57,28 +58,62 @@ wpnapps.dll（19041.7663）自身的 toast 路径缺陷。
 
 ## 修复（见仓库源码与 CHANGELOG）
 
-- `ShellLogic.ToastPolicy.ShouldUseSystemToast(major, minor, build)`（纯函数）：
-  Win10（build<22000）→ false → `SystemToast.TryShow` 直接降级（Warn 留痕 + return false）→
-  调用方走既有 **托盘气泡→标题驻留** 回退链；
-- `ShellLogic.WebViewPolicy.IsAutoGrantedPermission(kind, osBuild)`：Win10 不再自动放行
-  **Notifications**（堵 WebView2 web 通知 → WPN 的宿主内 toast 路径；页面侧
-  `Notification.permission=denied` 可感知）；
-- 测试钩子 `DSH_TEST_FORCE_TOAST=1` 可强制越过护栏（Win11/CI 冒烟真 WPN 通路，与
-  既有 `DSH_TEST_FORCE_TOAST_FAIL` 对称）；
-- 回归：`Regression_Issue25_WpnToastGuard.RealOs`（零 Mock）——真实拉起 DshWeb.exe
-  （外部托管假服务），Win10 断言 suppress 留痕 + `toast self-test: shown=False` +
-  无任何 `toast step` 轨迹 + 进程存活满 60s；Win11 断言放行 + 存活。
+> 这条路修过三次，前两版都是错的：45048989 做成"仅 Win10（build<22000）降级"，前提
+> "本机 19041.4522 与 Win11 均不触发"被 reporter #2 的 Win11 25H2 报告否证；第二版改成
+> "默认全平台关闭 + `DSH_ENABLE_SYSTEM_TOAST` opt-in"，仍然是**保留通路只关开关**——
+> 开关可以被越过，用户"只想把通知调回来"就会重新进崩溃循环。
+> 现在这版不再加护栏，**直接拆掉通路**。
 
-## 修复后验证（本机 Win10）
+- **删除** `Windows/SystemToast.cs`（手写 combase/WinRT 互操作、`Activated` 事件桥、
+  未打包 AUMID 的 `HKCU\Classes\AppUserModelId` 注册）与 `ShellLogic.ToastPolicy`
+  （`BuildToastXml`/`ToastAumid`/`ShouldUseSystemToast`），`DSH_ENABLE_SYSTEM_TOAST` 与
+  `DSH_TEST_FORCE_TOAST*` 一并移除 → **wpnapps.dll 在本进程永不加载**；
+- 通知统一为 `Windows/NoticeCard.cs`（唯一实现）：自绘、非模态（`ShowWithoutActivation`
+  不抢焦点）、置顶、贴工作区右下角、可选点击动作 + × 关闭、到时自动收起；全局单实例 +
+  有界队列（8 条，溢出丢最旧并 Warn）。几何只来自纯函数 `ShellLogic.NoticeCardLayout`，
+  绘制侧不再自乘 DPI 系数；套用 `ImeContextGuard`；
+- 三档回退链（Toast → 托盘气泡 → 标题驻留）收敛为一条，`WindowManager.ShowBalloonTip`
+  删除；标题栏 `（有更新）` 作为**状态指示**保留并改成幂等；
+- 六个通知点全部改接卡片：安全更新/新版本、下载完成、更新待应用、更新已就绪、构建失败、
+  安全模式启动。安全模式那条**自带"点击退出安全模式并重启"动作**——`ExitSafeModeRequested`
+  原本只挂在 toast 的 `onClick` 上，标题栏"（安全模式）"只是文字，通知没有可点动作就等于
+  用户没有 UI 途径离开降级态；
+- 网页通知（HTML `Notification` API）**不由壳代管**：实测 `@deepseek-ai/dsh\lib` 里
+  `new Notification(`/`showNotification(`/`Notification.requestPermission` **全 0 命中**，
+  dsh 本体不发系统通知；第三方插件是否使用无法穷证 → 不为不确定的通路维护第二套呈现。
+  `WebViewPolicy` 的 Notifications 权限恢复一律放行（拒权限不是这个崩溃的防护手段，
+  拿它当防护等于白砍插件功能）；
+- 新自检通道 `DSH_TEST_NOTICE_CARD=1` 替代 `DSH_TEST_TOAST`：启动即真实呈现一张卡片，
+  留痕 `notice card self-test: presented=…`。
 
-- 运行 `staging/run-issue25.ps1 -Mode toast`：期望 dsh.log 出现
-  `system toast suppressed on Windows 10 (WPN crash guard, issue #25)`、
-  `toast self-test: shown=False`、**无** `toast step` 轨迹、进程存活满观察窗；
-- `DSH_TEST_FORCE_TOAST=1` 对照：护栏被强制越过，恢复 `toast step … show ok` 轨迹。
+## 修复后验证
+
+- 通知走通：`DSH_TEST_NOTICE_CARD=1` 拉起 → dsh.log 出现
+  `notice card self-test: presented=True`，屏幕右下角出现卡片、不抢焦点、到时自己收起；
+- **崩溃面归零（核心判据）**：在通知已呈现的那一刻枚举 DshWeb.exe 已加载模块，
+  **不得出现 `wpnapps.dll`**（`Regression_Issue25_WpnToastGuard.RealOs` 的 A 用例）；
+  验证窗口内 `%LOCALAPPDATA%\CrashDumps\` 不得出现新的 `DshWeb.exe.*.dmp`；
+- 无头也能跑的两条闸门（CI）：`DshWeb.dll` 元数据不含
+  `Windows.UI.Notifications`/`wpnapps`/`CreateToastNotifier`/`ToastNotificationManager`；
+  源码不含 WPN 成员引用与 `ShowBalloonTip`（`scripts/test.ps1`）；
+- `signal` 模式（`DSH_TEST_UPDATE_SIGNAL` + `DSH_TEST_INSTALL_MODE=msi`）：应看到
+  `update notice presented: dsh 有新版本 …` 且标题栏出现 `（有更新）`；**不得**再出现
+  `update toast shown`（reporter 实测的死亡前最后一行）；
+- `webnotify` 模式：`Notification.permission` 仍为 **granted**；插件通知由 WebView2 原生
+  渲染，壳不插手。
 
 ## 遗留项（建议）
 
-向 reporter 索要：崩溃进程完整模块列表、`--diagnose` 包、WER LocalDumps 崩溃转储
-（`HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\DshWeb.exe`），
-用 dump 确认 wpnapps.dll 内 0x60c3 处的调用栈，把"版本差异推断"升级为"行级根因"；
-并请其验证修复构建在 Win10 上不再循环崩溃。
+1. **插件网页通知仍是唯一残留的 WPN 入口**（在 `msedgewebview2.exe` 里，由 Chromium 自己的
+   实现渲染，与宿主进程内的手写 WinRT 不是同一条路）。如果将来有 reporter 给出
+   "网页通知触发崩溃"的证据，正解是 `CoreWebView2.NotificationReceived` + `Handled=true`
+   接过来喂给 `NoticeCard`（本仓库锁的 WebView2 SDK `1.0.4129.50` 已有
+   `CoreWebView2NotificationReceivedEventArgs.Handled`）。本次没有这么做，理由是
+   "无法确定第三方插件是否走这条路"——而卡片已经是**不依赖托盘**的可靠呈现面，
+   真要接管时不再有上次"没托盘就静默丢弃"的障碍。
+2. 向 reporter 索要 WER LocalDumps 崩溃转储（`HKLM\...\LocalDumps\DshWeb.exe`），确认
+   `0x60c3`（Win10）/ `0x53fb`（Win11）处调用栈。通路已删除，行级根因不再是修复前提，
+   但对上游反馈与"确认我们拆的是不是唯一入口"仍有价值。
+3. 卡片的已知限制：只保留最新一条可见（历史进队列，溢出丢最旧），错过就靠标题栏标记兜；
+   点卡片即触发动作并收起，没有"稍后再说"按钮。若 bot 消息类通知将来需要成堆可见，
+   要加的是通知中心，不是第二条通道。

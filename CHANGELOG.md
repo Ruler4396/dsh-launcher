@@ -116,22 +116,54 @@
   （高分屏真机变红）+ E2E 把 `>=60x20` 这条抄自缺陷常量的同义反复断言改成**派生不变量**
   （按钮尺寸/位置与窗口矩形成比例）。
 
-- **Win10 WPN 崩溃护栏（issue #25）**：特定 WPN 版本（`wpnapps.dll 10.0.19041.7663`
-  等 2024-2025 更新推送组件）在 Win10 上显示系统 Toast 时原生崩溃
-  （Application Error 1000：错误模块 `wpnapps.dll`、异常 `0xc0000005`、偏移固定
-  `0x60c3`），击穿宿主 DshWeb.exe 并进入"守护拉起 → 约 30 秒再崩"自愈循环——托管层
-  无法拦截 native 崩溃。双保险止损：
-  - `SystemToast` 在 Win10（build < 22000）放弃系统 Toast：决策下沉为纯函数
-    `ShellLogic.ToastPolicy.ShouldUseSystemToast`，命中即 Warn 留痕并返回 false，
-    调用方（更新/下载等通知）走既有 **托盘气泡 → 标题驻留** 回退链；Win11 不受影响。
-  - `WebViewPolicy` 在 Win10 不再自动放行 **Notifications** 权限（堵 WebView2
-    web 通知 → WPN 的宿主内 toast 路径；页面侧 `Notification.permission=denied`
-    可感知自行降级）。
-  - 测试钩子 `DSH_TEST_FORCE_TOAST=1` 可强制越过护栏（Win11/CI 冒烟真实 WPN 通路，
-    与既有 `DSH_TEST_FORCE_TOAST_FAIL` 对称）。
-  - 说明：本机（wpnapps.dll `10.0.19041.4522`）三条 WPN 通路（更新 Toast 含点击桥 /
-    WebView2 通知 / 自检）均真实走通且不崩，无法在沙盒复现——差异锁定在 WPN 组件
-    版本；此修复为防御性止损，同时建议向用户索取崩溃转储以在后续版本做行级根治。
+- **通知通道整体收口：删除 WPN/系统 Toast 通路，统一为自绘通知卡片（issue #25）**
+  宿主 DshWeb.exe 在 `wpnapps.dll` 内原生崩溃（`0xc0000005`），托管层无法拦截，进入
+  "守护拉起 → 再崩"自愈循环并连带整个 dsh 运行时/QQ Bot 插件下线。同一签名在两代 Windows
+  上各自被实证——Win10 19045 + `wpnapps 10.0.19041.7663`（偏移固定 `0x60c3`）；Win11 25H2
+  10.0.26200.9457 + `wpnapps 10.0.26100.9278`（偏移 `0x53fb`，2026-09-18 单日 12 组
+  Event 1000+1026 全同签名）。且崩溃发生在 Toast `Show()` **返回之后约 3 秒**（reporter
+  实测：写出 `update toast shown` 3 秒后记 1000），所以"调用成功"不是安全凭据。
+  两代系统、两个不同偏移 ⇒ OS build 号对崩溃没有预测力，按 build 划线是打地鼠；
+  而只要通路还在、开关就有被越过的一天 ⇒ **不再加护栏，直接把通路拆掉**：
+  - 删除 `Windows/SystemToast.cs`（约 310 行手写 combase/WinRT 互操作、`Activated` 事件桥、
+    未打包 AUMID 的 `HKCU\Classes\AppUserModelId` 注册）与 `ShellLogic.ToastPolicy`
+    （`BuildToastXml`/`ToastAumid`/`ShouldUseSystemToast`）；`DSH_ENABLE_SYSTEM_TOAST`
+    与 `DSH_TEST_FORCE_TOAST*` 三个开关一并移除——**wpnapps.dll 在本进程永不加载**，
+    崩溃面归零，而不是"默认关掉"。
+  - 新增 `Windows/NoticeCard.cs`：壳的**唯一**通知实现。自绘、非模态
+    （`ShowWithoutActivation`，来通知不抢用户焦点）、置顶、贴工作区右下角、带一个可选
+    点击动作与 × 关闭、到时自动收起；全局单实例 + 有界队列（上限 8，溢出丢最旧并 Warn），
+    只维护一个窗口对象。几何全部来自新纯函数 `ShellLogic.NoticeCardLayout`，绘制侧
+    只消费物理像素、不再自乘 DPI 系数（吸取 issue #28-3 的 s² 放大教训），并套用
+    `ImeContextGuard`（issue #28 的 IME 崩溃护栏）。
+  - 三档回退链（系统 Toast → 托盘气泡 → 标题驻留）收敛为一条：删除
+    `WindowManager.ShowBalloonTip` 与气泡分支。标题栏 `（有更新）`/`（有安全更新）` 标记
+    **保留为状态指示**（卡片会自动收起，错过的人仍要看得出有待处理更新），且改为
+    幂等——重复轮询不再叠加同一标记。便携 ZIP 的更新**决策**对话框保留（它要用户点
+    是/否，卡片不承载决策语义）。
+  - 六个通知点全部改接卡片：安全更新/新版本、下载完成（S2 危险扩展名提示，此前
+    丢弃返回值且无回退、Toast 关闭后就看不见了）、更新待应用、更新已就绪、更新构建失败、
+    安全模式启动提示。其中安全模式那条**自带"点击退出安全模式并重启"动作**——
+    `ExitSafeModeRequested` 原本只挂在 toast 的 `onClick` 上，而标题栏"（安全模式）"
+    只是文字，若通知没有可点动作，用户就没有任何 UI 途径离开降级态。
+  - 网页通知（HTML `Notification` API）**不由壳代管**：实测 dsh 本体前端零使用
+    Notification API（`new Notification`/`showNotification`/`requestPermission` 在
+    `@deepseek-ai/dsh/lib` 全 0 命中），第三方插件是否使用无法穷证——不为一条不确定的
+    通路维护第二套呈现。`WebViewPolicy` 的 **Notifications 权限恢复一律放行**：拒权限
+    从来不是这个崩溃的防护手段（崩溃在宿主自己的手写 WinRT 路径上，WebView2 的网页通知
+    由 Chromium 在 `msedgewebview2.exe` 内渲染，与 Edge 同源而 Edge 在崩过的机器上正常），
+    拿它当防护等于白砍插件功能。
+  - 新增自检通道 `DSH_TEST_NOTICE_CARD=1`（替代 `DSH_TEST_TOAST`）：启动时真实呈现一张
+    卡片并留痕 `notice card self-test: presented=…`，供回归测试锚定"通知确实走通了"。
+  - 测试：`Regression_Issue25_WpnToastGuard.RealOs` 的断言从"护栏有没有生效"升级为
+    "**WPN 有没有被触碰**"——真实拉起 DshWeb.exe，先断言 `presented=True`（否则"没加载
+    WPN"会因为什么都没干而空过），再枚举该进程已加载模块断言**其中没有 wpnapps.dll**，
+    并要求宿主存活；另两条无头可跑：扫 `DshWeb.dll` 元数据不含
+    `Windows.UI.Notifications`/`wpnapps`/`CreateToastNotifier`/`ToastNotificationManager`，
+    以及扫源码不含 WPN 成员引用。`scripts/test.ps1` 同步加了这组静态门（含
+    "托盘气泡不得回潮"）。新增 `NoticeCardLayoutContractTests` 钉死 DPI 折算、
+    段间恰好一个 Gap（0 重叠 0 空隙）、× 不被裁掉、越界钳制。
+    `ContractTests` 的 4 个 Toast XML/AUMID 契约随实现删除。
 - **就绪前服务进程退出的盲等（issue #26）**：壳拉起 dsh 服务后若进程在 HTTP 就绪前退出
   （EADDRINUSE / 引擎内部崩溃 / 入口错误等），此前 PollReadiness 只观测 TCP/HTTP 与启动错误
   标志词表——退出输出不含词表（如 `EADDRINUSE`）时日志判定盲，只能**盲等完整轮询预算**
@@ -173,12 +205,16 @@
   `ServiceManager.Start` 全链路拉起，输出不含启动错误标志后秒退（code=7），断言 PollReadiness
   经**生产默认退出探针**返回 `service-exited`（修复前返回 timeout 必红）。
 - 新增 `Regression_Issue25_WpnToastGuard.RealOs`（零 Mock）：真实拉起 DshWeb.exe
-  （隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主），Win10 断言
-  护栏留痕 + `toast self-test: shown=False` + 无任何 `toast step` WPN 互操轨迹 +
-  进程存活满观察窗；Win11 断言放行 + 存活。
-- `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 升级为 `(kind, osBuild)`
-  双参契约（Win10 不自动放行 Notifications / Win11 保持放行等 17 例）；
-  新增 `ToastPolicy_ShouldUseSystemToast` 7 例（Win10/Win11/Win7/未知 build 保守拒绝）。
+  （隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主），断言维度是
+  "**WPN 有没有被触碰**"而非"护栏有没有生效"——先要求 `notice card self-test: presented=True`
+  （通知真的走通，否则"没加载 WPN"会因为什么都没干而空过），再枚举该进程已加载模块断言
+  **没有 wpnapps.dll**，并要求宿主存活满观察窗。
+- 通知通道收口后的新契约面：`NoticeCardLayoutContractTests`（DPI 线性折算 / 未知 DPI 回落 1x /
+  段间恰好一个 Gap / × 不被裁掉 / 右下角定位与非零原点工作区 / 放不下时钳制进工作区）；
+  `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 保持单参 `(kind)` 契约并新增
+  `WebNotificationPermission_StaysGranted_Issue25`（防止再拿拒权限当崩溃防护）；
+  `scripts/test.ps1` 增加"WPN 通路不得回潮 + 托盘气泡不得回潮 + NoticeCard 只消费纯函数几何"
+  静态门。原 `ToastPolicy_ShouldUseSystemToast` 与 4 个 Toast XML/AUMID 契约随实现一起删除。
 
 ## [0.4.5] - 2026-09-04
 

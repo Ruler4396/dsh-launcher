@@ -137,27 +137,21 @@ public static class ShellLogic
     {
         /// <summary>
         /// 权限策略：自动放行的权限项（插件/DSH 依赖），其余保持默认拒绝。
-        /// [issue #25] Win10（build &lt; 22000）**不自动放行 Notifications**：Web 通知
-        /// 经 WebView2 由宿主进程经 WPN（wpnapps.dll）显示系统 toast，特定 WPN 版本
-        /// （如 10.0.19041.7663）在未打包应用路径上 native AV 击穿宿主（托管层无法
-        /// 拦截）；WebView2 无 API 单独禁用通知，只能不授权限（页面侧
-        /// Notification.permission=denied 可感知并自行降级）。Win11 保持放行。
-        /// 纯函数（osBuild 注入可契约测试）。</summary>
-        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind, int osBuild)
-        {
-            if (kind == CoreWebView2PermissionKind.Notifications && osBuild < 22000)
-                return false;
-            return kind is CoreWebView2PermissionKind.Notifications
+        ///
+        /// [issue #25] **Notifications 一律放行**：拒权限从来不是这个崩溃的防护手段。两位
+        /// reporter 的崩溃日志末行都是 `update toast shown`，即**宿主自己**那条「未打包应用 +
+        /// 裸 HKCU AUMID + 手写最小 WinRT」的 toast 路径——它连同 <c>SystemToast</c> 已整体删除，
+        /// 壳的通知统一走自绘卡片（见 <see cref="NoticeCardLayout"/>），wpnapps.dll 在本进程
+        /// 永不加载。WebView2 的网页通知由 Chromium 自己的实现在 msedgewebview2.exe 内渲染
+        /// （与 Edge 同源，Edge 在崩过的机器上正常），不由壳代管：实测 dsh 本体前端零使用
+        /// Notification API，而第三方插件是否使用无法穷证——不为不确定的东西维护第二套呈现。
+        /// </summary>
+        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind)
+            => kind is CoreWebView2PermissionKind.Notifications
                 or CoreWebView2PermissionKind.ClipboardRead
                 or CoreWebView2PermissionKind.Autoplay
                 or CoreWebView2PermissionKind.MultipleAutomaticDownloads
                 or CoreWebView2PermissionKind.PersistentStorage;
-        }
-
-        /// <summary>生产入口：真实 OS build（.NET 5+ 的 Environment.OSVersion 返回真实版本，
-        /// 不受 GetVersionEx 兼容层影响）。</summary>
-        internal static bool IsAutoGrantedPermission(CoreWebView2PermissionKind kind)
-            => IsAutoGrantedPermission(kind, Environment.OSVersion.Version.Build);
 
         /// <summary>弹窗 URL 分类：外部链接 / 同源弹窗 / 保持默认。</summary>
         internal static PopupTarget ClassifyPopup(string? rawUri)
@@ -2509,48 +2503,80 @@ public static class ShellLogic
     }
 
     /// <summary>
-    /// 系统通知（Toast）纯策略：AUMID 与通知 XML 构造。WinRT 交互（注册/发送）在
-    /// Windows/SystemToast.cs，此处只放可契约测试的纯函数。
-    /// [v0.4.1] 更新类通知从托盘气泡迁移到系统 Toast——不再依赖 NotifyIcon 托盘图标
-    /// （此前非托盘常驻模式下托盘为 null，更新气泡被静默丢弃）。
+    /// [issue #25 收口] 通知卡片（NoticeCard）版式纯函数：把「设计基准 × DPI 系数 → 物理像素」
+    /// 和「实测文字尺寸 → 窗口几何」集中到一处，可契约测试。
+    ///
+    /// 【为什么只有一套通道】历史上通知有三轮形态：托盘气泡（依赖托盘存在，FollowWindow 模式下
+    /// 静默丢弃）→ v0.4.1 迁到系统 Toast（手写 WinRT，issue #25 的 wpnapps.dll native AV 击穿宿主）
+    /// → 护栏 + 气泡 + 标题驻留三档回退链。回退链的每一档都是"看得见通知"的独立实现，三份代码
+    /// 三个失效模式。现在统一为一个自绘非模态卡片：不依赖托盘、不碰 WPN（崩溃面归零）、不阻塞
+    /// 消息泵。绘制侧只消费本函数产出的物理像素，**绝不再自己乘缩放系数**——issue #28-3 的教训
+    /// 正是"点数 × DPI 系数"与绘制 DC 自带的 DPI 相乘，高 DPI 屏文字按 s² 放大。
     /// </summary>
-    public static class ToastPolicy
+    public static class NoticeCardLayout
     {
-        /// <summary>未打包应用的 AUMID：与 HKCU\SOFTWARE\Classes\AppUserModelId 注册键同名。
-        /// 固定值保证系统按同一来源聚合通知（设置里可按此名关闭）。</summary>
-        public const string ToastAumid = "dsh-launcher";
+        // 设计基准（96dpi 逻辑像素）
+        public const int DesignTextWidth = 360;
+        public const int DesignPadding = 14;
+        public const int DesignGap = 6;
+        public const int DesignActionHeight = 26;
+        public const int DesignCornerRadius = 8;
+        public const int DesignScreenMargin = 12;
+        public const int DesignTitleEmPx = 13;
+        public const int DesignBodyEmPx = 12;
+        public const int DesignCloseSize = 20;
 
-        /// <summary>
-        /// 构造 ToastText02 模板 XML（标题 + 正文两行）。title/body 做 XML 转义，
-        /// 防止版本号等外部输入破坏结构（npm 版本串理论可控，但防御性转义零成本）。
-        /// duration="long"：屏幕弹窗停留约 25 秒（默认 short ≈5 秒，用户来不及点击
-        /// 触发更新——2026-08-22 用户回归反馈）。注意 ExpirationTime 控制的是操作
-        /// 中心留存时长，与弹窗显示时长是两个维度。
-        /// </summary>
-        public static string BuildToastXml(string title, string body)
+        public readonly record struct Geometry(
+            int TextWidth, int Width, int Padding, int Gap, int ActionHeight,
+            int CornerRadius, int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize);
+
+        /// <summary>deviceDpi ≤ 0 视为 96（未知按 1x）。窗口宽 = 文字宽 + 左右内边距。</summary>
+        public static Geometry ComputeGeometry(int deviceDpi)
         {
-            var esc = System.Security.SecurityElement.Escape;
-            return "<toast duration=\"long\"><visual><binding template=\"ToastText02\">"
-                 + $"<text id=\"1\">{esc(title ?? "")}</text>"
-                 + $"<text id=\"2\">{esc(body ?? "")}</text>"
-                 + "</binding></visual></toast>";
+            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
+            var s = dpi / 96f;
+            int Px(int design) => Math.Max(1, (int)Math.Round(design * s));
+            var padding = Px(DesignPadding);
+            var textWidth = Px(DesignTextWidth);
+            return new Geometry(
+                TextWidth: textWidth,
+                Width: textWidth + 2 * padding,
+                Padding: padding,
+                Gap: Px(DesignGap),
+                ActionHeight: Px(DesignActionHeight),
+                CornerRadius: Px(DesignCornerRadius),
+                ScreenMargin: Px(DesignScreenMargin),
+                TitleEmPx: Px(DesignTitleEmPx),
+                BodyEmPx: Px(DesignBodyEmPx),
+                CloseSize: Px(DesignCloseSize));
         }
 
-        /// <summary>
-        /// [issue #25] Win10 WPN 崩溃护栏：系统 Toast 是否可用。
-        /// 事故：Win10 上特定 WPN 版本（wpnapps.dll 10.0.19041.7663，2024-2025 更新推送）
-        /// 在未打包应用的 toast 显示路径上 native AV（0xc0000005，偏移固定 0x60c3），
-        /// 击穿宿主 DshWeb.exe——托管层无法拦截 native 崩溃，进程直接死亡进入守护自愈循环。
-        /// 本机（wpnapps 10.0.19041.4522）与 Win11 均不触发，无法在沙盒复现；故以
-        /// "Win10 一律放弃系统 Toast、走调用方既有回退链（托盘气泡→标题驻留）"止损（双保险
-        /// 的另一半见 WebViewPolicy 的 Notifications 权限收紧）。
-        /// Win11（build ≥ 22000）的 WPN 实现不受影响，保持系统 Toast。
-        /// 纯函数（OS 三要素注入可契约测试）；生产端用 Environment.OSVersion 真实值。
-        /// 测试钩子 DSH_TEST_FORCE_TOAST=1（SystemToast 内优先处理）可强制越过本护栏，
-        /// 供 Win11/CI 冒烟真实 WPN 通路（与 DSH_TEST_FORCE_TOAST_FAIL 对称）。
-        /// </summary>
-        public static bool ShouldUseSystemToast(int osMajor, int osMinor, int osBuild)
-            => osMajor == 10 && osBuild >= 22000;
+        public readonly record struct Placement(
+            int Width, int Height, Rectangle TitleRect, Rectangle BodyRect,
+            Rectangle ActionRect, Rectangle CloseRect);
+
+        /// <summary>按实测文字高度排四块（左上角原点，供 OnPaint 绘制与点击命中测试）。
+        /// 无动作时 ActionRect 为 Empty 且不计其 Gap/高度——否则底部多一段空白。
+        /// 标题宽度让开右上角的 ×；总高再与 × 的下沿取大，保证 × 永不被裁掉。</summary>
+        public static Placement Place(Geometry g, int titleHeight, int bodyHeight, bool hasAction)
+        {
+            var close = new Rectangle(g.Width - g.Padding - g.CloseSize, g.Padding, g.CloseSize, g.CloseSize);
+            var titleWidth = Math.Max(1, g.TextWidth - g.CloseSize - g.Gap);
+            var title = new Rectangle(g.Padding, g.Padding, titleWidth, Math.Max(1, titleHeight));
+            var body = new Rectangle(g.Padding, title.Bottom + g.Gap, g.TextWidth, Math.Max(1, bodyHeight));
+            var action = hasAction
+                ? new Rectangle(g.Padding, body.Bottom + g.Gap, g.TextWidth, g.ActionHeight)
+                : Rectangle.Empty;
+            var contentBottom = Math.Max((hasAction ? action.Bottom : body.Bottom), close.Bottom);
+            return new Placement(g.Width, contentBottom + g.Padding, title, body, action, close);
+        }
+
+        /// <summary>贴工作区**右下角**（任务栏自然排除在外），带 ScreenMargin 间距；
+        /// 卡片比工作区还大时贴左上内边距，绝不推出工作区。</summary>
+        public static (int X, int Y) PlaceAtBottomRight(Rectangle workArea, Geometry g, int width, int height)
+            => (
+                Math.Max(workArea.Left + g.ScreenMargin, workArea.Right - width - g.ScreenMargin),
+                Math.Max(workArea.Top + g.ScreenMargin, workArea.Bottom - height - g.ScreenMargin));
     }
 
     /// <summary>

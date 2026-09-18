@@ -3,38 +3,36 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using DshWeb;
-using DshWeb.Windows;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace DshShell.Tests;
 
 /// <summary>
-/// 【Regression_Issue25_WpnToastGuard】Win10 WPN（wpnapps.dll）native 崩溃护栏回归测试
-/// （零 Mock，RealOS）。
+/// 【Regression_Issue25_WpnToastGuard】wpnapps.dll native 崩溃的回归测试（零 Mock，RealOS）。
 ///
-/// 事故（issue #25）：用户在 Win10（wpnapps.dll 10.0.19041.7663）上运行 v0.4.3.0，
-/// DshWeb.exe 启动后约 30 秒（更新检查完成、系统 Toast 弹出时刻）必崩：
-/// Application Error 1000 错误模块 wpnapps.dll、异常 0xc0000005、偏移固定 0x60c3，
-/// 宿主死亡后守护拉起 → 再崩 → 反复自愈循环。
-/// 本机沙盒复现（相同代码 + DSH_TEST_TOAST/更新信号/WebView2 通知三条 WPN 通路全走通
-/// `show ok`、toast 真实渲染）在 wpnapps.dll 10.0.19041.4522 上均不崩溃——唯一差异是
-/// WPN 组件版本（系统组件无法在沙盒替换），高度指向较新 wpnapps.dll 自身的 toast 显示
-/// AV。托管层无法拦截 native 崩溃，故修复 = 防御性护栏：
-///   1) SystemToast 在 Win10（build&lt;22000）放弃系统 Toast → 调用方走既有
-///      托盘气泡→标题驻留回退链（决策纯函数 ShellLogic.ToastPolicy.ShouldUseSystemToast）；
-///   2) WebView2 Notifications 权限在 Win10 不再自动放行（堵 Web 通知 → WPN 路径）。
+/// 事故（issue #25）：宿主 DshWeb.exe 在 WPN（wpnapps.dll）内 native AV（0xc0000005），
+/// 托管层拦不住，进程直接死亡 → 守护拉起 → 再崩，连带整个 dsh 运行时/QQ Bot 插件下线。
+/// 同一签名在两代 Windows 上各自被实证：Win10 19045 + wpnapps 10.0.19041.7663（偏移 0x60c3）；
+/// Win11 25H2 10.0.26200.9457 + wpnapps 10.0.26100.9278（偏移 0x53fb，2026-09-18 单日 12 组
+/// Event 1000+1026 全同）。崩溃发生在 Toast <c>Show()</c> **返回之后**约 3 秒，所以
+/// "调用成功"不是安全凭据。
 ///
-/// 本测试类双用例：
-///   A. 进程级 `RealOs_DshWeb_ToastGuard_MatchesOs`：真实拉起 DshWeb.exe（隔离
-///      DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主 3080 与真实 dsh）。
-///      需要交互桌面（WebView2 主窗 + toast 渲染）——无交互会话直接跳过（CI runner），
-///      交互环境断言：Win10 护栏生效（suppress 留痕 + shown=False + 无 `toast step`
-///      轨迹，进程存活满观察窗）；Win11 放行（shown=True + 存活）。进程提前退出时，
-///      只要护栏行为已生效即视为回归达成（无头环境限制而非 WPN 崩溃，退出原因留痕）；
-///   B. 决策级 `RealOs_SystemToastGuard_Decision_MatchesOs`：无桌面也能跑——Win10
-///      直接调用真实 <see cref="SystemToast.TryShow"/>，断言护栏真实拦截（false +
-///      suppress 留痕、零 WPN 轨迹）；Win11 断言纯函数放行决策（真实 WPN 通路由 A 覆盖）。
+/// 【为什么不再有护栏】45048989 的"Win10 降级"与后续的"默认关闭 + opt-in"都是在**保留
+/// WPN 通路**的前提下加开关；开关一旦被越过（或将来被人"顺手打开"），崩溃就回来。现在
+/// 通知统一走自绘卡片（Windows/NoticeCard.cs），<c>SystemToast</c> 的手写 WinRT 互操作、
+/// 未打包 AUMID 注册、Toast XML 全部删除 —— **本进程不存在任何 WPN 入口**，崩溃面归零。
+///
+/// 因此本类的断言从"护栏有没有生效"升级为"**WPN 有没有被触碰**"：
+///   A. 动态（<see cref="RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps"/>）：真实拉起
+///      DshWeb.exe，经 DSH_TEST_NOTICE_CARD 自检通道把一条通知真的呈现出来（断言
+///      <c>presented=True</c>，否则"WPN 没被加载"是因为什么都没干而空过），再枚举该进程
+///      已加载模块，断言其中没有 wpnapps.dll，且宿主存活。需要交互桌面（真实窗口），
+///      CI runner 为无交互会话时在门槛处返回（沿用 2ba57b61 口径）。
+///   B. 静态（<see cref="RealOs_BuiltShellAssembly_ExposesNoWpnEntryPoint"/>）：直接扫已编译
+///      的 DshWeb.dll 元数据，断言不含 Windows.UI.Notifications / wpnapps / CreateToastNotifier
+///      等任何 WPN 入口符号。这条**无头也能跑**，是 CI 上的合并闸门：将来谁把系统 Toast
+///      接回来，这条立刻红。
 /// 清理只按记录 PID 杀进程树，绝不扫名杀。
 /// </summary>
 [Collection("RealOS")]
@@ -44,7 +42,16 @@ public class Regression_Issue25_WpnToastGuard_RealOs
     private readonly ITestOutputHelper _out;
     public Regression_Issue25_WpnToastGuard_RealOs(ITestOutputHelper o) => _out = o;
 
-    private const int WatchSeconds = 60;
+    private const int WatchSeconds = 45;
+
+    /// <summary>WPN 入口符号：出现在 DshWeb.dll 里就说明"系统 Toast"通路被接回来了。</summary>
+    private static readonly string[] WpnEntrySymbols =
+    {
+        "Windows.UI.Notifications",
+        "wpnapps",
+        "ToastNotificationManager",
+        "CreateToastNotifier",
+    };
 
     private static string? LocateDshWebExe()
     {
@@ -57,6 +64,14 @@ public class Regression_Issue25_WpnToastGuard_RealOs
                 "src", "DshShell", "bin", "Release", "net10.0-windows", "DshWeb.exe"),
         };
         return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string? LocateDshWebDll()
+    {
+        var exe = LocateDshWebExe();
+        if (exe is null) return null;
+        var dll = Path.ChangeExtension(exe, ".dll");
+        return File.Exists(dll) ? dll : null;
     }
 
     /// <summary>极简 HTTP 200 假服务（TcpListener，无需 URL ACL）。</summary>
@@ -76,7 +91,6 @@ public class Regression_Issue25_WpnToastGuard_RealOs
                     using var client = listener.AcceptTcpClient();
                     using var stream = client.GetStream();
                     var buf = new byte[4096];
-                    // 读到请求头即可应答（无需读完全部）
                     _ = stream.Read(buf, 0, buf.Length);
                     var head = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
                         + "Content-Length: " + body.Length + "\r\nConnection: close\r\n\r\n";
@@ -98,19 +112,34 @@ public class Regression_Issue25_WpnToastGuard_RealOs
         return p;
     }
 
-    [Fact]
-    public async Task RealOs_DshWeb_ToastGuard_MatchesOs()
+    private static string ReadLogText(string logPath)
     {
-        // 进程级完整验证要求交互桌面（WebView2 主窗 + toast 渲染）；GitHub Actions
-        // runner 为无交互服务会话，无法构建该前提——CI 上由下方
-        // RealOs_SystemToastGuard_Decision_MatchesOs 覆盖护栏决策，本用例在真实桌面
-        // 环境（本机/交互 CI）完整验证宿主行为。
+        if (!File.Exists(logPath)) return "";
+        try
+        {
+            // FileShare.ReadWrite：宿主正在写这份日志
+            using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var r = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+            return r.ReadToEnd();
+        }
+        catch { return ""; }
+    }
+
+    // ---- A. 动态：真实通知呈现 + 进程模块扫描 --------------------------------
+
+    /// <summary>
+    /// 真实拉起 DshWeb.exe（隔离 DSH_HOME/WebView2/外部托管假服务，绝不触碰宿主 3080 与
+    /// 真实 dsh），把一条通知**真的显示出来**，然后断言这个进程从未加载 wpnapps.dll。
+    /// CI 不验证本用例（无交互桌面即返回）；CI 侧的闸门是下面的 B。
+    /// </summary>
+    [Fact]
+    public async Task RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps()
+    {
         if (!Environment.UserInteractive)
         {
-            _out.WriteLine("SKIP: non-interactive session (no desktop on CI runner); decision covered by decision-level test");
+            _out.WriteLine("SKIP: non-interactive session (no desktop); assembly-level gate B covers CI");
             return;
         }
-
         var exe = LocateDshWebExe();
         if (exe is null)
         {
@@ -118,16 +147,13 @@ public class Regression_Issue25_WpnToastGuard_RealOs
             return;
         }
 
-        var osBuild = Environment.OSVersion.Version.Build;
-        var isWin10 = osBuild < 22000;
         var port = FreePort();
-        var work = Path.Combine(Path.GetTempPath(), "dsh-issue25-reg-" + Guid.NewGuid().ToString("N"));
+        var work = Path.Combine(Path.GetTempPath(), "dsh-issue25-card-" + Guid.NewGuid().ToString("N"));
         var homeDir = Path.Combine(work, "home");
         var wv2 = Path.Combine(work, "wv2");
         Directory.CreateDirectory(homeDir);
         Directory.CreateDirectory(wv2);
         var logPath = Path.Combine(homeDir, "dsh-launcher", "dsh.log");
-        _out.WriteLine($"osBuild={osBuild} expectGuard={(isWin10 ? "suppress" : "pass-through")} port={port} exe={exe}");
 
         var fakeServer = StartFakeServer(port);
         Process? proc = null;
@@ -141,83 +167,83 @@ public class Regression_Issue25_WpnToastGuard_RealOs
             // 宿主 harness 会话会注入 DSH_WEB_URL/DSH_HOME/DSH_SHELL 等——必须显式移除
             foreach (var key in new[] { "DSH_WEB_URL", "DSH_HOME", "DSH_SHELL", "DSH_SESSION_ID", "DSH_SESSION_JSONL" })
                 psi.EnvironmentVariables.Remove(key);
+            foreach (var key in new[] { "DSH_TEST_NOTICE_CARD", "DSH_TEST_TOAST", "DSH_TEST_FORCE_TOAST",
+                                        "DSH_TEST_FORCE_TOAST_FAIL", "DSH_ENABLE_SYSTEM_TOAST" })
+                psi.EnvironmentVariables.Remove(key);
             psi.EnvironmentVariables["DSH_SANDBOX"] = "1";                   // 禁机器级副作用
             psi.EnvironmentVariables["DSH_HOME"] = homeDir;                  // 壳数据/日志全隔离
-            psi.EnvironmentVariables["DSH_WEB_URL"] = $"http://127.0.0.1:{port}"; // 外部托管：绝不拉起真实 dsh 服务
+            psi.EnvironmentVariables["DSH_WEB_URL"] = $"http://127.0.0.1:{port}"; // 外部托管：绝不拉起真实 dsh
             psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = wv2;             // WebView2 数据隔离
             psi.EnvironmentVariables["DSH_TEST_INSTANCE"] = "1";
-            psi.EnvironmentVariables["DSH_TEST_INSTALL_MODE"] = "msi";       // MSI 分支 → 系统 Toast 通路
-            psi.EnvironmentVariables["DSH_TEST_TOAST"] = "1";                // toast 逐步轨迹日志
+            psi.EnvironmentVariables["DSH_TEST_INSTALL_MODE"] = "msi";       // MSI 形态（与 reporter 一致）
+            psi.EnvironmentVariables["DSH_TEST_NOTICE_CARD"] = "1";          // 走一次真实通知呈现
             psi.EnvironmentVariables["DSH_TELEMETRY_DISABLED"] = "1";
-            psi.EnvironmentVariables["DSH_E2E"] = "1";                       // 模态硬化：ShowError 只写日志不弹窗
+            psi.EnvironmentVariables["DSH_E2E"] = "1";                       // 模态硬化：ShowError 只写日志
 
             proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("failed to start DshWeb.exe");
-            _out.WriteLine($"started pid={proc.Id}");
+            _out.WriteLine($"started pid={proc.Id} port={port}");
 
             var deadline = DateTime.UtcNow.AddSeconds(WatchSeconds);
-            var logText = ""; // 每轮重读（FileShare.ReadWrite 防锁）
-            string ReadLog()
-            {
-                if (!File.Exists(logPath)) return "";
-                try
-                {
-                    using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    using var r = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
-                    return r.ReadToEnd();
-                }
-                catch { return ""; }
-            }
-
+            var logText = "";
+            var wpnModule = "";
+            var modulesScanned = false;
             string? exited = null;
             while (DateTime.UtcNow < deadline)
             {
-                logText = ReadLog();
                 proc.Refresh();
                 if (proc.HasExited)
                 {
                     exited = $"exitCode={proc.ExitCode}";
                     break;
                 }
+                // 走到"通知已呈现"这一刻就扫模块：晚扫无意义（WPN 是延迟加载的，
+                // reporter 的崩溃恰恰发生在 Show() 返回之后）。
+                if ((logText = ReadLogText(logPath)).Contains("notice card self-test: presented="))
+                {
+                    try
+                    {
+                        wpnModule = string.Join(",", proc.Modules.Cast<ProcessModule>()
+                            .Select(m => m.ModuleName)
+                            .Where(n => n.Contains("wpnapps", StringComparison.OrdinalIgnoreCase)));
+                        modulesScanned = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _out.WriteLine("module enumeration failed: " + ex.Message);
+                    }
+                    break;
+                }
                 await Task.Delay(500);
             }
+            logText = ReadLogText(logPath); // 收尾再读一次：最后一行才是判据所在
             proc.Refresh();
             var alive = !proc.HasExited;
 
-            _out.WriteLine("alive=" + alive + (exited is not null ? " " + exited : "") + " after " + WatchSeconds + "s");
-            _out.WriteLine("---- dsh.log (toast/toast step/guard lines) ----");
-            foreach (var line in logText.Split('\n').Where(l => l.Contains("toast", StringComparison.OrdinalIgnoreCase)))
+            _out.WriteLine("alive=" + alive + (exited is not null ? " " + exited : "") + $" after {WatchSeconds}s");
+            _out.WriteLine("---- dsh.log (notice lines) ----");
+            foreach (var line in logText.Split('\n')
+                         .Where(l => l.Contains("notice", StringComparison.OrdinalIgnoreCase)))
                 _out.WriteLine(line.TrimEnd('\r'));
 
-            // 护栏行为是否已生效（修复核心：Win10 上通知链路绝不触碰 WPN）：
-            var guardObserved = isWin10
-                ? logText.Contains("system toast suppressed on Windows 10")
-                  && logText.Contains("toast self-test: shown=False")
-                  && !logText.Contains("toast step")
-                : logText.Contains("toast self-test: shown=True");
-
-            if (alive)
+            // 区分"环境没走到通知那一步"与"通知真的坏了"：前者如实留痕跳过（CI runner
+            // 未必有可用桌面/WebView2），后者必须判红。CI 侧的 WPN 闸门是下面两条无头用例。
+            if (!logText.Contains("notice card self-test: presented="))
             {
-                // 存活满观察窗：严格断言（交互桌面本机/CI 路径）
-                if (isWin10)
-                {
-                    Assert.Contains("system toast suppressed on Windows 10", logText);
-                    Assert.Contains("toast self-test: shown=False", logText);
-                    Assert.DoesNotContain("toast step", logText); // 护栏在触碰 WPN 之前拦截
-                }
-                else
-                {
-                    Assert.Contains("toast self-test: shown=True", logText); // Win11 放行：WPN 通路保持可用
-                }
+                _out.WriteLine("SKIP: host never reached the notification step "
+                    + $"(alive={alive}, exited={exited ?? "n/a"}); CI gate = assembly/source scan");
+                return;
             }
-            else
-            {
-                // 无头环境（CI runner 无交互桌面）进程可能因 WebView2/桌面不可用提前退出：
-                // 只要护栏行为已生效（WPN 未触碰/决策正确），即视为回归达成；退出原因如实留痕。
-                Assert.True(guardObserved,
-                    "guard behavior must be observed before any process exit; exited=" + (exited ?? "unknown"));
-                _out.WriteLine("process exited after guard observed; headless-runner environment limitation, not a WPN crash");
-            }
+            // 通知真的走通了才算"WPN 没被加载"有证据力——presented=False 是真回归。
+            Assert.Contains("notice card self-test: presented=True", logText);
+            Assert.True(modulesScanned,
+                "modules must be enumerable at the notification moment (else the scan proves nothing)");
+            // 崩溃面归零：宿主进程里不得有任何 WPN 客户端模块
+            Assert.True(string.IsNullOrEmpty(wpnModule), "wpnapps.dll must never be loaded: " + wpnModule);
+            // 不得有任何系统 Toast 通路残留
+            Assert.DoesNotContain("toast step", logText);
+            Assert.DoesNotContain("update toast shown", logText);
+            Assert.True(alive, "host must survive the notification; exited=" + (exited ?? "unknown"));
         }
         finally
         {
@@ -231,49 +257,43 @@ public class Regression_Issue25_WpnToastGuard_RealOs
         }
     }
 
+    // ---- B. 静态：编译产物里不存在 WPN 入口（CI 闸门） ------------------------
+
     /// <summary>
-    /// 护栏决策级回归（零 Mock，无桌面环境也能跑——GitHub Actions runner 为无交互会话，
-    /// 无法运行完整 GUI 进程；此用例直接调用真实 <see cref="SystemToast.TryShow"/> 入口，
-    /// 验证 Win10 上护栏**真实拦截**（返回 false + suppress 留痕、绝不触碰 WPN）：
-    ///   - Win10（build&lt;22000）：期望 shown=False 且日志含 suppress；修复前此断言必红
-    ///     （旧代码会进入 WPN 互操作并尝试弹出）；
-    ///   - Win11（build≥22000）：只断言纯函数放行决策——无头 CI 上避免真实 WPN 调用面，
-    ///     完整通路由上方交互进程级用例覆盖。
+    /// 扫已编译的 DshWeb.dll，断言不含任何 WPN 入口符号。这是"系统 Toast 永不再回来"的
+    /// CI 可验形态：A 需要交互桌面，B 在无头 runner 上也能跑，且任何把通知接回 WinRT 的
+    /// 改动（哪怕只改一个调用点）都会立刻让它变红。
     /// </summary>
     [Fact]
-    public void RealOs_SystemToastGuard_Decision_MatchesOs()
+    public void RealOs_BuiltShellAssembly_ExposesNoWpnEntryPoint()
     {
-        var osBuild = Environment.OSVersion.Version.Build;
-        var work = Path.Combine(Path.GetTempPath(), "dsh-issue25-log-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(work);
-        var logPath = Path.Combine(work, "guard.log");
-        try
-        {
-            Logger.Init(logPath);
-            // 宿主/环境可能注入测试钩子——显式清空，保证护栏决策走真实 OS 路径
-            Environment.SetEnvironmentVariable("DSH_TEST_FORCE_TOAST", null);
-            Environment.SetEnvironmentVariable("DSH_TEST_FORCE_TOAST_FAIL", null);
+        var dll = LocateDshWebDll();
+        Assert.True(dll is not null, "DshWeb.dll not built (build src/DshShell first)");
+        var bytes = File.ReadAllBytes(dll!);
+        var haystack = Encoding.UTF8.GetString(bytes);
 
-            if (osBuild < 22000)
-            {
-                // Win10：护栏必须真实拦截——返回 false 且留痕，绝不触碰 WPN（Any WPN 轨迹=回归）
-                var shown = DshWeb.Windows.SystemToast.TryShow(
-                    null, "issue25 护栏自检", "body", TimeSpan.FromSeconds(8), null);
-                Assert.False(shown, "Win10: TryShow must be suppressed by the WPN crash guard (issue #25)");
-                var log = File.ReadAllText(logPath);
-                Assert.Contains("system toast suppressed on Windows 10", log);
-            }
-            else
-            {
-                // Win11：护栏决策放行（纯函数；真实 WPN 通路由交互进程级用例覆盖）
-                Assert.True(ShellLogic.ToastPolicy.ShouldUseSystemToast(10, 0, osBuild),
-                    "Win11: toast policy must keep system toasts enabled");
-            }
-        }
-        finally
-        {
-            Logger.ResetForTest();
-            try { Directory.Delete(work, recursive: true); } catch { /* 临时清理失败可忽略 */ }
-        }
+        foreach (var symbol in WpnEntrySymbols)
+            Assert.DoesNotContain(symbol, haystack, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>源码侧同一条不变量：不得再出现 WPN 通路成员访问。只拦**代码**（带点的成员
+    /// 引用/类型全名），注释里叙述事故经过保留 wpnapps 字样是有搜索价值的线索。</summary>
+    [Fact]
+    public void ShellSource_HasNoSystemToastReference()
+    {
+        var srcRoot = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "DshShell");
+        Assert.True(Directory.Exists(srcRoot), "src/DshShell not found: " + srcRoot);
+        var offenders = Directory
+            .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)
+                     && !p.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar))
+            .Select(p => (Path: p, Text: File.ReadAllText(p)))
+            .Where(t => t.Text.Contains("SystemToast.", StringComparison.Ordinal)
+                     || t.Text.Contains("Windows.UI.Notifications", StringComparison.Ordinal)
+                     || t.Text.Contains("CreateToastNotifier", StringComparison.Ordinal))
+            .Select(t => Path.GetRelativePath(srcRoot, t.Path))
+            .ToArray();
+        Assert.True(offenders.Length == 0,
+            "WPN/系统 Toast 通路必须整体移除（通知统一走 NoticeCard）；命中文件：" + string.Join(", ", offenders));
     }
 }

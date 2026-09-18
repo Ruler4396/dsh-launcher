@@ -167,7 +167,7 @@
 | 可执行面不自动打开（S2） | `IsSafeToOpen` | P1 | ✓ 单测（15 条 + SecurityBoundaryTests 22 条可执行面全拒绝） |
 | 弹窗分类 外链/同源/blob | `ClassifyPopup` | P1 | ✓ 单测（13 条） |
 | 内部弹窗共享会话/登录态 | `NewWindowRequested`+`CreatePopupForm` | P1 | **缺口** |
-| 权限自动放行白名单 | `IsAutoGrantedPermission` | P1 | ✓ 单测（12 条 + SecurityBoundaryTests 全枚举精确匹配） |
+| 权限自动放行白名单 | `IsAutoGrantedPermission` | P1 | ✓ 单测（`ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 14 条 + `WebNotificationPermission_StaysGranted_Issue25`；注：`SecurityBoundaryTests` 并无权限断言，旧记录有误） |
 | 导航白名单 S3（外部导航转浏览器） | `NavigationStarting` 取消外链 | P0 | **缺口**（安全，建议优先） |
 
 ### 3.8 日志 / 诊断 / 数据边界（A5 ∩ 日志不可导出 P0）

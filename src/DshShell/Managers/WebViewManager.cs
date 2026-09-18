@@ -131,6 +131,12 @@ public sealed class WebViewManager : IWebViewManager
                 e.State = CoreWebView2PermissionState.Allow;
         };
 
+        // [issue #25] **不**订阅 NotificationReceived 代管网页通知：实测 dsh 本体前端零使用
+        // Notification API（new Notification/showNotification/requestPermission 全 0 命中），
+        // 而第三方插件是否使用无法穷证——壳不为一条不确定的通路维护第二套呈现。网页通知
+        // 权限照常放行（见 ShellLogic.WebViewPolicy），要显示时由 Chromium 自己的实现在
+        // msedgewebview2.exe 内渲染，与宿主进程内的 wpnapps.dll 崩溃无关（SystemToast 已删）。
+
         // 导航白名单（S3）：主窗口/内部弹窗只允许本地（127.0.0.1/localhost）导航；
         // 外部 http(s) 导航一律取消并转系统默认浏览器——壳无地址栏，防止被重定向到
         // 伪站点，且外部页会拿到已自动放行的剪贴板/存储等权限（白名单之外不生效）。

@@ -140,45 +140,8 @@ public class ContractTests
         Assert.Equal(expected, RuntimeResolver.IsUsableNodeVersion(versionOutput));
     }
 
-    // ---------- 系统通知（Toast）纯策略：XML 构造与 AUMID ----------
-
-    [Fact]
-    public void BuildToastXml_ContainsTitleAndBody_InTemplateStructure()
-    {
-        var xml = ShellLogic.ToastPolicy.BuildToastXml("dsh 有新版本", "检测到 0.1.1-rc.1");
-        Assert.Contains("template=\"ToastText02\"", xml);
-        Assert.Contains("<text id=\"1\">dsh 有新版本</text>", xml);
-        Assert.Contains("<text id=\"2\">检测到 0.1.1-rc.1</text>", xml);
-        // duration="long"：弹窗停留 ~25s，保证用户来得及点击触发更新
-        //（2026-08-22 用户回归：默认 short ≈5 秒来不及点）
-        Assert.StartsWith("<toast duration=\"long\">", xml);
-        Assert.EndsWith("</toast>", xml);
-    }
-
-    [Theory]
-    [InlineData("<script>", "&lt;script&gt;")]          // 防注入：外部输入不得破坏 XML 结构
-    [InlineData("a&b", "a&amp;b")]
-    [InlineData("x\"y", "x&quot;y")]
-    [InlineData("p'q", "p&apos;q")]
-    public void BuildToastXml_EscapesExternalInput(string raw, string escaped)
-    {
-        var xml = ShellLogic.ToastPolicy.BuildToastXml(raw, "body");
-        Assert.Contains($"<text id=\"1\">{escaped}</text>", xml);
-    }
-
-    [Fact]
-    public void BuildToastXml_NullInputs_ProduceEmptyTextNodes()
-    {
-        var xml = ShellLogic.ToastPolicy.BuildToastXml(null!, null!);
-        Assert.Contains("<text id=\"1\"></text>", xml);
-        Assert.Contains("<text id=\"2\"></text>", xml);
-    }
-
-    [Fact]
-    public void ToastAumid_IsStableNonEmpty()
-    {
-        // AUMID 是系统聚合通知来源的标识，中途变更会让用户通知设置失效 → 锁定为常量
-        Assert.False(string.IsNullOrWhiteSpace(ShellLogic.ToastPolicy.ToastAumid));
-        Assert.Equal("dsh-launcher", ShellLogic.ToastPolicy.ToastAumid);
-    }
+    // [issue #25 收口] 原「系统通知（Toast）纯策略：XML 构造与 AUMID」四个契约用例已随
+    // ShellLogic.ToastPolicy / Windows.SystemToast 整体删除——通知统一走自绘卡片
+    //（Windows/NoticeCard.cs + ShellLogic.NoticeCardLayout），不再构造 WPN 的 Toast XML，
+    // 也不再注册未打包 AUMID。版式契约见 NoticeCardLayoutContractTests。
 }
