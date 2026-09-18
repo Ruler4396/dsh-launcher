@@ -167,8 +167,50 @@ public sealed class SafeProfileBuilder
     }
 
     /// <summary>
+    /// [issue #28-4] 清理前体检：目录里是否只有壳自己写的产物、清单是否仍是壳会生成的内容。
+    /// 任一为假都不得递归删除——见 <see cref="ShellLogic.SafeProfileCleanupPolicy"/>。
+    ///
+    /// 为什么必须体检：用户在安全模式会话里装插件时，pnpm 会把 bundle 声明与 node_modules
+    /// 实体写进 <c>.dsh-safe</c> **本身**；旧实现每次正常启动无条件
+    /// <c>Directory.Delete(recursive: true)</c>，等于物理销毁用户刚装的东西。
+    /// 读取失败一律返回"不可删"（保守方向：宁可留下一个陈旧目录）。
+    /// </summary>
+    public (bool OnlyLauncherArtifacts, bool ManifestUnchanged) InspectForCleanup(SafeProfileTier tier)
+    {
+        try
+        {
+            if (!Directory.Exists(SafeProfileDir)) return (true, true);
+            // 壳的 Build 只写一个 package.json（+ 原子写的 .tmp 中间态）。出现任何子目录
+            // （node_modules 是主要形态）或其他文件，都不是壳写的。
+            var onlyArtifacts = Directory.GetDirectories(SafeProfileDir).Length == 0;
+            if (onlyArtifacts)
+            {
+                foreach (var f in Directory.GetFiles(SafeProfileDir))
+                {
+                    var name = Path.GetFileName(f);
+                    var isLauncherArtifact = string.Equals(name, "package.json", StringComparison.OrdinalIgnoreCase)
+                        || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+                    if (!isLauncherArtifact) { onlyArtifacts = false; break; }
+                }
+            }
+            var manifest = File.Exists(SafeProfilePackageJson)
+                ? File.ReadAllText(SafeProfilePackageJson)
+                : null;
+            return (onlyArtifacts,
+                ShellLogic.SafeProfileCleanupPolicy.SafeProfileManifestEquivalent(manifest, ResolveBundles(tier)));
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"safe profile cleanup inspection failed; keeping directory (never delete blind): {ex.Message}");
+            return (false, false);
+        }
+    }
+
+    /// <summary>
     /// 清理隔离 profile（正常模式启动时调用：上次安全模式遗留的 .dsh-safe 已无用）。
     /// 只删 .dsh-safe 目录本身，用户 profiles/* 绝不触碰。幂等。
+    /// 【调用方义务】必须先经 <see cref="InspectForCleanup"/> +
+    /// <see cref="ShellLogic.SafeProfileCleanupPolicy.ShouldDelete"/> 判定，不得直接调用本方法。
     /// </summary>
     public void Cleanup()
     {

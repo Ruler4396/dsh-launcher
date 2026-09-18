@@ -46,6 +46,12 @@ public sealed class SplashForm : Form
     private readonly Label _confirmText = new();
     private readonly Button _confirmYes = new();
     private readonly Button _confirmNo = new();
+    // [issue #28-2] 几何与像素字体随 DPI 重算（ApplyLayout），不再写死物理像素常量
+    private ShellLogic.SplashLayout.Geometry _geo;
+    /// <summary>当前生效的布局快照（<c>--ui-selftest</c> 据此断言"文字不撑破控件框"）。</summary>
+    internal ShellLogic.SplashLayout.Geometry Layout => _geo;
+    private Font? _bodyFont;
+    private Font? _confirmTitleFont;
     private TaskCompletionSource<bool>? _confirmTcs;
     /// <summary>当前是否处于更新安装阶段（任务一：禁用取消按钮，防 npm install 中途强杀致环境损坏）。</summary>
     private bool _applyingUpdate;
@@ -63,13 +69,15 @@ public sealed class SplashForm : Form
         _pipeline = pipeline;
         _visible = visible;
 
-        // ---- 双缓冲三件套：消除 GDI+ 绘制撕裂与控件短暂空白 ----
-        // UserPaint 让本窗体自绘层级完全受控；OptimizedDoubleBuffer 把绘制目标换成后台缓冲，
-        // 一次 BitBlt 上屏；AllPaintingInWmPaint 抑制擦背景的白闪（经典闪烁根因）。
-        SetStyle(ControlStyles.OptimizedDoubleBuffer
-               | ControlStyles.AllPaintingInWmPaint
-               | ControlStyles.UserPaint, true);
+        // ---- 双缓冲：消除 GDI+ 绘制撕裂与控件短暂空白 ----
+        // OptimizedDoubleBuffer 把绘制目标换成后台缓冲，一次 BitBlt 上屏；
+        // AllPaintingInWmPaint 抑制擦背景的白闪（经典闪烁根因）。
+        // [issue #28-2] 不再声明 UserPaint：本窗没有任何自绘内容（不 override OnPaint），
+        // 旧实现却声明"客户区由我全权绘制"且不设 BackColor —— 等于把客户区绘制权拿走又不画，
+        // 与报告人截图"按钮基本看不到"的形态一致。参照 VersionInfoDialog：双缓冲 + 显式底色。
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
         DoubleBuffered = true;
+        BackColor = SystemColors.Window;
 
         // ---- 窗口骨架 ----
         // 标题不用主窗口的"DeepSeek Harness"：单实例逻辑按标题找主窗口，避免第二次点击
@@ -77,9 +85,6 @@ public sealed class SplashForm : Form
         Text = "dsh-launcher 启动中";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
-        // v0.4.2：紧凑布局 380x180——边距统一 16px，Label/进度条/按钮垂直收紧，
-        // 消除"字少窗空"视觉失衡；高度按内容收敛（较 0.4.1 的 196 再减 16）。
-        ClientSize = new Size(380, 180);
         MinimizeBox = false;
         MaximizeBox = false;
         // 加载窗必须 TopMost——否则用户前台有其他窗口时，加载窗藏在后面看不到（并行开窗 Step5）。
@@ -92,21 +97,16 @@ public sealed class SplashForm : Form
         // 必崩（0xc0000005，见 Win32/ImeContextGuard 注释）。本窗含 Label/Button，必须同护栏。
         Win32.ImeContextGuard.Harden(this);
 
-        // ---- 预渲染：构造时立即设置默认文本/颜色/布局，不依赖任何事件先触发再绘制 ----
+        // ---- 预渲染：构造时立即设置默认文本/颜色，不依赖任何事件先触发再绘制 ----
+        // 几何（尺寸/位置）一律由 ApplyLayout(deviceDpi) 从纯函数取，见该方法的注释。
         _statusLabel.Text = "正在准备启动…";
-        _statusLabel.Location = new Point(16, 12);
-        _statusLabel.Size = new Size(348, 32);
         _statusLabel.ForeColor = SystemColors.WindowText;
         _statusLabel.AutoEllipsis = true;
 
         _bar.Style = ProgressBarStyle.Marquee;
         _bar.MarqueeAnimationSpeed = 30; // 后台缓冲下的不确定进度条动画平滑无闪烁
-        _bar.Location = new Point(16, 50);
-        _bar.Size = new Size(348, 10);
 
         _cancelButton.Text = "取消";
-        _cancelButton.Location = new Point(302, 148);
-        _cancelButton.Size = new Size(60, 22);
         _cancelButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
         _cancelButton.Click += (_, _) =>
         {
@@ -129,25 +129,19 @@ public sealed class SplashForm : Form
         // MessageBox.Show 会开启一个嵌套消息循环（模态），与本窗体消息泵叠加造成两层循环；
         // 内联面板与 Splash 共用同一消息泵，确认期间 Splash 照常刷新、取消照常可用。
         _confirmPanel.Visible = false;
-        _confirmPanel.Bounds = new Rectangle(16, 66, 348, 76);
-        _confirmTitle.Location = new Point(0, 2);
-        _confirmTitle.Size = new Size(348, 16);
-        _confirmTitle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold);
-        _confirmText.Location = new Point(0, 22);
-        _confirmText.Size = new Size(348, 32);
         _confirmText.AutoEllipsis = true;
         _confirmYes.Text = "是";
-        _confirmYes.Location = new Point(220, 52);
-        _confirmYes.Size = new Size(62, 22);
         _confirmNo.Text = "否";
-        _confirmNo.Location = new Point(284, 52);
-        _confirmNo.Size = new Size(62, 22);
         _confirmYes.Click += (_, _) => FinishConfirm(true);
         _confirmNo.Click += (_, _) => FinishConfirm(false);
         _confirmPanel.Controls.Add(_confirmTitle);
         _confirmPanel.Controls.Add(_confirmText);
         _confirmPanel.Controls.Add(_confirmYes);
         _confirmPanel.Controls.Add(_confirmNo);
+
+        // 几何与字号：构造时按当前 DPI 摆放一次（本窗恒为主屏 CenterScreen，句柄未建时
+        // DeviceDpi = 系统 DPI，正是主屏值）；跨 DPI 移动由 OnDpiChanged 兜底。
+        ApplyLayout(DeviceDpi);
 
         Controls.Add(_statusLabel);
         Controls.Add(_bar);
@@ -161,6 +155,63 @@ public sealed class SplashForm : Form
             Opacity = 0;
             ShowInTaskbar = false;
         }
+    }
+
+    /// <summary>
+    /// [issue #28-2] 按 DPI 应用全部几何与字号。缩放折算只发生在
+    /// <see cref="ShellLogic.SplashLayout.Compute"/>（一次），本方法零算术——
+    /// 旧实现把 380×180 / 60×22 这类**物理像素常量**写死在构造里，而字体是 point
+    /// （随 DPI 变大），高 DPI 屏上"取消"按钮被自己的文字撑破（用户截图：按钮基本看不到）。
+    /// </summary>
+    private void ApplyLayout(int deviceDpi)
+    {
+        var geo = ShellLogic.SplashLayout.Compute(deviceDpi);
+        var oldBody = _bodyFont;
+        var oldTitle = _confirmTitleFont;
+        _bodyFont = CreateFont("Microsoft YaHei UI", geo.EmPx, FontStyle.Regular);
+        _confirmTitleFont = CreateFont("Microsoft YaHei UI", geo.ConfirmTitleEmPx, FontStyle.Bold);
+
+        _geo = geo;
+        Font = _bodyFont;              // 子控件继承（仅 _confirmTitle 显式加粗）
+        ClientSize = geo.ClientSize;
+        _statusLabel.Bounds = geo.Status;
+        _bar.Bounds = geo.Bar;
+        _cancelButton.Bounds = geo.Cancel;
+        _confirmPanel.Bounds = geo.ConfirmPanel;
+        _confirmTitle.Bounds = geo.ConfirmTitle;
+        _confirmTitle.Font = _confirmTitleFont;
+        _confirmText.Bounds = geo.ConfirmText;
+        _confirmYes.Bounds = geo.ConfirmYes;
+        _confirmNo.Bounds = geo.ConfirmNo;
+
+        oldBody?.Dispose();            // 换字体后再释放旧实例（避免仍被控件引用的句柄被销毁）
+        oldTitle?.Dispose();
+        Invalidate(true);
+    }
+
+    /// <summary>像素单位字体：与绘制 DC 的 DPI 无关，缩放已在 SplashLayout 折算过一次。</summary>
+    private static Font CreateFont(string family, int emPx, FontStyle style)
+    {
+        FontFamily resolved;
+        try
+        {
+            var match = Array.Find(FontFamily.Families,
+                f => string.Equals(f.Name, family, StringComparison.OrdinalIgnoreCase));
+            resolved = match ?? SystemFonts.DefaultFont.FontFamily;
+        }
+        catch
+        {
+            resolved = SystemFonts.DefaultFont.FontFamily; // 字体枚举失败：走系统默认（不抛）
+        }
+        return new Font(resolved, emPx, style, GraphicsUnit.Pixel);
+    }
+
+    /// <summary>跨 DPI 移动（拖到另一块缩放比的显示器）时重算几何与字号。</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        if (e.DeviceDpiNew == e.DeviceDpiOld) return;
+        ApplyLayout(e.DeviceDpiNew);
     }
 
     protected override void OnShown(EventArgs e)

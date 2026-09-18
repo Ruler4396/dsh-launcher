@@ -158,10 +158,18 @@ internal static class ServiceLifecycleOps
 
     /// <summary>
     /// 停止"壳管理的"dsh 服务：优先用传入的记忆 PID（就绪时已记录），否则按端口反查兜底。
-    /// 杀干净后短等端口释放（上限 1s）；超时则反查占用者认领清理（防 TIME_WAIT 卡关窗）。
+    /// 杀干净后短等端口释放（上限 1s）；超时则反查占用者处置（防 TIME_WAIT 卡关窗）。
     /// 杀不干净则保留 pid 文件，下次启动由 SweepStaleServicePid 认领。
+    ///
+    /// [issue #28-4 插件安装被截断修复] <paramref name="allowReplacementAdoption"/> 为真时
+    /// （只有"运行期自愈重启"会传）：端口占用者若是**更新的、已能应答就绪探测的** dsh 服务，
+    /// 说明被停的那个进程刚刚自我重新拉起（DSH 内置重启/自更新的实现方式）——此时必须接管它，
+    /// 绝不再 <c>taskkill /T /F</c> 整树：那棵子树里可能正在跑 npm/pnpm 完成插件安装，
+    /// 旧实现每次都把它拦腰截断（用户实测："装完插件点 DSH 自带重启，插件直接消失"）。
+    /// 关窗/退出路径传 false：那里的语义是"服务必须停干净"，不得留下无主健康服务。
     /// </summary>
-    internal static void StopService(string dataDir, int port, int rememberedPid)
+    internal static StopResult StopService(string dataDir, int port, string url,
+        int rememberedPid, bool allowReplacementAdoption = false)
     {
         try
         {
@@ -170,7 +178,7 @@ internal static class ServiceLifecycleOps
             if (pid <= 0)
             {
                 ClearPidFile(dataDir, port);
-                return;
+                return StopResult.NothingAdopted;
             }
             if (KillProcess(port, pid))
             {
@@ -180,28 +188,81 @@ internal static class ServiceLifecycleOps
                 var deadline = DateTime.UtcNow.AddSeconds(1);
                 while (DateTime.UtcNow < deadline && ShellLogic.ProcessManagement.GetProcessIdByPort(port) > 0)
                     Thread.Sleep(80);
-                if (ShellLogic.ProcessManagement.GetProcessIdByPort(port) > 0)
+                int occupant = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
+                if (occupant > 0 && occupant != pid)
                 {
-                    // 兜底：端口释放超时 → 反查占用者，确属 dsh 服务则认领清理
-                    // （KillServiceProcess 内部再做身份 + 端口归属双重校验，绝无误杀）。
-                    int occupant = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
-                    if (occupant > 0 && occupant != pid)
+                    // 兜底：端口释放超时 → 反查占用者，按纯函数决策处置（杀 or 接管）。
+                    // KillServiceProcess 内部再做身份 + 端口归属双重校验，绝无误杀。
+                    var decision = ReclaimDecision(port, url, occupant, pid, allowReplacementAdoption);
+                    var graceDeadline = DateTime.UtcNow
+                        .AddSeconds(ShellLogic.ServiceRestartPolicy.OccupantAdoptionGraceSeconds);
+                    while (decision == ShellLogic.ServiceRestartPolicy.OccupantDecision.WaitGrace
+                           && DateTime.UtcNow < graceDeadline)
                     {
-                        Logger.Info($"STOP: port {port} still occupied by pid={occupant}; attempting reclaim");
-                        ShellLogic.ProcessManagement.KillServiceProcess(occupant, port);
+                        Thread.Sleep(400); // 年幼的服务正在起 HTTP：轮询到应答或宽限到期再判
+                        decision = ReclaimDecision(port, url, occupant, pid, allowReplacementAdoption);
                     }
+                    if (decision == ShellLogic.ServiceRestartPolicy.OccupantDecision.AdoptReplacement)
+                    {
+                        Logger.Info($"STOP: port {port} now served by newer responding dsh service pid={occupant} "
+                            + "(the stopped process respawned itself) → adopting it, not killing its tree");
+                        RecordServicePid(dataDir, port); // 账本立刻指向新进程：否则下次启动会把它当外来占用者
+                        return new StopResult(occupant);
+                    }
+                    Logger.Info($"STOP: port {port} still occupied by pid={occupant}; attempting reclaim");
+                    ShellLogic.ProcessManagement.KillServiceProcess(occupant, port);
                     Logger.Warn($"service pid={pid} killed but port {port} still occupied",
                         ErrorCodes.E2005, new { pid, port });
                 }
-                else
+                else if (occupant <= 0)
                     ClearPidFile(dataDir, port);
             }
             // P2-10：杀不干净则保留 pid 文件，下次启动认领
         }
+        catch (Exception ex)
+        {
+            // 停服务失败不影响退出，但原因必须可见（异常透明铁律：绝不静默吞）。
+            Logger.Warn($"StopService(port={port}) threw: {ex.Message}", ErrorCodes.E2005);
+        }
+        return StopResult.NothingAdopted;
+    }
+
+    /// <summary>端口占用者处置决策（纯函数 <see cref="ShellLogic.ServiceRestartPolicy"/> 的取数侧）。
+    /// 不允许接管时：年龄按"已过期"、健康按"假"送进决策 → 恒得 Kill（既有无条件回收语义）。</summary>
+    private static ShellLogic.ServiceRestartPolicy.OccupantDecision ReclaimDecision(
+        int port, string url, int occupant, int rememberedPid, bool allowAdoption)
+    {
+        if (!allowAdoption)
+            return ShellLogic.ServiceRestartPolicy.DecideOccupantReclaim(
+                occupant, rememberedPid, occupantAgeSeconds: double.MaxValue,
+                replacementHealthy: false,
+                ShellLogic.ServiceRestartPolicy.OccupantAdoptionGraceSeconds);
+
+        var healthy = ShellLogic.ProcessManagement.IsLikelyDshService(occupant) && IsReady(port, url);
+        return ShellLogic.ServiceRestartPolicy.DecideOccupantReclaim(
+            occupant, rememberedPid, OccupantAgeSeconds(occupant), healthy,
+            ShellLogic.ServiceRestartPolicy.OccupantAdoptionGraceSeconds);
+    }
+
+    /// <summary>占用者已存活秒数；进程已消失/权限不足返回负数（决策侧按"未知→先等宽限"处理）。</summary>
+    private static double OccupantAgeSeconds(int pid)
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return (DateTime.Now - p.StartTime).TotalSeconds;
+        }
         catch
         {
-            // 停服务失败不影响退出
+            return -1;
         }
+    }
+
+    /// <summary>停服结果。<see cref="AdoptedReplacementPid"/> &gt; 0 表示端口已被"更新的、已应答的"
+    /// dsh 服务占据并已写入账本——调用方不得再拉起服务（端口上已有可用服务）。</summary>
+    internal readonly record struct StopResult(int AdoptedReplacementPid)
+    {
+        internal static readonly StopResult NothingAdopted = new(0);
     }
 
     /// <summary>服务就绪快探：TCP 可连 + HTTP 有响应（dsh 前端在端口监听后可能还需数十秒才提供 HTTP）。</summary>

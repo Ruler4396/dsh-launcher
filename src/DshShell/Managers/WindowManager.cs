@@ -26,8 +26,9 @@ public sealed class WindowManager : IWindowManager
     public Func<Icon>? TrayWhaleIconProvider { get; set; }
     /// <summary>托盘"退出"动作（Program：置标志 + 按模式停服务 + Application.Exit）。</summary>
     public Action? TrayExitAction { get; set; }
-    /// <summary>托盘菜单创建委托（Program 注入创建 TrayMenuForm——自绘菜单 UI 保留在 Program）。</summary>
-    public Func<Action, Form>? TrayMenuFactory { get; set; }
+    /// <summary>托盘菜单工厂：入参 = 退出动作 + **菜单所在显示器的 DPI**（issue #28-3：
+    /// 菜单按将要出现的那块屏缩放，不再在构造时采样主屏）。Program 注入创建 TrayMenuForm。</summary>
+    public Func<Action, int, Form>? TrayMenuFactory { get; set; }
 
     // ---- 主题依赖委托（Program 注入，解耦 Program 静态实现与 DshShellForm.TitleBar）----
     /// <summary>解析当前深浅主题（ResolveDarkMode）。</summary>
@@ -129,8 +130,10 @@ public sealed class WindowManager : IWindowManager
         {
             var exitAction = TrayExitAction ?? (() => Application.Exit());
             if (TrayMenuFactory is null) { exitAction(); return; } // 无工厂（注入缺失）则直接退出
-            var menu = TrayMenuFactory(exitAction);
+            // [issue #28-3] 先取光标所在屏的 DPI 再构造菜单：菜单窗手工布局、WinForms 不替它缩放，
+            // 构造时（Location 仍为 0,0）采样 DPI 会恒取到主屏，混屏下副屏菜单尺寸全错。
             var pt = Cursor.Position;
+            var menu = TrayMenuFactory(exitAction, Win32.MonitorDpi.ForPoint(pt));
             var wa = Screen.FromPoint(pt).WorkingArea;
             var loc = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
             if (loc.X < wa.Left) loc.X = pt.X + 12;

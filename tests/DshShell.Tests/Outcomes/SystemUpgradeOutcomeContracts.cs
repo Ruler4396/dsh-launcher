@@ -293,7 +293,8 @@ namespace DshShell.Tests.Outcomes;
 
         // 退出编排的服务收尾段（BeginShutdownAsync 后台线程执行的同款调用）
         DshWeb.Managers.ServiceLifecycleOps.SweepStaleServicePid(env.DataDir, port);
-        DshWeb.Managers.ServiceLifecycleOps.StopService(env.DataDir, port, rememberedPid: 0);
+        DshWeb.Managers.ServiceLifecycleOps.StopService(
+            env.DataDir, port, $"http://127.0.0.1:{port}", rememberedPid: 0); // 关窗路径：不接管任何替代进程
 
         // ---- Then：四重零污染证据 ----
         Assert.Equal(dshFilesBefore, SnapshotTree(userDsh));          // ① ~/.dsh 未增删改

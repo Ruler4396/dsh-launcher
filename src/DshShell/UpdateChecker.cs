@@ -26,7 +26,10 @@ public static class UpdateChecker
     /// 当前壳版本：发布构建由 CI 注入真实版本（AssemblyInformationalVersion ≥ 0.x）；
     /// **本地/开发构建 .NET SDK 未设 Version 时默认 1.0.0**（本仓库版本线 0.x，1.0.0 必为默认值）——
     /// 若显示 1.0.0 会误导"当前版本已是最新/版本号异常"（2026-09 用户反馈），故回退
-    /// 读取 git 最近 tag（有界探测，静默失败保持 null → 展示"未知"）。非法时回退 null。
+    /// 读取 git describe（有界探测，静默失败保持 null → 展示"未知"）。非法时回退 null。
+    /// [issue #28-1] 探测**保留距离尾段**（<c>v0.4.5-6-g15f60daf</c> → <c>0.4.5-6-g15f60daf</c>）：
+    /// 只取最近 tag 会让源码构建永远"等于或旧于"该 tag，用户按维护者给的命令构建后反被催更新。
+    /// 距离尾段的排序语义在 <see cref="ShellLogic.VersionPolicy"/>（全系统唯一比较器）里定义。
     /// </summary>
     public static readonly string? CurrentLauncherVersion = ResolveLauncherVersion();
 
@@ -47,11 +50,22 @@ public static class UpdateChecker
             .FirstOrDefault()?.InformationalVersion;
         var released = StripDevDefaultVersion(info);
         if (released is not null) return released; // 发布构建（CI 注入真实版本号）
-        return ProbeGitDescribeVersion();          // 开发构建：最近 git tag（如 v0.4.3 → 0.4.3）
+        return ProbeGitDescribeVersion();          // 开发构建：git describe（含距离尾段）
     }
 
     /// <summary>
-    /// 从可执行目录向上找仓库根（含 .git）后执行 git describe --tags --abbrev=0（最近 tag，去 v 前缀）。
+    /// git describe 输出 → 版本串（纯函数，契约测试锁定）：去首尾空白与 <c>v</c> 前缀；
+    /// 空/全空白（浅克隆、blobless、无任何 tag 时 git 只写 stderr）→ null = "未知"，
+    /// 调用方据此**不产生**任何"有更新"结论（见 <see cref="ShellLogic.LauncherUpdateNoticePolicy"/>）。
+    /// </summary>
+    internal static string? ParseDescribeOutput(string? describeStdout)
+    {
+        var tag = describeStdout?.Trim();
+        return string.IsNullOrWhiteSpace(tag) ? null : tag.TrimStart('v', 'V');
+    }
+
+    /// <summary>
+    /// 从可执行目录向上找仓库根（含 .git）后执行 git describe --tags（**含** -N-g&lt;sha&gt; 距离尾段）。
     /// 进程三必须合规：stdout/stderr 异步排空 + 限时等待 + 超时 Kill(entireProcessTree)（同 DshDiscovery 版本探测）。
     /// 仅开发 checkout（无 .git 的安装版根本不会走到这里）调用；失败静默返回 null。
     /// </summary>
@@ -61,7 +75,7 @@ public static class UpdateChecker
         {
             var repoRoot = FindRepoRoot();
             if (repoRoot is null) return null;
-            var psi = new ProcessStartInfo("git", "describe --tags --abbrev=0")
+            var psi = new ProcessStartInfo("git", "describe --tags")
             {
                 WorkingDirectory = repoRoot,
                 UseShellExecute = false,
@@ -81,8 +95,8 @@ public static class UpdateChecker
                 Logger.Warn("git describe probe timed out; launcher version stays unknown");
                 return null;
             }
-            var tag = outputTask.Result.Trim(); // 进程已退出 → 管道已关闭，任务必已完成
-            return string.IsNullOrWhiteSpace(tag) ? null : tag.TrimStart('v', 'V');
+            var tag = outputTask.Result; // 进程已退出 → 管道已关闭，任务必已完成
+            return ParseDescribeOutput(tag);
         }
         catch (Exception ex)
         {
@@ -321,8 +335,12 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 语义化版本比较（完整 SemVer，含 prerelease）：a &gt; b → 1，a == b → 0，a &lt; b → -1。
-    /// 非法/空版本按 0.0.0 处理（缺失信息不产生"有新版本"的误报）。
+    /// 语义化版本比较（完整 SemVer，含 prerelease 与 git describe 距离尾段）：
+    /// a &gt; b → 1，a == b → 0，a &lt; b → -1。
+    /// 非法/空版本按 0.0.0 处理——这是**有意的 fail-open**：发现链/就绪链不能因解析失败而中断。
+    /// 但"缺失信息不得产生『有新版本』的误报"这条承诺不在比较器里，而在决策门
+    /// <see cref="ShellLogic.LauncherUpdateNoticePolicy"/>（issue #28-1：本地版本未知时
+    /// 曾被 null→0.0.0 判成"需要安全更新"）。
     ///
     /// v0.4.0 修复：dsh 实际以 SemVer prerelease 发布（如 0.1.0-rc.7），旧实现用 Version.TryParse
     /// 对含 '-' 的版本解析失败 → 双方都落成 0.0.0 → 永远检测不到 rc7 更新（rc6→rc7 无提示的根因）。
