@@ -90,7 +90,13 @@ CustomTitleBar.OnMouseDown（版本徽标命中）
 ```
 **身份传递检查**：重启仍走唯一身份入口 `StartDshServiceViaIdentity()`（`DiscoverCurrentRuntime`
 → `ServiceManager.Start(identity)`），与更新应用/安全模式切换同源；未新增旁路拉起。
-**回归测试**：`Regression_Issue28_RuntimeServiceRestartTests`（Healthy 前后退出语义 + 幂等闸门复位）。
+**[issue #28-4 补强]** 该入口的 profile 判定不再内联，改走 `Domain/SafeModeLaunchPolicy.Decorate`
+——与 `LauncherApp.ServiceIdentityDecorator`（初始拉起）**同源**，"唯一身份入口"这句从此全真；
+且四条重启路径（运行期自愈/安全模式/回滚/更新应用）就绪后一律 `RecordServicePid()` 刷新账本 +
+内存 `_servicePid`，再 `ResumeAfterRestart(pid)`——账本停留在已死旧 pid 会让下一次退出被误判成
+启动自检失败（见落点 5）。
+**回归测试**：`Regression_Issue28_RuntimeServiceRestartTests`（Healthy 前后退出语义 + 幂等闸门复位）
++ `Regression_Issue28_RestartPidLedgerRefresh.RealOs`（真实进程句柄下"attach 哪个 pid 决定路由"）。
 
 ### 落点 3：启动接管残留服务 → 伪重启（issue #28 第 3 点）
 ```
@@ -114,6 +120,82 @@ TrayMenuForm.Draw → 【缺陷节点】TextRenderer 默认内边距（每字两
 ```
 **回归测试**：`TrayMenuLayoutContractTests`（字距精确/居中）+ `Regression_Issue28_TrayExitRow.RealOs`
 （真实渲染像素：两字墨迹空档 ≤ 半个字宽；回退旧实现必红）。
+
+### 落点 5：DSH 内置重启后插件消失（issue #28 复测第 5 条，重大）
+```
+用户装完插件 → 点 DSH 页面自带"重启" → node 服务自我退出并重新拉起
+  → 【缺陷 A：不对称】WithProfile(.dsh-safe) 全仓唯一判定只在重启路径
+     （Program.StartDshServiceViaIdentity），初始启动走 LauncherApp 完全不套
+     → 同一份粘滞 safe-mode.json 下"托盘退出重开插件都在、点内置重启插件消失"
+       （.dsh-safe 按设计剥离所有非 @deepseek-ai bundle），且重启路径不写横幅 → 全程静默
+  → 【缺陷 B：账本】RestartDshServiceCoreAsync 就绪后从不 RecordServicePid
+     → ResumeAfterRestart attach 到已死的旧 pid（attach 失败按设计只 Warn）
+     → 新服务脱离进程层监控且不在账本 → 下一次重启不再走 ServiceExitedWhileRunning 自愈，
+       而被 HTTP 层判 E2004 / 进程层判 E2007 → RegisterBootFailure
+       → BootRecoveryPolicy.Decide(pluginInvolved=true) → 询问进安全模式 → 回到缺陷 A（自我强化）
+  → 【缺陷 C：截断】StopService 发现端口被"另一个 pid"占据 → 无条件 taskkill /T /F 整树
+     → 那棵子树里可能正在跑 npm/pnpm 完成插件安装（全仓唯一能把安装"打断"而非"隐藏"的机制）
+  → 【缺陷 D：销毁】正常模式启动无条件 Directory.Delete(.dsh-safe, recursive)
+     → 安全模式会话里装的插件被物理销毁
+  → 【修复点】SafeModeLaunchPolicy（启动/重启同源）+ ApplySafeModeVisibility（横幅按真正
+     拉起进程的身份）+ 可点击退出的通知；四条重启路径统一刷新账本；
+     ServiceRestartPolicy.DecideOccupantReclaim（应答中的新服务→接管，绝不杀）；
+     BootRecoveryPolicy.SuppressLauncherInduced（壳自己造成的空窗不计失败，仅 HTTP 证据 + 20s 窗）；
+     SafeProfileCleanupPolicy + InspectForCleanup（有非壳产物就保留）
+```
+**身份传递检查**：`SafeModeLaunchPolicy.Decorate` 只允许改写 `ProfilePath`，其余身份事实
+（Source/NodeExePath/入口/版本）逐位传递——契约测试 `SafeModeLaunchPolicyContractTests` 锁死；
+`SafeModeSymmetryOutcomes` 进一步断言"启动与重启的 `ServiceLaunch.BuildArgs` 输出字节相等"。
+**回归测试**：`ShellLogicRestartPolicyContractTests`（决策矩阵）+
+`LauncherAppScenarioTests.*_28`（粘滞态装饰启动身份）+ `Outcomes/SafeModeSymmetryOutcomes` +
+`Lifecycle/Regression_Issue28_RestartPidLedgerRefresh.RealOs`（真 node/真账本/孙进程存活正负对照）。
+**人工验证配方**（须在 `sandbox/<场景名>/` 隔离 DSH_HOME 下跑，核心约束六）：
+① 手工把 `<沙盒 home>/.dsh/dsh-launcher/safe-mode.json` 置 `"active": true` → 启动 →
+标题栏必须出现「（安全模式）」且弹出可点击退出的通知（修复前：静默、无横幅）；
+② 页面内点 DSH 自带"重启" → 日志仍为 `service start via identity (SAFE profile)`、
+横幅不消失（对称遵守）；点通知退出安全模式 → 重启后命令行回到 `web`；
+③ 连续点两次内置重启 → 日志出现两次
+`service exited while healthy ... handing over to runtime restart supervision`、
+**无** E2004/E2007，且 `service-pid-<port>.txt` 每次重启后内容都变（账本跟上新进程）；
+④ 在安全模式会话里装一个插件后正常启动 → `.dsh-safe` 目录必须存活并留痕
+`[E1010] 隔离 profile 中存在非壳生成的内容…已保留目录不删`。
+
+### 落点 6：源码构建被误报"需要安全更新"（issue #28 复测第 2 条）
+```
+源码构建（无 CI 注入版本号）→ AssemblyInformationalVersion = 1.0.0+sha
+  → StripDevDefaultVersion → null → ProbeGitDescribeVersion（无 .git / git 不可用 / 超时 → null）
+  → 【误判节点】CompareVersions("0.4.5", null)：VersionPolicy 对未知 fail-open 成 0.0.0 → "有更新"
+     （弹窗文案 "当前 ?" 即 null 的物理证据）
+  → 【修复点】LauncherUpdateNoticePolicy.ShouldNotifyLauncherSecurity：本地未知一律静默 + Trace 留痕；
+     git describe 去掉 --abbrev=0 保留距离尾段，VersionPolicy 把 -<n>-g<sha>[-dirty]
+     定义为 post-release dev 构建（排在同名正式版之上）→ 源码构建不再被判旧
+```
+**身份传递检查**：全系统唯一比较器不变（无调用点特例）；`VersionInfoPolicy` 的
+"本地未知 → 有新版本"展示语义按约定保持（被 `VersionInfoPolicyContractTests` +
+`Outcomes/VersionInfoOutcomes` 锁定），只有**通知**这一侧收紧。
+**回归测试**：`ShellLogicVersionPolicyContractTests`（距离尾段排序 + 通知门矩阵 +
+`ParseDescribeOutput`）。
+
+### 落点 7：高 DPI 双缺陷（issue #28 复测第 3/4 条）
+```
+托盘菜单：字号 = GraphicsUnit.Point 且已乘 _s → 绘制 DC 自带 DPI 再折算一次 → 文字按 s² 放大
+  （卡片/图标按 s）；_s 又在构造时 CreateGraphics() 采样 → 恒取主屏 DPI，混屏副屏全错
+Splash 窗：全仓唯一零 DPI 处理窗口——380×180 / 60×22 硬编码物理像素 + point 字体
+  → 高 DPI 下文字撑破按钮（"按钮基本看不到"）
+  → 【修复点】几何与字号折算一律下沉纯函数（TrayMenuLayout.ComputeGeometry /
+     SplashLayout.Compute：dpi → 物理像素，只折算一次）；渲染侧像素单位 + 画布钉 96 DPI；
+     缩放来源改为按光标所在显示器的 Win32/MonitorDpi.GetForPoint + OnDpiChanged 重算；
+     PlaceExitRow 溢出钳制（图标不再画到白卡片外）
+```
+**CI 可验性口径**：runner 是 96 DPI 且本仓库已放弃在 CI 模拟虚拟显示器
+（见 `.github/workflows/e2e-multimon.yml`：多屏/缩放边界回归全部迁移为 Headless 纯函数）。
+因此"目标 DPI"必须是**构造参数**而非宿主事实——`Regression_Issue28_TrayMenuHighDpi.RealOs`
+用 `Bitmap.SetResolution` 指定画布 DPI，在 96 DPI runner 上也能证明"同一菜单在 96/192 画布上
+墨迹宽度必须一致"。真机 200% 的上屏观感仍需 `sandbox/tray-render --dpi 192` 与
+`DshWeb.exe --ui-selftest`（第二遍实测"文字墨迹 ≤ 控件框"）人工对照。
+**回归测试**：`TrayMenuLayoutContractTests` + `SplashLayoutContractTests` +
+`Regression_Issue28_TrayMenuHighDpi.RealOs` + `UiResponsivenessTests`（派生不变量，
+替代抄自缺陷常量的 `>=60x20` 同义反复断言）。
 
 ---
 
