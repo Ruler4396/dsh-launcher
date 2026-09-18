@@ -104,6 +104,55 @@ public class ShellLogicTests
         => Assert.True(ShellLogic.WebViewPolicy.IsAutoGrantedPermission(
             CoreWebView2PermissionKind.Notifications));
 
+    // ---------- 通知去重（[issue #25 收口] 同一条内容不得重复提示） ----------
+
+    [Fact]
+    public void NoticeDedupe_KeyIsTitlePlusBody_AndDistinguishesContent()
+    {
+        Assert.Equal("t\nb", ShellLogic.NoticeDedupe.Key("t", "b"));
+        Assert.NotEqual(ShellLogic.NoticeDedupe.Key("a", "b"), ShellLogic.NoticeDedupe.Key("a", "c"));
+        Assert.NotEqual(ShellLogic.NoticeDedupe.Key("a", "b"), ShellLogic.NoticeDedupe.Key("b", "a"));
+    }
+
+    // 窗内抑制、满窗放行：60s 这条线必须钉死——太短会刷屏，太长会把"重启后仍待处理的更新"
+    // 这种本该再提醒一次的情况也一起吞掉。
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(30, true)]
+    [InlineData(59, true)]
+    [InlineData(60, false)]
+    [InlineData(120, false)]
+    public void NoticeDedupe_SameContent_SuppressedOnlyWithinCooldown(double elapsedSeconds, bool expectSuppressed)
+    {
+        var key = ShellLogic.NoticeDedupe.Key("dsh 有新版本", "检测到 0.1.5-rc.2");
+        var accepted = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        Assert.Equal(expectSuppressed, ShellLogic.NoticeDedupe.ShouldSuppress(
+            key, key, accepted, accepted.AddSeconds(elapsedSeconds)));
+    }
+
+    [Fact]
+    public void NoticeDedupe_FirstNoticeAndContentChange_AlwaysShown()
+    {
+        var accepted = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        var keyA = ShellLogic.NoticeDedupe.Key("A", "a");
+        var keyB = ShellLogic.NoticeDedupe.Key("B", "b");
+        // 首次（没有上一条）
+        Assert.False(ShellLogic.NoticeDedupe.ShouldSuppress(keyA, null, accepted, accepted));
+        // 换内容（安全模式提示与更新提示同屏出现时不得互相吞掉）
+        Assert.False(ShellLogic.NoticeDedupe.ShouldSuppress(keyB, keyA, accepted, accepted));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NoticeDedupe_CooldownDisabled_ShowsEverything(int cooldownSeconds)
+    {
+        var accepted = new DateTimeOffset(2026, 9, 18, 12, 0, 0, TimeSpan.Zero);
+        var key = ShellLogic.NoticeDedupe.Key("A", "a");
+        Assert.False(ShellLogic.NoticeDedupe.ShouldSuppress(
+            key, key, accepted, accepted, cooldownSeconds));
+    }
+
     // ---------- 下载文件名推导 ----------
 
     [Theory]

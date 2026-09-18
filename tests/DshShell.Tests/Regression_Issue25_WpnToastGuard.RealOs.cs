@@ -216,10 +216,11 @@ public class Regression_Issue25_WpnToastGuard_RealOs
                 }
                 await Task.Delay(500);
             }
+            // 自检块里"同一条内容连送两次"的去重留痕是紧随其后写出的，给它一拍落盘时间。
+            await Task.Delay(1500);
             logText = ReadLogText(logPath); // 收尾再读一次：最后一行才是判据所在
             proc.Refresh();
             var alive = !proc.HasExited;
-
             _out.WriteLine("alive=" + alive + (exited is not null ? " " + exited : "") + $" after {WatchSeconds}s");
             _out.WriteLine("---- dsh.log (notice lines) ----");
             foreach (var line in logText.Split('\n')
@@ -236,6 +237,8 @@ public class Regression_Issue25_WpnToastGuard_RealOs
             }
             // 通知真的走通了才算"WPN 没被加载"有证据力——presented=False 是真回归。
             Assert.Contains("notice card self-test: presented=True", logText);
+            // 同一条内容连送两次，第二次必须被去重闸门吞掉（保证不会重复通知）。
+            Assert.Contains("notice suppressed as duplicate", logText);
             Assert.True(modulesScanned,
                 "modules must be enumerable at the notification moment (else the scan proves nothing)");
             // 崩溃面归零：宿主进程里不得有任何 WPN 客户端模块

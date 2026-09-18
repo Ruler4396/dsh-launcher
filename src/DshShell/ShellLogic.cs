@@ -2580,6 +2580,39 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// [issue #25 收口] 通知去重纯函数：**同一条内容在冷却窗内只呈现一次**。
+    ///
+    /// 为什么需要：通知收敛成单一对象之后，"重复提示"的责任也落在这一层——调用方可能因
+    /// 轮询重入、信号重复、或未来新增的调用点而把同一标题+正文再送一次；旧形态下系统 Toast
+    /// 会把它堆进通知中心（用户看到 N 条），卡片形态下会连着再放一遍。这里按"内容键 + 时间窗"
+    /// 拦住，并且**每次抑制都留痕**——静默丢通知比重复通知更难排查。
+    /// 键由调用方拼（title + body），时间由调用方注入（可契约测试，绝不在纯函数里读时钟）。
+    /// </summary>
+    public static class NoticeDedupe
+    {
+        /// <summary>默认冷却窗（秒）：大于卡片最长驻留时间，小于"用户合理期待再次被告知"的间隔。</summary>
+        public const int DefaultCooldownSeconds = 60;
+
+        /// <summary>内容键：标题 + 正文。空标题/正文也参与（同一对空值同样只放一次）。</summary>
+        public static string Key(string? title, string? body)
+            => (title ?? "") + "\n" + (body ?? "");
+
+        /// <summary>
+        /// 是否应抑制本次呈现。规则：有键、与上一条同键、且距上一条**实际呈现**的时刻
+        /// 不足 cooldown 秒 → 抑制。首次（lastKey 为 null）、换内容、超窗 → 放行。
+        /// cooldownSeconds ≤ 0 视为不抑制（留给测试/将来的"强制重发"口子）。
+        /// </summary>
+        public static bool ShouldSuppress(
+            string key, string? lastKey, DateTimeOffset lastShownUtc, DateTimeOffset nowUtc,
+            int cooldownSeconds = DefaultCooldownSeconds)
+        {
+            if (cooldownSeconds <= 0 || string.IsNullOrEmpty(key)) return false;
+            if (lastKey is null || !string.Equals(key, lastKey, StringComparison.Ordinal)) return false;
+            return (nowUtc - lastShownUtc).TotalSeconds < cooldownSeconds;
+        }
+    }
+
+    /// <summary>
     /// Splash 启动窗布局纯函数（issue #28-2 高 DPI 根治）。设计基准 = 96dpi 逻辑像素
     /// （v0.4.2 紧凑版式：窗体 380×180、边距统一 16px）。
     ///
