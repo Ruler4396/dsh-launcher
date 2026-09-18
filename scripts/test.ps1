@@ -55,7 +55,9 @@ $env:DSH_FORCE_NPM_SMOKE = "1"
 if ($RealNet) { $env:DSH_FORCE_REALNET = "1" } else { Remove-Item Env:DSH_FORCE_REALNET -ErrorAction SilentlyContinue }
 $testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
 $testCode = $LASTEXITCODE
-$testOut | Select-Object -Last 12
+# 失败时把断言详情也留下：原来只取最后 12 行，xUnit 的 Error Message 块被截掉，
+# CI 红了查不到原因（issue #25 排查时踩过一次）。
+$testOut | Select-Object -Last 60
 Assert-True ($testCode -eq 0) "dotnet test 通过（含真实环境冒烟测试）"
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
