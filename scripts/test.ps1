@@ -38,7 +38,7 @@ Write-Host "== 0. 环境卫生（清除壳注入的 DSH_* 进程变量）==" -Fo
 foreach ($hygieneVar in 'DSH_WEB_URL','DSH_WEB_PORT','DSH_VERSION','DSH_TEST_SPLASH_DELAY_MS',
                         'DSH_SERVICE_CMD','DSH_SANDBOX','DSH_NO_UI','DSH_E2E','DSH_TEST_FORCE_MANAGED',
                         'DSH_TEST_FAKE_APPLY','DSH_TEST_INSTANCE','DSH_PROFILE',
-                        'DSH_TEST_NOTICE_CARD','DSH_TEST_TOAST') {
+                        'DSH_TEST_NOTICE_CARD','DSH_TEST_TOAST','DSH_TEST_INSTALL_MODE') {
     if (Test-Path "Env:$hygieneVar") {
         Write-Host ("  [clean] " + $hygieneVar)
         Remove-Item "Env:$hygieneVar" -ErrorAction SilentlyContinue
@@ -145,6 +145,15 @@ Assert-True ($noticeCardSrc -match 'ShellLogic\.NoticeCardLayout') "通知卡片
 Assert-True ($noticeCardSrc -match 'NoticeDedupe\.ShouldSuppress') "通知对象必须过去重闸门（保证不重复提示）"
 $traySrc = Get-Content (Join-Path $root "src\DshShell\Managers\WindowManager.cs") -Raw
 Assert-True ($traySrc -notmatch 'ShowBalloonTip') "托盘气泡不再是通知通道（避免第二套呈现实现回潮）"
+
+# ---- issue #28-4 同族缺口：粘滞安全模式 → 拉起身份，只允许一个 ensure 入口 ----
+# 真机端到端实测到的第二次事故：ensure（缺 .dsh-safe 先重建、重建失败退回正常模式）只补在重启
+# 路径 StartDshServiceViaIdentity，初始启动的装饰钩子仍裸调 Decorate → dsh 硬失败
+# "profile .dsh-safe does not exist" → exit 1 → E2002 service-exited，用户连界面都进不去，
+# 更点不到"退出安全模式"。多一个 Decorate 调用点 = 多一条会漏 ensure 的拉起路径。
+$decorateCalls = ([regex]::Matches($shellSrc, 'SafeModeLaunchPolicy\.Decorate\s*\(')).Count
+Assert-True ($decorateCalls -eq 1) "profile 装饰只允许 1 处调用点（当前 $decorateCalls）：必须收在 EnsureSafeProfileIdentity 内"
+Assert-True ($shellSrc -match 'ServiceIdentityDecorator\s*=\s*EnsureSafeProfileIdentity') "初始启动的身份钩子必须等于重启路径同一个 profile ensure 入口（两侧对称）"
 
 # ---- Task 0.2.5 完成态静态断言（重构收尾时启用，重构中保持"旧结构基线"锁定）----
 # 目标（Step 6 收尾）：Program.cs 不再含 `: Form` 子类、WndProc、CreateParams、WebView2 事件接线，

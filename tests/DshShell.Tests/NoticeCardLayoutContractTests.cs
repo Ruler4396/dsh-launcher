@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Threading;
 using DshWeb;
 using Xunit;
 
@@ -67,6 +68,27 @@ public class NoticeCardLayoutContractTests
     [InlineData(ShellLogic.NoticeKind.Urgent, true)]
     public void NoticePolicy_WarningCueOnlyForUrgent(ShellLogic.NoticeKind kind, bool expected)
         => Assert.Equal(expected, ShellLogic.NoticePolicy.UseWarningCue(kind));
+
+    /// <summary>
+    /// 驻留时长折算：0 = sticky（不自动收起，安全模式降级态用）。
+    /// 钳位边界必须有名——调用方传 1 秒会被抬到 3 秒，传 10 分钟会被压到 2 分钟，
+    /// 而传 Zero / InfiniteTimeSpan 必须**原样**得到 0，不能被钳成 3 秒：
+    /// 那正是"降级态提示 3 秒后自己消失、用户失去退出入口"的旧陷阱。
+    /// </summary>
+    [Theory]
+    [InlineData(0, 0)]                       // TimeSpan.Zero → sticky
+    [InlineData(-1, 0)]                      // Timeout.InfiniteTimeSpan(-1ms) → sticky
+    [InlineData(-1000, 0)]
+    [InlineData(1, 3000)]                    // 低于下限 → 抬到 3s
+    [InlineData(25, 25000)]                  // 区间内原样
+    [InlineData(120, 120000)]                // 上限
+    [InlineData(600, 120000)]                // 超上限 → 压到 120s
+    public void NoticePolicy_ResolveExpiryMs(double seconds, int expectedMs)
+        => Assert.Equal(expectedMs, ShellLogic.NoticePolicy.ResolveExpiryMs(TimeSpan.FromSeconds(seconds)));
+
+    [Fact]
+    public void NoticePolicy_InfiniteTimeSpan_IsSticky()
+        => Assert.Equal(0, ShellLogic.NoticePolicy.ResolveExpiryMs(Timeout.InfiniteTimeSpan));
 
     [Theory]
     [InlineData(0)]

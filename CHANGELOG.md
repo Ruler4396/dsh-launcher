@@ -168,6 +168,20 @@
     安全模式启动提示。其中安全模式那条**自带"点击退出安全模式并重启"动作**——
     `ExitSafeModeRequested` 原本只挂在 toast 的 `onClick` 上，而标题栏"（安全模式）"
     只是文字，若通知没有可点动作，用户就没有任何 UI 途径离开降级态。
+  - **安全模式那条通知改为不自动收起（sticky）**：降级态提示是用户**唯一**的退出入口，
+    自动消失等于把入口收走（issue #25 同一类陷阱）。`ShellLogic.NoticePolicy.ResolveExpiryMs`
+    新增 `0 = sticky` 语义（`Timeout.InfiniteTimeSpan` → 不起倒计时），悬停处理整段跳过
+    sticky（否则 `DateTime.MaxValue` 会被算成"还剩很久"，移开鼠标反而装上 120s 倒计时）；
+    用户点 × 视为"这次先不管"，下次启动仍会再告知。
+  - **粘滞安全模式启动时界面根本进不去（真机端到端实测发现，同 #28-4 家族）**：
+    `safe-mode.json` 说"在安全模式"而 `profiles/.dsh-safe` 实际不在（被清理/被删/升级残留）时，
+    壳照旧带 `--profile .dsh-safe` 拉起 → dsh 硬失败 `profile ".dsh-safe" does not exist`
+    → exit 1 → 壳 E2002 `service-exited`，用户连界面都到不了，更点不到"退出安全模式"。
+    第一次修复只把"缺目录先重建、重建失败则退回正常模式并解粘滞"补在重启路径
+    （`StartDshServiceViaIdentity`），初始启动的 `ServiceIdentityDecorator` 仍裸调 `Decorate`
+    ——同一份不对称换了个方向复发。现收口为组合根**单一入口** `Program.EnsureSafeProfileIdentity`
+    （启动钩子与重启路径同引用），并加静态门：`SafeModeLaunchPolicy.Decorate` 在 `Program.cs`
+    只允许 1 处调用点。取舍写进契约：插件被禁用但界面可用 ≫ 界面起不来且无法退出。
   - 网页通知（HTML `Notification` API）**不由壳代管**：实测 dsh 本体前端零使用
     Notification API（`new Notification`/`showNotification`/`requestPermission` 在
     `@deepseek-ai/dsh/lib` 全 0 命中），第三方插件是否使用无法穷证——不为一条不确定的

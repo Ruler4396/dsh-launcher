@@ -27,4 +27,22 @@ public static class SafeModeLaunchPolicy
             return identity;
         return identity.WithProfile(safeProfileDir);
     }
+
+    /// <summary>
+    /// 粘滞标志说"在安全模式"、但隔离 profile 实际不在（被清理、被用户删、升级残留）时，
+    /// 必须先重建再带 <c>--profile</c> 拉起。
+    ///
+    /// 【实测事故】不重建直接拉起，dsh 侧硬失败：
+    /// <c>dsh: profile ".dsh-safe" does not exist</c> → 进程 exit 1 → 壳 E2002 service-exited。
+    /// 后果比"插件没加载"严重得多：<b>用户连界面都进不去，也就永远点不到"退出安全模式"</b>
+    /// ——粘滞状态把自己锁死了。与 issue #25 同一类陷阱：提示/入口不可用即等于被困。
+    /// </summary>
+    public static bool NeedsRebuild(bool safeModeActive, bool profileExists)
+        => safeModeActive && !profileExists;
+
+    /// <summary>
+    /// 重建仍失败的兜底判定：<b>退回正常模式启动</b>（并清掉粘滞标志，让状态自洽）。
+    /// 取舍是明确的——"插件被禁用但界面能用"远好于"界面起不来且无法退出"。
+    /// </summary>
+    public static bool ShouldFallBackToNormal(bool rebuildSucceeded) => !rebuildSucceeded;
 }

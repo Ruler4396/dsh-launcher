@@ -67,6 +67,8 @@ public sealed class LauncherApp
     /// 唯一用途是把粘滞的安全模式状态**对称地**应用到启动路径。此前 "--profile .dsh-safe" 的判定
     /// 只存在于重启路径（Program.StartDshServiceViaIdentity），启动路径完全不套 —— 同一份
     /// safe-mode.json 下用户实测到"托盘退出重开插件都在，点 DSH 内置重启插件凭空消失"。
+    /// 组合根的实现（Program.EnsureSafeProfileIdentity）在装饰前可能重建隔离 profile，即**含磁盘 IO**
+    /// → 本类一律经 <see cref="DecorateIdentity"/> 在 Task.Run 内调用，不得在 UI 线程直接执行。
     /// null = 不改写（Headless 测试与外部托管路径保持原语义，逐位不变）。
     /// </summary>
     public Func<DshWeb.Domain.DshRuntimeIdentity, DshWeb.Domain.DshRuntimeIdentity>? ServiceIdentityDecorator { get; set; }
@@ -208,8 +210,10 @@ public sealed class LauncherApp
             return false;
         }
         var identity = rt.Identity!;
-        // [issue #28-4] 与重启路径同源的身份装饰（组合根注入；null 时逐位不变）
-        identity = DecorateIdentity(identity);
+        // [issue #28-4] 与重启路径同源的身份装饰（组合根注入；null 时逐位不变）。
+        // 钩子现在可能触碰文件系统（补齐缺失的隔离 profile）→ 按本方法的线程契约包后台执行，
+        // 绝不在 UI 线程（Splash 的 Shown 续体）上做同步磁盘 IO。
+        identity = await Task.Run(() => DecorateIdentity(identity), ct);
         _lifecycle.Fire(LifecycleTrigger.RuntimeResolved); // → StartingService
 
         // ---- 首装链（ADR-024）：身份为 NpxCache（本机无任何物理安装）时经更新引擎
@@ -230,7 +234,9 @@ public sealed class LauncherApp
                 _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
                 return false;
             }
-            identity = DecorateIdentity(DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime()); // 发现链立见新装 shim/版本
+            // 发现链立见新装 shim/版本；同样包后台（发现 + 装饰都可能碰磁盘）
+            identity = await Task.Run(() => DecorateIdentity(
+                DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime()), ct);
         }
 
         // ---- StartingService：端口三重验证（任务一：TCP + 进程身份 + 快速 HTTP）。
