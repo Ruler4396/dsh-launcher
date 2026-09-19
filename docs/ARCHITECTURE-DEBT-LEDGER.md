@@ -152,9 +152,12 @@
 
 - 实测证据（2026-09-19 本机一次性诊断）：给一个已退出的 pid 走 attach → `factoryThrew=True`、
   `verdictArrived=False`；给一个存活 pid → `E2007 / pid exit code=7` 正常出裁决。
-- 它咬到人的方式：`BootHealthMonitorRealOsTests.RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode`
-  原先让子进程只活 300ms，等于拿断言赌一次线程池调度——本机稳过，GitHub runner 满载下红一次
-  （同一 commit 重跑即绿）。已把窗口改成 5 秒，**断言强度未变**。
+- 它为什么值得记：`BootHealthMonitorRealOsTests` 里那条真实退出码用例原先只让子进程活 300ms，
+  等于拿断言赌一次线程池调度。已改成"标志文件握手"（attach 确认落地后才放行退出），并把三个环节
+  拆成三条独立断言，红灯名字直接指明断在哪一环。
+- **诚实边界（2026-09-19）**：这条机制虽然本机可复现，但**不能拿来解释 CI 的那两次红**——把子进程
+  寿命放宽到 5 秒后同一用例又红一次，而 `realos-test.yml` 的 `-v q` 吞掉了 Error Message，
+  当前 token 没有 `workflow` scope 无法修日志 verbosity，原因仍未确证。本机侧 220 次执行全绿。
 - 未做的更硬改法（记录理由）：让 `AttachProcess` 在 pid 已消失时直接判 E2007 ——会重新引入
   2026-08 那批误报（壳自己停服的窗口里 pid 必然"已消失"）；把调用方手里的 `Process` 对象传进来
   （生产侧 `ServiceManager` 确实持有）是正解，但那要给 `IBootProcessHandle` 加一条"由持有者提供
