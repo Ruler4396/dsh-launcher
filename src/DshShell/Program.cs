@@ -418,12 +418,14 @@ internal static class Program
             Text = "DeepSeek Harness" + testSuffix,
             ClientSize = new Size(1280, 840),
             StartPosition = FormStartPosition.CenterScreen,
-            MinimumSize = new Size(800, 600),
             // [INVARIANT] Frameless + custom titlebar: DWM titlebar does not auto-refresh on theme switch.
             FormBorderStyle = FormBorderStyle.None,
             Icon = TrayWhaleIcon ?? SystemIcons.Application
         };
         var mainHwnd = form.Handle;
+        // 最小尺寸随 DPI 折算（纯函数）：本窗体无边框 + 手工布局，WinForms 不会替我们缩放
+        // MinimumSize——写死 800×600 在 200% 屏上等于允许把窗口缩到设计值的一半。
+        form.MinimumSize = DshWeb.Win32.WindowGeometry.MinimumWindowSize(form.DeviceDpi);
         using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
             () => F11LowLevelHook.GetForegroundWindow() == mainHwnd);
         var titleHeight = (int)Math.Round(32 * form.DeviceDpi / 96f);
@@ -455,10 +457,13 @@ internal static class Program
             var scale = form.DeviceDpi / 96f;
             form.TitleBar.Rescale(scale);
             form.LayoutChrome();
+            // 跨到不同倍率的屏（或系统倍率被改）后，最小尺寸必须跟着重算，
+            // 否则窗口会被旧的物理下限卡住（200%→100% 时留下过大的下限）或反过来失守。
+            form.MinimumSize = DshWeb.Win32.WindowGeometry.MinimumWindowSize(form.DeviceDpi);
         };
 
         // 托盘图标：由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
-        // 壳只读取配置，不硬编码托盘逻辑；更新通知走系统 Toast，不依赖托盘。
+        // 壳只读取配置，不硬编码托盘逻辑；通知走壳自绘卡片，不依赖托盘（issue #25 收口）。
         // [Regression_TrayResidentSwitchAtRuntime] 委托装配与"启动时的模式"解耦：
         // 此前四个委托只在启动时 mode==Tray 的分支内装配——运行中在设置页切到"托盘驻留"
         // 后，壳里永远没有托盘（FormClosing 因 TrayIcon==null 不拦截 → 直接整壳退出），
@@ -944,6 +949,15 @@ internal static class Program
             form.Controls.Add(web);
             form.MainWebView2 = web;
             WebViewManager.MainWeb = web; // readyState 测试钩子按 ReferenceEquals(web, MainWeb) 门控，必须先设
+            // 探针必须量到**生产同一条**布局规则：上面两处内联的 32*dpi/96 与 LayoutChrome 是
+            // 同一份知识的两份抄写——geo 探针断言"0px 间隙"时，如果探针自己算、生产另算，
+            // 探针绿了生产照样能错（#28 那轮"一处修一处漏"的同族）。
+            form.LayoutChrome();
+            form.DpiChanged += (_, _) =>
+            {
+                form.TitleBar.Rescale(form.DeviceDpi / 96f);
+                form.LayoutChrome();
+            };
 
             // F11 钩子（与真实路径一致）：仅主窗前台时切换并吞键。
             // 跨线程修复（Step2b）：缓存 hwnd 再进 lambda，避免销毁期 ObjectDisposedException。
@@ -3577,15 +3591,16 @@ internal static class Program
         };
         form.Controls.Add(form.TitleBar);
         form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
-        popupWeb.Bounds = new Rectangle(1, 1 + titleHeight, form.ClientSize.Width - 2, form.ClientSize.Height - titleHeight - 2);
+        // 弹窗与主窗共用同一条 chrome 布局规则（DshShellForm.LayoutChrome →
+        // WindowGeometry.LayoutChromeRects）。此前这里内联重抄了一遍 32*scale，
+        // 同一条规则两份实现 = 迟早一份改一份漏（#28 那轮"一处修一处漏"的同族）。
+        form.MainWebView2 = popupWeb;
         popupWeb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        form.LayoutChrome();
         form.DpiChanged += (_, _) =>
         {
-            var scale = form.DeviceDpi / 96f;
-            var h = (int)Math.Round(32 * scale);
-            form.TitleBar.Rescale(scale);
-            form.TitleBar.Bounds = new Rectangle(1, 1, form.ClientSize.Width - 2, h);
-            popupWeb.Bounds = new Rectangle(1, 1 + h, form.ClientSize.Width - 2, form.ClientSize.Height - h - 2);
+            form.TitleBar.Rescale(form.DeviceDpi / 96f);
+            form.LayoutChrome();
         };
         form.Controls.Add(popupWeb);
         form.FormClosing += (_, _) =>

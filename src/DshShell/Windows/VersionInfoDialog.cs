@@ -17,6 +17,12 @@ namespace DshWeb.Windows;
 ///   · dsh-launcher：当前版本（程序集信息，开发构建回退 git tag）+ 最新版本（GitHub Releases）+ 状态；
 ///   · 启动器下载地址（LinkLabel，点击用系统默认浏览器打开）。
 /// 最新版本在 OnShown 异步拉取，失败降级为"获取失败"（网络/限流不打扰）；本窗体绝不抛出。
+///
+/// 【DPI 纪律（本轮收口）】全窗几何来自纯函数 <c>ShellLogic.VersionDialogLayout.Compute(dpi)</c>，
+/// 渲染侧零算术；字号用 <c>GraphicsUnit.Pixel</c>（物理像素由纯函数算好）——本窗曾是全仓唯一
+/// "硬编码 96dpi 像素列位 + Point 字体 + 无 OnDpiChanged"的窗口，缩放屏上文字变宽而列位不动
+/// 就会叠列。跨显示器/改倍率经 <see cref="OnDpiChanged"/> 整体重排（列不互叠、URL 不与按钮
+/// 相交、内容不出客户端由 VersionDialogLayoutContractTests 钉死）。
 /// </summary>
 internal sealed class VersionInfoDialog : Form
 {
@@ -34,18 +40,19 @@ internal sealed class VersionInfoDialog : Form
     private readonly string? _launcherCurrent;
     private readonly bool _dark;
 
+    private readonly CustomTitleBar _titleBar;
+    private readonly Label _dshNameLabel = new();
+    private readonly Label _dshCurrentLabel = new();
     private readonly Label _dshLatestLabel = new();
-    private readonly Label _launcherLatestLabel = new();
     private readonly Label _dshStatusLabel = new();
+    private readonly Label _launcherNameLabel = new();
+    private readonly Label _launcherCurrentLabel = new();
+    private readonly Label _launcherLatestLabel = new();
     private readonly Label _launcherStatusLabel = new();
-
-    /// <summary>版本信息列 X 坐标（2026-09 反馈：列距太挤 → 窗口加宽到 520，列间留 8-12px）。
-    /// 名称/当前/最新/状态。</summary>
-    private const int ColNameX = 16;
-    private const int ColCurrentX = 132;
-    private const int ColLatestX = 258;
-    private const int ColStatusX = 400;
-    private const int RowW = 488;   // 520 - 左右 16px 边距
+    private readonly Panel _separator = new();
+    private readonly Label _downloadTitleLabel = new();
+    private readonly LinkLabel _downloadLink = new();
+    private readonly Button _openButton = new();
 
     public VersionInfoDialog(string? dshCurrent, string? launcherCurrent, bool dark)
     {
@@ -53,135 +60,135 @@ internal sealed class VersionInfoDialog : Form
         _launcherCurrent = launcherCurrent;
         _dark = dark;
 
-        // ---- 窗口骨架：dsh 风格（无边框 + 自绘标题栏，跟随壳主题） ----
-        var bg = _dark ? DarkBg : LightBg;
-        var textColor = _dark ? DarkText : LightText;
         // [2026-09 崩溃根治 issue #28-2] 本窗体是 0xc0000005（ImmSetOpenStatus）崩溃的现场：
         // 窗口激活时 WinForms 把焦点给到首个可聚焦控件（LinkLabel → Label.DefaultImeMode=Disable），
         // UpdateImeContextMode 随即调用 ImeContext.Disable → ImmSetOpenStatus → 第三方 IME 上访问违规，
         // 进程瞬间消失（用户可见"点版本号卡死→闪退"）。护栏把本窗体及全部子控件的 IME 上下文解绑，
         // 使 WinForms 侧 ImeContext.GetImeMode 恒为 Disable、IsOpen 恒 false → 该调用永不发生。
         DshWeb.Win32.ImeContextGuard.Harden(this);
+
+        var bg = _dark ? DarkBg : LightBg;
         Text = "版本信息";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
         BackColor = bg;
-        ClientSize = new Size(520, 188);
+        // 手工布局 + OnDpiChanged 整体重排：禁掉 WinForms 自动缩放，否则它乘一次、
+        // 纯函数再乘一次（issue #28-3 的 s² 根因就是这个）。
+        AutoScaleMode = AutoScaleMode.None;
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
-        Font = new Font("Microsoft YaHei UI", 9F);
 
-        var titleH = (int)Math.Round(32 * DeviceDpi / 96f);
-        var titleBar = new CustomTitleBar(this, dark, closeOnly: true)
+        _titleBar = new CustomTitleBar(this, dark, closeOnly: true)
         {
-            Bounds = new Rectangle(1, 1, ClientSize.Width - 2, titleH),
             Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
         };
-        Controls.Add(titleBar);
+        Controls.Add(_titleBar);
 
-        // ---- 两行版本（紧凑：每产品一行，无表头） ----
-        //   dsh 组件    当前 v0.1.2-rc.1  最新 v0.1.1-rc.2  已是最新
-        //   dsh-launcher 当前 v0.4.3       最新 v0.4.3       已是最新
-        var row1Y = titleH + 10;
-        AddVersionRow(row1Y, "dsh 组件", dshCurrent, _dshLatestLabel, _dshStatusLabel);
-        var row2Y = row1Y + 20;
-        AddVersionRow(row2Y, "dsh-launcher", launcherCurrent, _launcherLatestLabel, _launcherStatusLabel);
-
-        // ---- 细分隔线（与标题栏底部分隔线同色系，dsh 界面语言） ----
-        var separator = new Panel
+        // 两行版本（紧凑：每产品一行，无表头）
+        SetupCell(_dshNameLabel); SetupCell(_dshCurrentLabel);
+        SetupCell(_dshLatestLabel); SetupCell(_dshStatusLabel);
+        SetupCell(_launcherNameLabel); SetupCell(_launcherCurrentLabel);
+        SetupCell(_launcherLatestLabel); SetupCell(_launcherStatusLabel);
+        _dshNameLabel.Text = "dsh 组件";
+        _launcherNameLabel.Text = "dsh-launcher";
+        _dshCurrentLabel.Text = "当前 " + ShellLogic.VersionInfoPolicy.FormatCurrent(_dshCurrent);
+        _launcherCurrentLabel.Text = "当前 " + ShellLogic.VersionInfoPolicy.FormatCurrent(_launcherCurrent);
+        _dshLatestLabel.Text = "最新 检查中…";
+        _launcherLatestLabel.Text = "最新 检查中…";
+        _dshStatusLabel.Text = "检查中…";
+        _launcherStatusLabel.Text = "检查中…";
+        foreach (var c in new Control[]
         {
-            BackColor = _dark ? DarkBorder : LightBorder,
-            Bounds = new Rectangle(16, row2Y + 26, RowW, 1),
-        };
-        Controls.Add(separator);
+            _dshNameLabel, _dshCurrentLabel, _dshLatestLabel, _dshStatusLabel,
+            _launcherNameLabel, _launcherCurrentLabel, _launcherLatestLabel, _launcherStatusLabel,
+        }) Controls.Add(c);
 
-        // ---- 启动器下载地址（LinkLabel：显示 + 点击打开；链接色 = DeepSeek 蓝） ----
+        _separator.BackColor = _dark ? DarkBorder : LightBorder;
+        Controls.Add(_separator);
+
+        _downloadTitleLabel.Text = "启动器下载地址";
+        Controls.Add(_downloadTitleLabel);
+
         var linkColor = _dark ? AccentBlueDark : AccentBlue;
-        var downloadTitle = new Label
-        {
-            Text = "启动器下载地址",
-            ForeColor = textColor,
-            BackColor = bg,
-            AutoSize = true,
-            Location = new Point(16, separator.Top + 10),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        Controls.Add(downloadTitle);
+        _downloadLink.Text = UpdateChecker.LauncherLatestReleaseUrl;
+        _downloadLink.LinkColor = linkColor;
+        _downloadLink.ActiveLinkColor = linkColor;
+        _downloadLink.AutoSize = false;
+        _downloadLink.AutoEllipsis = true;
+        _downloadLink.TextAlign = ContentAlignment.MiddleLeft;
+        _downloadLink.LinkClicked += (_, _) => WebRuntimeInstaller.OpenExternally(UpdateChecker.LauncherLatestReleaseUrl);
+        Controls.Add(_downloadLink);
 
-        var downloadLink = new LinkLabel
-        {
-            Text = UpdateChecker.LauncherLatestReleaseUrl,
-            LinkColor = linkColor,
-            ActiveLinkColor = linkColor,
-            ForeColor = textColor,
-            BackColor = bg,
-            Location = new Point(16, downloadTitle.Bottom + 2),
-            Size = new Size(RowW, 20),
-            AutoSize = false,
-            AutoEllipsis = true,
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        downloadLink.LinkClicked += (_, _) => WebRuntimeInstaller.OpenExternally(UpdateChecker.LauncherLatestReleaseUrl);
-        Controls.Add(downloadLink);
+        // 唯一动作按钮：打开下载页（DeepSeek 蓝主按钮，关闭走标题栏 X / ESC）
+        _openButton.Text = "打开下载页";
+        _openButton.FlatStyle = FlatStyle.Flat;
+        _openButton.BackColor = linkColor;
+        _openButton.ForeColor = Color.White;
+        _openButton.FlatAppearance.BorderSize = 0;
+        _openButton.Click += (_, _) => WebRuntimeInstaller.OpenExternally(UpdateChecker.LauncherLatestReleaseUrl);
+        Controls.Add(_openButton);
 
-        // ---- 唯一动作按钮：打开下载页（DeepSeek 蓝主按钮，关闭走标题栏 X / ESC） ----
-        // 2026-09 反馈：按钮贴近右/下边框 → 右侧留 20px、底部留 14px，与 URL 行保持间隙
-        var openButton = new Button
-        {
-            Text = "打开下载页",
-            FlatStyle = FlatStyle.Flat,
-            BackColor = linkColor,
-            ForeColor = Color.White,
-            Location = new Point(ClientSize.Width - 100, ClientSize.Height - 40),
-            Size = new Size(80, 26),
-        };
-        openButton.FlatAppearance.BorderSize = 0;
-        openButton.Click += (_, _) => WebRuntimeInstaller.OpenExternally(UpdateChecker.LauncherLatestReleaseUrl);
-        Controls.Add(openButton);
+        ApplyLayout(DeviceDpi);
     }
 
-    /// <summary>一行版本信息：产品名 | 当前 vX | 最新 vX（检查中…）| 状态（检查中…）。</summary>
-    private void AddVersionRow(int y, string product, string? current,
-        Label latestLabel, Label statusLabel)
+    /// <summary>版本表单元格：固定盒 + 左对齐 + 溢出省略（叠列的根源就是"文字变宽而列不动"）。</summary>
+    private void SetupCell(Label label)
     {
         var bg = _dark ? DarkBg : LightBg;
-        var textColor = _dark ? DarkText : LightText;
-        var nameLabel = TextCell(product, ColNameX, y);
-        var currentLabel = TextCell("当前 " + ShellLogic.VersionInfoPolicy.FormatCurrent(current), ColCurrentX, y);
-        nameLabel.Width = 110;
-        currentLabel.Width = 118; // 132..250，与最新列留 8px
-        latestLabel.Text = "最新 检查中…";
-        statusLabel.Text = "检查中…";
-        latestLabel.AutoSize = false;
-        statusLabel.AutoSize = false;
-        latestLabel.TextAlign = ContentAlignment.MiddleLeft;
-        statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-        latestLabel.Location = new Point(ColLatestX, y);
-        latestLabel.Size = new Size(130, 18); // 258..388，与状态列留 12px
-        statusLabel.Location = new Point(ColStatusX, y);
-        statusLabel.Size = new Size(RowW - (ColStatusX - ColNameX), 18); // 400..504（右缘留 16px）
-        latestLabel.ForeColor = textColor;
-        statusLabel.ForeColor = textColor;
-        latestLabel.BackColor = bg;
-        statusLabel.BackColor = bg;
-        latestLabel.AutoEllipsis = true;
-        statusLabel.AutoEllipsis = true;
-        Controls.Add(nameLabel);
-        Controls.Add(currentLabel);
-        Controls.Add(latestLabel);
-        Controls.Add(statusLabel);
+        label.AutoSize = false;
+        label.ForeColor = _dark ? DarkText : LightText;
+        label.BackColor = bg;
+        label.TextAlign = ContentAlignment.MiddleLeft;
+        label.AutoEllipsis = true;
     }
 
-    /// <summary>单元格文本（主题色文字/背景；AutoSize 由调用方按列宽约束）。</summary>
-    private Label TextCell(string text, int x, int y) => new()
+    /// <summary>
+    /// 一次性把纯函数几何落到每个控件上（构造与 DPI 变化共用同一段代码——
+    /// 分叉过一次就修一处漏一处，这里刻意不给它两份输入）。
+    /// </summary>
+    private void ApplyLayout(int deviceDpi)
     {
-        Text = text,
-        AutoSize = true,
-        Location = new Point(x, y),
-        ForeColor = _dark ? DarkText : LightText,
-        BackColor = _dark ? DarkBg : LightBg,
-        TextAlign = ContentAlignment.MiddleLeft,
-    };
+        var g = ShellLogic.VersionDialogLayout.Compute(deviceDpi);
+        ClientSize = new Size(g.ClientWidth, g.ClientHeight);
+        // 像素单位字号：物理像素已由纯函数算好，DC 不再折算（唯一一次乘法在 Compute 里）。
+        // 【绝不 Dispose 旧 Font】WinForms 子控件缓存"继承来的"那个 Font 引用（Label 自己不
+        // 拥有字体）；换掉后立刻释放旧的，下一次任何控件量高度就会 GDI+ "Parameter is not valid"
+        // ——实测直接把测试宿主进程打崩（连 ThreadExceptionDialog 都建不起来）。DPI 变化是
+        // 低频事件，一次一个 GDI 字体对象的滞留可以接受，错着省不得。
+        Font = new Font("Microsoft YaHei UI", g.EmPx, FontStyle.Regular, GraphicsUnit.Pixel);
+
+        _titleBar.Bounds = new Rectangle(1, 1, g.ClientWidth - 2, g.TitleHeight);
+        _titleBar.Rescale(deviceDpi / 96f);
+
+        PlaceRow(g, _dshNameLabel, _dshCurrentLabel, _dshLatestLabel, _dshStatusLabel, g.Row1Y);
+        PlaceRow(g, _launcherNameLabel, _launcherCurrentLabel, _launcherLatestLabel,
+            _launcherStatusLabel, g.Row2Y);
+
+        _separator.Bounds = new Rectangle(g.Padding, g.SeparatorY, g.RowWidth, 1);
+        _downloadTitleLabel.Bounds = new Rectangle(g.ColNameX, g.LinkTitleY, g.RowWidth, g.RowHeight);
+        _downloadLink.Bounds = new Rectangle(g.ColNameX, g.LinkY, g.LinkWidth, g.LinkHeight);
+        _openButton.Bounds = new Rectangle(g.ButtonX, g.ButtonY, g.ButtonWidth, g.ButtonHeight);
+        Invalidate();
+    }
+
+    private void PlaceRow(ShellLogic.VersionDialogLayout.Geometry g,
+        Label name, Label current, Label latest, Label status, int y)
+    {
+        name.Bounds = new Rectangle(g.ColNameX, y, g.NameW, g.RowHeight);
+        current.Bounds = new Rectangle(g.ColCurrentX, y, g.CurrentW, g.RowHeight);
+        latest.Bounds = new Rectangle(g.ColLatestX, y, g.LatestW, g.RowHeight);
+        // 状态列吃到右边界（纯函数已保证 ColStatusX + 该宽 = ClientWidth - Padding）
+        status.Bounds = new Rectangle(g.ColStatusX, y,
+            Math.Max(1, g.RowWidth - (g.ColStatusX - g.ColNameX)), g.RowHeight);
+    }
+
+    /// <summary>跨显示器 / 改倍率：整窗按新 DPI 重排（WinForms 不会替手工布局做这件事）。</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        if (e.DeviceDpiOld == e.DeviceDpiNew) return;
+        ApplyLayout(e.DeviceDpiNew);
+    }
 
     protected override void OnShown(EventArgs e)
     {

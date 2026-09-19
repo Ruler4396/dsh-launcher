@@ -120,4 +120,30 @@ public static class WindowGeometry
             Math.Max(0, client.Height - inset - titleH - inset));
         return (title, web);
     }
+
+    /// <summary>
+    /// 手工布局窗口的**最小尺寸**（设计 800×600 @96dpi → 物理像素）。
+    /// 为什么必须随 DPI 折算：这些窗体是 FormBorderStyle.None + 手工布局，WinForms 不会替我们
+    /// 缩放 <c>MinimumSize</c>——写死 800×600 在 200% 屏上等于允许把窗口缩到设计值的一半，
+    /// 标题栏按钮与页面主区直接挤没。dpi ≤ 0 按 96 处理，缩放夹 [0.5, 8]（与其余版式函数同纪律）。
+    /// </summary>
+    public static Size MinimumWindowSize(int dpi)
+    {
+        var s = Math.Clamp((dpi <= 0 ? 96 : dpi) / 96f, 0.5f, 8f);
+        return new Size((int)Math.Round(800 * s), (int)Math.Round(600 * s));
+    }
+
+    /// <summary>自绘标题栏正文字号（设计 9pt @96dpi = 12px）折算成**物理像素**。
+    /// 渲染侧必须用 <c>GraphicsUnit.Pixel</c> 消费：Point 单位会被绘制 DC 的 DPI 再折算一次，
+    /// 与这里已经乘过的系数叠成 s²（issue #28-3 的根因）。</summary>
+    public static int TitleEmPx(int dpi) => EmPx(9.0, dpi);
+
+    /// <summary>设计字号（point）→ 该 DPI 下的物理像素字号；全仓唯一一处 point→px 折算入口。
+    /// 各处自绘窗口此前各自写 <c>new Font(family, 8F)</c> 并把几何按 <c>_scale</c> 乘，
+    /// 于是"字号被 DC 折算第二次"与"字号没跟着 DPI 长"两种错法都可能发生。</summary>
+    public static int EmPx(double designPoint, int dpi)
+    {
+        var s = Math.Clamp((dpi <= 0 ? 96 : dpi) / 96f, 0.5f, 8f);
+        return Math.Max(1, (int)Math.Round(designPoint * 96.0 / 72.0 * s));
+    }
 }

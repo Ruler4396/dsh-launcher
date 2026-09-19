@@ -135,6 +135,42 @@
   算错让开任务栏的高度（100% 下两者相等，所以看不出）。现改经
   `Win32DisplayMetricsProvider.GetMonitorMetrics(owner.Handle)` 一次取齐"该监视器的物理工作区 +
   该窗口 DPI"，尺寸与定位**同源**；取不到时回退逻辑工作区 + `DeviceDpi` 并 Warn。
+- **统一自绘窗口的 DPI 几何来源（高分屏 / 倍率变动排查收口）**：上面那起 DPI 取错把注意力引到
+  "还有哪些地方不同源"，逐窗口排查后按同一纪律收口（几何只来自纯函数、坐标一律物理像素）：
+  - **版本信息窗**（`Windows/VersionInfoDialog.cs`）：全仓最后一个"手工绝对定位 + 硬编码 96dpi
+    像素列位 + Point 字体 + 无 `OnDpiChanged`"的窗口——缩放屏上文字按 s 变宽而列位不动就叠列。
+    新增纯函数 `ShellLogic.VersionDialogLayout.Compute(dpi)`（列位/行距/分隔线/按钮/字号），
+    窗体改为"一次 `ApplyLayout(dpi)` 落全部控件 + `OnDpiChanged` 重排"，字号 `GraphicsUnit.Pixel`。
+    顺带修掉一个既有缺陷：URL 行原本吃整行宽 488，与右下按钮的盒子**本来就重叠**（过去的 URL
+    短才没露馅），现在宽度截到按钮左缘之前。契约 `VersionDialogLayoutContractTests`（列不互叠、
+    状态列右缘=客户端宽-内边距、URL 与按钮不相交、内容不出客户端、字号只折算一次、标题栏高度
+    与 `WindowGeometry.LayoutChromeRects` 同规则）；E2E `VersionDialog_OpenAndClose` 增加真实
+    GUI 断言：窗口矩形必须等于纯函数按该窗口 DPI 算出的客户端尺寸（禁肉眼）。
+  - **托盘菜单落点**：新增纯函数 `TrayMenuLayout.PlaceAtCursor`（贴边偏移 12/6 随 DPI 折算一次、
+    越界翻转、任何光标位置都完整落在工作区内），`WindowManager.ShowTrayMenu` 改用它 +
+    新增的 `Win32/MonitorWorkArea.ForPoint`（物理 rcWork）。旧实现拿逻辑 `Screen.WorkingArea`
+    钳物理坐标，150% 屏上菜单会离托盘图标越来越远。
+  - **屏幕拓扑提供器**：`WinFormsScreenProvider` 的契约写着"物理像素"、实现却是
+    `Screen.WorkingArea`（逻辑）——本仓库三处注释（NativeMethods / WindowGeometry /
+    DisplayMetricsProvider）早就把这一点定为"最大化丢窗"的根因，只有这里漏了。改为集合取自
+    Screen、数值一律 `GetMonitorInfo().rcWork`，并把 `RestoreWindowPosition` 那句自相矛盾的
+    注释改对。
+  - **弹窗 chrome 布局**：`CreatePopupForm` 的 `DpiChanged` 内联重抄了一遍 `32*scale` 与
+    标题栏/WebView 边界，改为复用 `DshShellForm.LayoutChrome()`（同一条规则两份实现就是
+    "一份改一份漏"）；`--ui-probe` 探针同步。
+  - **主窗 `MinimumSize`**：写死 800×600 在 200% 屏上等于允许缩到设计值的一半，改为
+    `WindowGeometry.MinimumWindowSize(dpi)` 并在 `DpiChanged` 重算。
+  - **自绘标题栏字号**：`static readonly Font(..., 9F)` 全进程共享一份 Point 字体，`Rescale`
+    改不动它（混屏下两块标题栏只能同一档字号），且 Point 会被绘制 DC 再折算一次。改为实例级
+    像素字体（`WindowGeometry.EmPx(designPt, dpi)` 成为全仓唯一一处 point→px 入口），
+    `Rescale` 换字体、`Dispose` 释放；测量一律带 `Graphics`（无 g 的重载按任意 DC 采样 DPI，
+    与绘制不同档 → 徽标落点/命中框错位）；构建进度分支的 `new Font` 泄漏同轮修掉。
+  - 静态门同步：版本窗必须用纯函数 + 必须有 `OnDpiChanged`；托盘菜单必须用 rcWork +
+    `PlaceAtCursor`；`CustomTitleBar` 不得再出现 Point 单位字号；卡片必须与 `Win32DisplayMetricsProvider`
+    同源。
+  - 实测踩到并修掉的实现陷阱：换 `Form.Font` 后立刻 `Dispose()` 旧字体 → 子控件缓存的仍是那个
+    引用，下一次量高度就 GDI+ `Parameter is not valid`，直接把测试宿主进程打崩（连
+    `ThreadExceptionDialog` 都建不起来）。DPI 变化低频，一次一个 GDI 字体对象的滞留换正确性。
 - **通知通道整体收口：删除 WPN/系统 Toast 通路，统一为自绘通知卡片（issue #25）**
   宿主 DshWeb.exe 在 `wpnapps.dll` 内原生崩溃（`0xc0000005`），托管层无法拦截，进入
   "守护拉起 → 再崩"自愈循环并连带整个 dsh 运行时/QQ Bot 插件下线。同一签名在两代 Windows

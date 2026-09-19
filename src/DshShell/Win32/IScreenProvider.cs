@@ -20,12 +20,35 @@ public interface IScreenProvider
     Rectangle PrimaryWorkingArea { get; }
 }
 
-/// <summary>生产默认实现：包装 WinForms Screen（进程启动时由系统缓存；本地/CI 单屏即单元素列表）。</summary>
+/// <summary>生产默认实现：屏幕**集合**取自 WinForms Screen（唯一能拿到"有几块屏、各自边界"的
+/// 公开入口），但每块屏的工作区**数值**一律经 Win32 <c>GetMonitorInfo().rcWork</c> 重取。
+///
+/// 为什么不能直接 <c>s.WorkingArea</c>：本接口契约是物理像素，而 PerMonitorV2 下 WinForms 的
+/// <c>Screen.WorkingArea</c> 返回逻辑像素（96 DPI 基准——与 NativeMethods/WindowGeometry 里
+/// G1/G10 那两处注释同一结论）。旧实现直接把逻辑值当物理值返回，缩放屏上窗口位置恢复的
+/// 越界判定因此算小一块屏。用"该屏自身左上角"反查 MonitorFromPoint(TONEAREST) 一定落回同一块屏。
+/// rcWork 取不到时回退 WinForms 值并 Warn（宁可位置略偏，不可丢窗）。</summary>
 public sealed class WinFormsScreenProvider : IScreenProvider
 {
     public IReadOnlyList<Rectangle> GetAllWorkingAreas()
-        => System.Windows.Forms.Screen.AllScreens.Select(s => s.WorkingArea).ToList();
+    {
+        var list = new List<Rectangle>();
+        foreach (System.Windows.Forms.Screen s in System.Windows.Forms.Screen.AllScreens)
+        {
+            var physical = MonitorWorkArea.ForPoint(new Point(s.Bounds.Left, s.Bounds.Top));
+            list.Add(physical.IsEmpty ? s.WorkingArea : physical);
+        }
+        return list;
+    }
 
     public Rectangle PrimaryWorkingArea
-        => System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea ?? Rectangle.Empty;
+    {
+        get
+        {
+            var primary = System.Windows.Forms.Screen.PrimaryScreen;
+            if (primary is null) return Rectangle.Empty;
+            var physical = MonitorWorkArea.ForPoint(new Point(primary.Bounds.Left, primary.Bounds.Top));
+            return physical.IsEmpty ? primary.WorkingArea : physical;
+        }
+    }
 }

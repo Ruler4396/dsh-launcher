@@ -106,7 +106,10 @@ public static class ShellLogic
     /// - 目标矩形与任一屏幕工作区有 ≥120×60 可见交集 → 采用并在该工作区内整格钳制
     ///   （任务栏移动/工作区缩小后窗口仍完全可见）；
     /// - 完全越界（副屏拔掉等）→ 回退主屏工作区居中并钳制。
-    /// workingAreas 的坐标系与 x/y 均为同一物理像素坐标（WinForms Screen.WorkingArea）。
+    /// workingAreas 与 x/y 一律**物理像素**：调用方经 <c>IScreenProvider</c> 取拓扑，生产实现
+    /// 用 Win32 <c>GetMonitorInfo().rcWork</c>（<c>WinFormsScreenProvider</c> 只从 Screen 拿"有几块屏"，
+    /// 数值不走 <c>Screen.WorkingArea</c>——后者在 PerMonitorV2 下是 96 DPI 基准的逻辑像素，
+    /// 与 <c>Form.Location</c>/MINMAXINFO 要求的物理像素混用就是"最大化丢窗/还原到屏外"的根因）。
     /// </summary>
     internal static (int X, int Y) RestoreWindowPosition(
         int x, int y, int width, int height,
@@ -2848,6 +2851,132 @@ public static class ShellLogic
                 FirstCharX: firstX,
                 SecondCharX: firstX + firstCharWidth + letterSpacing,
                 ContentWidth: contentWidth);
+        }
+
+        // ---- 菜单在光标处的落点（物理像素）------------------------------------
+        // 设计基准偏移（96dpi 逻辑像素）：菜单默认贴在光标左下（右缘内缩 12、底缘上抬 6），
+        // 放不下时翻到光标右下。旧实现把这些偏移**硬编码在 WindowManager 里且不随 DPI 折算**，
+        // 又把**逻辑**工作区当**物理**坐标钳位——缩放屏上菜单会离图标越来越远。
+        public const int DesignAnchorRightInset = 12;
+        public const int DesignAnchorBottomLift = 6;
+        public const int DesignFlipRightOffset = 12;
+        public const int DesignFlipDownOffset = 6;
+
+        /// <summary>
+        /// 托盘菜单落点（纯函数，全部**物理像素**）：光标 + 所在监视器的物理工作区 + 菜单尺寸
+        /// → 左上角坐标。不变量：菜单只要放得下就**完整落在工作区内**（任务栏/相邻屏不越界）；
+        /// 左侧/上侧放不下才翻到光标右下；比工作区还大时钳到工作区原点（宁可被裁也不跑出屏幕）。
+        /// </summary>
+        public static Point PlaceAtCursor(
+            int cursorX, int cursorY, Rectangle workArea, int menuWidth, int menuHeight, int deviceDpi)
+        {
+            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
+            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            int px(int design) => (int)Math.Round(design * s);
+            var x = cursorX - menuWidth + px(DesignAnchorRightInset);
+            var y = cursorY - menuHeight - px(DesignAnchorBottomLift);
+            if (x < workArea.Left) x = cursorX + px(DesignFlipRightOffset);
+            if (y < workArea.Top) y = cursorY + px(DesignFlipDownOffset);
+            if (x + menuWidth > workArea.Right) x = workArea.Right - menuWidth;
+            if (y + menuHeight > workArea.Bottom) y = workArea.Bottom - menuHeight;
+            return new Point(
+                Math.Max(workArea.Left, x),
+                Math.Max(workArea.Top, y));
+        }
+    }
+
+    /// <summary>
+    /// 版本信息窗版式（纯函数，deviceDpi → 物理像素）。
+    ///
+    /// 【为什么存在】<c>VersionInfoDialog</c> 是全仓唯一"手工绝对定位 + 硬编码 96dpi 像素 +
+    /// Point 单位字体 + 完全没有 OnDpiChanged"的窗口：列位常量（132/258/400）与
+    /// <c>ClientSize 520x188</c> 在 150%/200% 屏上不会跟着长，而 Point 字体会——文字变宽而
+    /// 列不动，就叠到下一列上。这里把整套折算收进与其它三个窗口同一纪律的纯函数，
+    /// 渲染侧零算术，并可脱离真实显示器在 {96,120,144,168,192,240} 上跑契约测试。
+    /// </summary>
+    public static class VersionDialogLayout
+    {
+        // 设计基准（96dpi 逻辑像素；数值沿用 2026-09 人工调好的比例，只是从此随 DPI 折算）
+        public const int DesignClientWidth = 520;
+        public const int DesignClientHeight = 188;
+        public const int DesignTitleBarHeight = 32;   // 与 WindowGeometry.LayoutChromeRects 同一条规则
+        public const int DesignPadding = 16;
+        public const int DesignColNameX = 16;
+        public const int DesignColCurrentX = 132;
+        public const int DesignColLatestX = 258;
+        public const int DesignColStatusX = 400;
+        public const int DesignNameW = 110;
+        public const int DesignCurrentW = 118;
+        public const int DesignLatestW = 130;
+        public const int DesignRowHeight = 18;
+        public const int DesignRowGap = 10;           // 标题栏下方到第一行
+        public const int DesignRowPitch = 20;         // 行距
+        public const int DesignSeparatorGap = 26;     // 第二行下方到分隔线
+        public const int DesignLinkTitleGap = 10;
+        public const int DesignLinkGap = 2;
+        public const int DesignButtonW = 80;
+        public const int DesignButtonH = 26;
+        public const int DesignButtonRightGap = 20;
+        public const int DesignButtonBottomGap = 14;
+        /// <summary>9pt @96dpi 的像素等价值（1pt = 96/72 px）；折算只在这里发生一次。</summary>
+        public const double DesignEmPt = 9.0;
+
+        public readonly record struct Geometry(
+            int ClientWidth, int ClientHeight, int TitleHeight, int EmPx, int Padding,
+            int ColNameX, int ColCurrentX, int ColLatestX, int ColStatusX,
+            int NameW, int CurrentW, int LatestW, int RowHeight,
+            int Row1Y, int Row2Y, int SeparatorY, int RowWidth,
+            int LinkTitleY, int LinkY, int LinkHeight, int LinkWidth,
+            int ButtonWidth, int ButtonHeight, int ButtonX, int ButtonY);
+
+        /// <summary>dpi ≤ 0 视为 96；缩放夹 [0.5, 8]（与 TrayMenuLayout 同一纪律）。</summary>
+        public static Geometry Compute(int deviceDpi)
+        {
+            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
+            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            int px(double design) => (int)Math.Round(design * s);
+
+            var clientW = px(DesignClientWidth);
+            var clientH = px(DesignClientHeight);
+            var rowH = px(DesignRowHeight);
+            var row1Y = px(DesignTitleBarHeight) + px(DesignRowGap);
+            var row2Y = row1Y + px(DesignRowPitch);
+            var separatorY = row2Y + rowH + px(DesignSeparatorGap);
+            var linkTitleY = separatorY + px(DesignLinkTitleGap);
+            var linkY = linkTitleY + rowH + px(DesignLinkGap);
+            var buttonW = px(DesignButtonW);
+            var buttonH = px(DesignButtonH);
+            var buttonX = clientW - px(DesignButtonRightGap) - buttonW;
+            var buttonY = clientH - px(DesignButtonBottomGap) - buttonH;
+            // URL 行只到按钮左缘之前（留 8px）：旧实现给它整行宽 488，长 URL 的省略号会
+            // 正好落在按钮上方——两个盒子本来就重叠，只是过去的 URL 短才没看出来。
+            var linkW = Math.Max(1, buttonX - px(8) - px(DesignPadding));
+            return new Geometry(
+                ClientWidth: clientW,
+                ClientHeight: clientH,
+                TitleHeight: px(DesignTitleBarHeight),
+                EmPx: px(DesignEmPt * 96.0 / 72.0),
+                Padding: px(DesignPadding),
+                ColNameX: px(DesignColNameX),
+                ColCurrentX: px(DesignColCurrentX),
+                ColLatestX: px(DesignColLatestX),
+                ColStatusX: px(DesignColStatusX),
+                NameW: px(DesignNameW),
+                CurrentW: px(DesignCurrentW),
+                LatestW: px(DesignLatestW),
+                RowHeight: rowH,
+                Row1Y: row1Y,
+                Row2Y: row2Y,
+                SeparatorY: separatorY,
+                RowWidth: clientW - 2 * px(DesignPadding),
+                LinkTitleY: linkTitleY,
+                LinkY: linkY,
+                LinkHeight: rowH,
+                LinkWidth: linkW,
+                ButtonWidth: buttonW,
+                ButtonHeight: buttonH,
+                ButtonX: buttonX,
+                ButtonY: buttonY);
         }
     }
 }

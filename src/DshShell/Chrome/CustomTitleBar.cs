@@ -47,7 +47,35 @@ internal sealed class CustomTitleBar : Panel
     /// <summary>脉冲动画定时器（替代 BeginInvoke(Invalidate) 避免无限闪烁）。</summary>
     private System.Windows.Forms.Timer? _marqueeTimer;
 
-    private static readonly Font TitleFont = new("Microsoft YaHei UI", 9F);
+    /// <summary>标题字号：**实例级**像素字体（几何来自 WindowGeometry.TitleEmPx(dpi)）。
+    /// 旧实现是 <c>static readonly Font(..., 9F)</c>——全进程共享一份 Point 字体，
+    /// <c>Rescale</c> 改不了它，混屏（主窗 200% / 弹窗 100%）下两块标题栏只能共用同一档字号；
+    /// 且 Point 单位在自带 DPI 的绘制 DC 上会被再折算一次（#28-3 的 s² 教训）。</summary>
+    private Font _titleFont = TitleFontAt(96);
+
+    /// <summary>按 DPI 建字体：字号一律**像素单位**（折算只在 WindowGeometry.EmPx 发生一次），
+    /// 家族缺失（精简系统/容器）时回退系统无衬线。</summary>
+    private static Font FontAt(string family, double designPoint, FontStyle style, int deviceDpi)
+    {
+        var em = DshWeb.Win32.WindowGeometry.EmPx(designPoint, deviceDpi);
+        try
+        {
+            return new Font(family, em, style, GraphicsUnit.Pixel);
+        }
+        catch (ArgumentException)
+        {
+            return new Font(FontFamily.GenericSansSerif, em, style, GraphicsUnit.Pixel);
+        }
+    }
+
+    private const string UiFontFamily = "Microsoft YaHei UI";
+
+    private static Font TitleFontAt(int deviceDpi)
+        => FontAt(UiFontFamily, 9.0, FontStyle.Regular, deviceDpi);
+
+    /// <summary>构建进度文案字号（设计 8pt）：随 _scale 走，不再写死 Point。</summary>
+    private Font StatusFont(bool bold) => FontAt(UiFontFamily, 8.0,
+        bold ? FontStyle.Bold : FontStyle.Regular, (int)Math.Round(_scale * 96f));
     private static readonly Color DarkBg = Color.FromArgb(32, 32, 32);
     private static readonly Color LightBg = Color.FromArgb(240, 240, 240);
     private static readonly Color DarkText = Color.White;
@@ -69,6 +97,8 @@ internal sealed class CustomTitleBar : Panel
         // DPI 缩放：150% 缩放下 32px 物理高度会显得又矮又挤（按钮/图标/间距全按逻辑缩放）
         _scale = owner.DeviceDpi / 96f;
         _btnWidth = (int)Math.Round(46 * _scale);
+        _titleFont.Dispose();
+        _titleFont = TitleFontAt(owner.DeviceDpi);
         BackColor = _dark ? DarkBg : LightBg;
         MouseDown += OnMouseDown;
         MouseUp += OnMouseUp;
@@ -93,12 +123,23 @@ internal sealed class CustomTitleBar : Panel
         Invalidate();
     }
 
-    /// <summary>DPI 变化时重算缩放比例与按钮宽度。</summary>
+    /// <summary>DPI 变化时重算缩放比例、按钮宽度与字号（字号必须跟着换，否则跨屏后
+    /// 标题按旧档 DPI 渲染——混屏下"窗口变大了字没变大"就是这个）。</summary>
     public void Rescale(float scale)
     {
         _scale = scale;
         _btnWidth = (int)Math.Round(46 * _scale);
+        var next = TitleFontAt((int)Math.Round(scale * 96f));
+        var old = _titleFont;          // Rescale 与 OnPaint 同在 UI 线程，无需原子交换
+        _titleFont = next;
+        old.Dispose();
         Invalidate();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _titleFont.Dispose();
+        base.Dispose(disposing);
     }
 
     /// <summary>窗口按钮个数：closeOnly 仅关闭按钮，否则最小化/最大化/关闭三键。</summary>
@@ -209,20 +250,22 @@ internal sealed class CustomTitleBar : Panel
 
         // 标题 + dsh 版本徽标（2026-09：版本号紧跟标题右侧，正文样式可点击弹版本信息窗）
         var titleLeft = (int)Math.Round(34 * _scale);
-        var rightBound = Width - _btnWidth * BtnCount - 8; // 按钮区左缘（预留 8px 间距）
+        var rightBound = Width - _btnWidth * BtnCount - (int)Math.Round(8 * _scale); // 按钮区左缘（预留 8 设计像素）
         var badgeText = ShellLogic.VersionInfoPolicy.ComposeTitleBarBadge(_dshVersion);
         Rectangle titleRect;
         if (badgeText.Length > 0)
         {
             // [2026-09 反馈] 徽标与标题同字重同色（正文样式，不加粗不变蓝），悬停仅下划线提示可点；
             // 与标题间隙收窄到 4px，读作 "DeepSeek Harness v0.1.2-rc.1" 的自然文本流。
-            using var badgeFont = new Font(TitleFont.FontFamily, TitleFont.Size,
-                _hoverVersion ? FontStyle.Underline : FontStyle.Regular);
-            var badgeWidth = TextRenderer.MeasureText(badgeText, badgeFont).Width;
+            using var badgeFont = new Font(_titleFont.FontFamily, _titleFont.Size,
+                _hoverVersion ? FontStyle.Underline : FontStyle.Regular, GraphicsUnit.Pixel);
+            // 测量一律带 g：无 Graphics 的重载按"任意一个 DC"采样 DPI，与下面用 g 绘制的
+            // 实际宽度可能不同一档 → 徽标落点与点击命中框错位（混屏移动后尤其明显）。
+            var badgeWidth = TextRenderer.MeasureText(g, badgeText, badgeFont).Width;
             var gap = (int)Math.Round(4 * _scale);
             // 徽标紧跟标题实测宽度之后；空间不足（窗口过窄/标题过长）时右对齐按钮区，
             // 标题被 EndEllipsis 收窄——徽标位置稳定、始终可点。
-            var badgeX = titleLeft + TextRenderer.MeasureText(_titleText, TitleFont).Width + gap;
+            var badgeX = titleLeft + TextRenderer.MeasureText(g, _titleText, _titleFont).Width + gap;
             if (badgeX + badgeWidth > rightBound) badgeX = Math.Max(titleLeft, rightBound - badgeWidth);
             _versionRect = new Rectangle(badgeX, 0, badgeWidth, Height);
             titleRect = new Rectangle(titleLeft, 0, Math.Max(0, badgeX - titleLeft - gap), Height);
@@ -234,7 +277,7 @@ internal sealed class CustomTitleBar : Panel
             _versionRect = Rectangle.Empty;
             titleRect = new Rectangle(titleLeft, 0, Math.Max(0, rightBound - titleLeft), Height);
         }
-        TextRenderer.DrawText(g, _titleText, TitleFont, titleRect,
+        TextRenderer.DrawText(g, _titleText, _titleFont, titleRect,
             textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
 
         // 窗口按钮：用 Segoe MDL2 字形（最小化/最大化/还原/关闭），清晰且与系统图标一致
@@ -301,9 +344,9 @@ internal sealed class CustomTitleBar : Panel
             {
                 // using：这段在启动脉冲定时器下每帧都跑（~30fps），Font 不释放就是
                 // 每秒 ~30 个 GDI 句柄的泄漏（下方 Ready/Failed 分支已经是 using 写法）。
-                using var statusFont = new Font("Microsoft YaHei UI", 8F);
+                using var statusFont = StatusFont(bold: false);
                 var statusText = " " + _buildProgressText;
-                var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+                var statusWidth = TextRenderer.MeasureText(g, statusText, statusFont).Width;
                 TextRenderer.DrawText(g, statusText, statusFont,
                     new Rectangle(Width - _btnWidth * BtnCount - statusWidth - 8, 0, statusWidth, Height),
                     _dark ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0),
@@ -324,9 +367,9 @@ internal sealed class CustomTitleBar : Panel
             g.FillRectangle(terminalBrush, 0, Height - 2, Width, 2);
             if (!string.IsNullOrEmpty(_buildProgressText))
             {
-                using var statusFont = new Font("Microsoft YaHei UI", 8F, FontStyle.Bold);
+                using var statusFont = StatusFont(bold: true);
                 var statusText = " " + _buildProgressText;
-                var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
+                var statusWidth = TextRenderer.MeasureText(g, statusText, statusFont).Width;
                 TextRenderer.DrawText(g, statusText, statusFont,
                     new Rectangle(Width - _btnWidth * BtnCount - statusWidth - 8, 0, statusWidth, Height),
                     terminalColor,
