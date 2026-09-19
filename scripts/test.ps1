@@ -106,6 +106,9 @@ Assert-True ($crCount -eq $lfCount -and $crCount -gt 0) "check-prereq.cmd 使用
 # 壳源码 EnsureAutoStartRequested 写 DshWeb.exe（不再 wscript+vbs）
 $shellSrc = Get-Content (Join-Path $root "src\DshShell\Program.cs") -Raw
 # 更新引擎内核已抽至 DshUpdateManager（2026-09 RealOS 可测性抽离）——相关断言扫描"Program+Manager 拼接源"，语义等价
+$dshUpdateMgrSrc = Get-Content (Join-Path $root "src\DshShell\Managers\DshUpdateManager.cs") -Raw
+# 暂存构建事务的所有者（Phase 4 · T2 自 Program.cs 迁入）。下面这些"位置敏感"的不变式
+# 一律钉到**具体文件**，不用并集——并集会把位置约束降级成存在约束（用户 2026-09-19 定）。
 $updateCoreSrc = $shellSrc + (Get-Content (Join-Path $root "src\DshShell\Managers\DshUpdateManager.cs") -Raw)
 # 【ADR-024】双轨制收敛：进程/npm 执行原语迁至 ProcessRunner、服务生命周期迁至 ServiceLifecycleOps。
 # 迁移类断言扫描"引擎联合源"（Program + 更新引擎 + 进程原语 + 服务管理），语义等价不削弱：
@@ -124,7 +127,7 @@ Assert-True ($shellSrc -match 'Logger\.Init\(UnifiedLogPath\)') "壳启动初始
 Assert-True ($shellSrc -match 'RotateIfNeeded\(\)') "壳启动早段执行日志轮转"
 Assert-True ($shellSrc -match '--diagnose') "壳支持 --diagnose 诊断导出"
 Assert-True ($appEnvSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级；探测现居 AppEnvironment.ReadLifetimeMode）"
-Assert-True ($shellSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged）"
+Assert-True ($dshUpdateMgrSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged；T2 后暂存写入位于 DshUpdateManager）"
 Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-web.log 路径"
 
 # ---- issue #25 收口：通知只有一条通道（自绘卡片），WPN/系统 Toast 通路整体移除 ----
@@ -240,7 +243,14 @@ $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'GetProcessIdByPort') "壳含端口→PID 反查（GetExtendedTcpTable/netstat，僵尸端口归属验证）"
 Assert-True ($logicSrc -match 'GetExtendedTcpTable') "壳含 P/Invoke GetExtendedTcpTable（精确端口归属）"
 Assert-True ($logicSrc -match 'KillProcessTree') "壳含进程树强杀（taskkill /T /F 语义）"
-Assert-True ($logicSrc -match 'GetAncestorPids') "壳含祖先进程链（清理 cmd/npx 外壳）"
+# [臃肿审计 Phase 6] 反向断言。旧版本这里写的是 `-match 'GetAncestorPids'`——祖先链杀伤早在
+# 2026-08 被停用（ServiceManager._ancestors 只写不读、生产与测试路径都不执行它），而这条断言
+# 正在**文字上保护死码**：删掉它反而会 CI 红。现在要求整套死链（收集器 + Toolhelp32 快照 +
+# P/Invoke）确实不在代码里。
+Assert-True ($logicSrc -notmatch 'GetAncestorPids|SnapshotParentPids|CreateToolhelp32Snapshot') "壳不再收集/杀伤祖先进程（Toolhelp32 死链已根除）"
+# Phase 4 · T2：暂存构建事务整体迁入 DshUpdateManager，故构建类不变式改扫 $updateCoreSrc
+# （= Program.cs + DshUpdateManager.cs）。按 2026-09-19 的决定，T2 迁移涉及的不变式一律
+# 改用上面的 $dshUpdateMgrSrc 定向断言，不用并集——避免把"位置约束"降级成"存在约束"。
 Assert-True ($engineSrc -match 'IsRetryableNpmError') "系统含 npm 失败可重试判定（pending 保留/清理策略；现居更新引擎）"
 Assert-True ($shellSrc -match 'NotifyUpdateApplyFailed') "壳含更新失败用户通知（E4002 弹窗收口，策略在引擎）"
 Assert-True ($engineSrc -match '正在应用更新 \(v') "壳含更新安装进度上报（Splash '正在应用更新 (vX)…'；现居引擎）"
@@ -271,13 +281,13 @@ Assert-True ($shellSrc -match '主程序已下载') "更新文案区分'主程�
 # ---- v0.4.x 更新引擎（staging 隔离构建 + 原子切换；替代旧 prefetch_temp 预热管线）静态断言 ----
 # （2026-09 现代化：v0.4.0 已用"npm pack → staging/runtime-build 完整构建 → runtimes 原子搬移"
 #   取代 npm-pack+预热临时目录方案，以下断言随架构升级改锁新不变式，语义等价不削弱。）
-Assert-True ($shellSrc -match 'runtime-build-') "下载管线在隔离 staging buildDir 构建运行时（不污染生产 runtimes）"
-Assert-True ($shellSrc -match 'TryDeleteDir\(buildDir\)') "每次构建前强制清场 buildDir（防残留 lockfile 导致 pnpm 假成功）"
-Assert-True ($shellSrc -match 'pointing at buildDir being rebuilt') "重建前清掉指向本 buildDir 的 stale pending（防半成品被强制应用）"
+Assert-True ($dshUpdateMgrSrc -match 'runtime-build-') "下载管线在隔离 staging buildDir 构建运行时（不污染生产 runtimes）"
+Assert-True ($dshUpdateMgrSrc -match 'TryDeleteDir\(buildDir\)') "每次构建前强制清场 buildDir（防残留 lockfile 导致 pnpm 假成功）"
+Assert-True ($dshUpdateMgrSrc -match 'pointing at buildDir being rebuilt') "重建前清掉指向本 buildDir 的 stale pending（防半成品被强制应用）"
 Assert-True ($updateCoreSrc -match '--prefix') "npm 回退安装走 --prefix 局部树（不触碰全局环境）"
 Assert-True ($shellSrc -match '--no-audit --no-fund') "安装统一 --no-audit --no-fund（跳过审计/fund，加速安装）"
 Assert-True ($shellSrc -match 'GetNpmRegistrySources') "pack/build/apply 共用同一源序列 GetNpmRegistrySources（防跨 registry cache miss）"
-Assert-True ($shellSrc -match 'preserving tarball for next launch retry') "构建失败保留 tarball 待下次重试（降级不断链路）"
+Assert-True ($dshUpdateMgrSrc -match 'preserving tarball for next launch retry') "构建失败保留 tarball 待下次重试（降级不断链路）"
 Assert-True ($updateCoreSrc -match 'timeoutMs: 1200000') "npm 构建路径有超时上限（强制 kill，不留僵尸树；内核现居 DshUpdateManager）"
 # ---- v0.4.0 npm 执行引擎（node.exe 直接执行 npm-cli.js，彻底绕过 npm.cmd/cmd.exe）静态断言
 #      【ADR-024】探测原语迁至 Domain/JsEntryResolver.ResolveNpmCliJs、执行原语迁至 ProcessRunner ----
@@ -300,7 +310,7 @@ Assert-True ($engineSrc -match 'WorkingDirectory = workingDirectory') "RunNpmCom
 Assert-True ($updateCoreSrc -match 'workingDirectory: buildDir') "npm 构建传入 staging buildDir 为工作目录（相对路径 ./<tarball> 依赖该目录；内核现居 DshUpdateManager）"
 # ---- 下载秒败"文件名、目录名或卷标语法不正确"根因修复断言随架构升级改锁新形态：
 #      pack 目标目录先创建（buildDir 由 Directory.CreateDirectory 保证存在）----
-Assert-True ($shellSrc -match 'Directory\.CreateDirectory\(buildDir\)') "pack 前先创建目标构建目录（历史 ERROR_INVALID_NAME 场景的等价修复）"
+Assert-True ($dshUpdateMgrSrc -match 'Directory\.CreateDirectory\(buildDir\)') "pack 前先创建目标构建目录（历史 ERROR_INVALID_NAME 场景的等价修复）"
 $stagedSrc = Get-Content (Join-Path $root "src\DshShell\StagedUpdate.cs") -Raw
 Assert-True ($stagedSrc -match 'LocateTarball') "StagedUpdate 提供本地 tarball 定位（三级：pending 名→命名规则→glob）"
 Assert-True ($stagedSrc -match 'tarball\s*=\s*string\.IsNullOrWhiteSpace') "pending-update.json 记录 tarball 文件名（应用失败重试仍用本地包）"
@@ -359,6 +369,386 @@ Assert-True ($dualTrackViolations.Count -eq 0) "【ADR-024】Program.cs 零业�
 # 正面断言：Identity 直启链在组合根可见（StartDshServiceViaIdentity 是唯一服务拉起入口名）
 Assert-True ($shellSrc -match 'StartDshServiceViaIdentity') "组合根唯一服务拉起入口 StartDshServiceViaIdentity（按 Identity 直启）"
 Assert-True ($shellSrc -notmatch 'StartDshServiceViaVbs') "旧 wscript/vbs 启动链入口名已从组合根根除"
+
+# ================== 【ADR-024 补口】体量与依赖方向棘轮 ==================
+# 为什么需要这一节（2026-09-19 审计，证据可复核）：
+#   本脚本历史上**从未有过任何文件行数断言**——`git log --all -S 'Count -le' -- scripts/test.ps1`
+#   返回空。上方 2.2 节禁的是 9 个业务**原语 token**，它今天全绿。也就是说 Program.cs 被禁止
+#   "拿铲子"，却完全不受限制地"决定往哪挖"：78ef4b3e（2026-08-28 重构收官）的 2975 行，
+#   22 天后回涨到 3870（+880，+30%），而 ADR-024 自己在 ARCHITECTURE_DECISIONS.md 里写下的
+#   量化指标是「组合根瘦身 ~4000→~2800 行」。**唯一有效的规则一直是散文。**
+#   本节把三类只能靠人自觉的不变量（体量、单方法长度、依赖方向）变成机器规则。
+#
+# 棘轮（ratchet）语义，三条硬约定：
+#   1) 基线 = 钉死"当下实测值"，余量 +0。加一行代码必须先删一行。
+#   2) **只降不升**：调高任何基线数字 = 削弱门禁 = 违反 AGENTS.md 的 test.ps1 铁律。
+#   3) 代码变少后必须把基线同步改小，否则锁不住下一次回涨。
+# 数"代码行"而非总行数：否则堆注释即可绕开闸。
+Write-Host "`n== 2.3 体量与依赖方向棘轮（ADR-024 补口；只降不升） ==" -ForegroundColor Cyan
+function Get-CodeLineCount {
+    param([string[]]$Lines)
+    $n = 0
+    foreach ($l in $Lines) {
+        $t = $l.Trim()
+        if ($t -eq '') { continue }
+        if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+        $n++
+    }
+    return $n
+}
+
+# ---- G1 组合根体量：只闸 Program.cs，不闸 ShellLogic.cs ----
+# 审计实测 ShellLogic 同期 +887 行属**合法增长**（NoticeCardLayout/SplashLayout/TrayMenuLayout
+# 等带契约测试的纯函数）。给它加行数闸只会把人流向更糟的地方；ShellLogic 真正的风险是"往纯
+# 函数文件里塞不纯的东西"，那由 G1b 按原语计数锁住。
+$g1ProgramCode = Get-CodeLineCount -Lines $programLines
+# 2014 → 2007：回滚事务补"先停服再隔离"那一环时组合根多了一处注入（+3），同批把更新应用后的
+# 第四份手写"投递到 UI 线程再导航"收敛到 PostNavigateToServiceUrl（-10）——净降，基线随之钉低。
+Assert-True ($g1ProgramCode -le 2007) "【棘轮 G1】Program.cs 代码行数 ≤ 2007（实测 $g1ProgramCode）"
+
+# ---- G1b 纯函数文件的不纯原语计数（新增即红）----
+# ShellLogic.cs 自称纯函数文件（文件头规则要求有生命周期状态的资源必须抽走），但已实测驻留
+# 12 处原语。其中 `UpdateProxyPolicy.LocalProxyAlive` 开真 TcpClient 且**无契约测试**，是重构
+# 后新增的叶子——正是本闸要拦的形状。基线随搬迁下移：12（Phase 1 实测）→ 11（D2 把第二份
+# ProcessStartInfo/Process.Start 并进 RunTaskKill），只许减少。
+# 用 -cmatch：`-match` 不区分大小写，会把 URL "registry.npmmirror.com" 误判成 Registry. API。
+$logicLines = @(Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs"))
+$impurePatterns = @(
+    'System\.Net\.Sockets\.TcpClient|new\s+TcpClient',
+    'new\s+System\.Net\.Http\.HttpClient|new\s+HttpClient\b|HttpClient\s*\{',
+    'new\s+ProcessStartInfo|Process\.Start\(',
+    'File\.Delete\(|Directory\.Delete\(',
+    'Microsoft\.Win32\.Registry|\bRegistry\.(GetValue|LocalMachine|CurrentUser|OpenBaseKey)'
+)
+$impureHits = @()
+for ($i = 0; $i -lt $logicLines.Count; $i++) {
+    $t = $logicLines[$i].Trim()
+    if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+    foreach ($p in $impurePatterns) { if ($t -cmatch $p) { $impureHits += "$($i+1)"; break } }
+}
+Assert-True ($impureHits.Count -le 11) "【棘轮 G1b】ShellLogic.cs 不纯原语行 ≤ 11（实测 $($impureHits.Count)：行 $(if($impureHits.Count){$impureHits[0..([Math]::Min(4,$impureHits.Count-1))] -join ','}else{'clean'})…）"
+
+# ---- G2 单方法长度预算 ----
+# 光有总量闸会把人逼成更大的方法（现状：RunUserInterface 一个方法 424 行）。
+# 扫描：类体内 4 空格缩进的成员签名 → 向后花括号配平（剥离注释行与字符串字面量内的括号）。
+function Get-MaxMethodSpan {
+    param([string[]]$Lines)
+    # 成员签名固定 4 空格缩进（Program.cs 全文件一致），正则里直接写字面量。
+    # ⚠️ 不要改成 param([int]$Pad) + $pad=' '*$Pad 的形式：PowerShell 变量名**大小写不敏感**，
+    # $pad 与 $Pad 是同一个变量，且被 param 声明为 [int] 后强转存回字符串 → 静默变成 0，
+    # 本函数会返回 Max=0 让闸永远"绿"。（实测踩过，故此处刻意不参数化缩进。）
+    $sigRe   = '^    (?:public|private|internal|protected)\b'
+    $skipRe  = '^    (?:public|private|internal|protected)\b[^\r\n]*[=;]\s*$'
+    $max = 0; $maxName = ''
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ($line -notmatch $sigRe) { continue }
+        if ($line -match $skipRe -or $line -match '\bconst\b') { continue }
+        if ($line -notmatch '\s(\w+)\s*(\(|=>)') { continue }
+        $name = $Matches[1]
+        $bodyIdx = -1
+        for ($j = $i; $j -lt [Math]::Min($i + 6, $Lines.Count); $j++) {
+            $t = $Lines[$j].Trim()
+            if ($t.EndsWith('{')) { $bodyIdx = $j; break }
+            if ($t -eq '}') { break }
+        }
+        if ($bodyIdx -lt 0) { continue }
+        $depth = 0; $end = $bodyIdx
+        for ($k = $bodyIdx; $k -lt $Lines.Count; $k++) {
+            $t = $Lines[$k].Trim()
+            $isComment = $t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')
+            $scan = if ($isComment) { '' } else { ($Lines[$k] -replace '"[^"]*"', '') -replace "'[^']*'", '' }
+            $depth += ([regex]::Matches($scan, '\{')).Count - ([regex]::Matches($scan, '\}')).Count
+            if ($depth -le 0) { $end = $k; break }
+        }
+        $span = $end - $i + 1
+        if ($span -gt $max) { $max = $span; $maxName = $name }
+    }
+    return @{ Max = $max; Name = $maxName }
+}
+$g2 = Get-MaxMethodSpan -Lines $programLines
+# 366 → 300：T6 把 RunUserInterface 里那条 66 行的 FormClosing lambda 拆成三个具名方法
+# （托盘降级隐藏 / 构建防误关询问 / 退出编排分派）。光有 G1 的总量闸只会把人逼成更大的方法，
+# 本闸就是这个缺口的另一半。
+Assert-True ($g2.Max -le 300) "【棘轮 G2】Program.cs 单方法 ≤ 300 行（实测最大 $($g2.Name)=$($g2.Max)）"
+# 扫描器自检：若解析退化（如缩进变化/正则失配）会返回 Max=0 而"通过"上面的闸——那是一条假绿。
+# 断言它确实找到了一个成体量级的方法，让坏掉的闸变红而不是变绿。
+Assert-True ($g2.Max -ge 100 -and $g2.Name) "【G2 自检】方法长度扫描器工作正常（实测 $($g2.Name)=$($g2.Max)，须 ≥100 才说明解析未退化）"
+
+# ---- G3 上向调用冻结清单（Manager/Window/Chrome 不得回调组合根静态）----
+# docs/00 铁律：「严禁 Manager 向上回调 Program 的静态方法」。此规则此前零机器检查。
+# Phase 4·T7/T8 已把这 16 处全部清零（P/Invoke 与常量归 Win32/、图标缓存归 Windows/WindowIcons、
+# Trace 改直调 Logger、弹窗与 per-window 状态改注入委托）。基线因此从「冻结清单」收紧为**硬零**：
+# 今后任何一处 Manager/Windows/Chrome/Domain/Lifecycle/Win32 回调 Program 静态，CI 直接红。
+$upwardHits = @()
+foreach ($d in @('Managers','Windows','Chrome','Domain','Lifecycle','Win32')) {
+    $dp = Join-Path $root "src\DshShell\$d"
+    if (-not (Test-Path $dp)) { continue }
+    foreach ($f in (Get-ChildItem $dp -Recurse -Filter *.cs)) {
+        $fl = @(Get-Content $f.FullName)
+        for ($i = 0; $i -lt $fl.Count; $i++) {
+            $t = $fl[$i].Trim()
+            if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+            foreach ($mm in [regex]::Matches($t, '(?:DshWeb\.)?Program\s*\.\s*(\w+)')) {
+                $upwardHits += "$($f.Name)->$($mm.Groups[1].Value)"
+            }
+        }
+    }
+}
+Assert-True ($upwardHits.Count -le 0) "【G3 硬闸】下层代码零回调 Program 静态（实测 $($upwardHits.Count)：$(if($upwardHits.Count){$upwardHits[0]}else{'clean'})）"
+
+# ---- G4 Manager 互不引用（docs/00 核心约束：Manager 之间严禁直接引用对方）----
+# 审计修正：此前以为只有 TrayManager→WindowManager 一处，实测 11 处——其中
+# WindowManager→WebViewManager 达 9 处，且读写的正是映射表禁止做成进程级静态的那三个
+# 每窗字段（MainWeb/RecoveryNeeded/HiddenSince）。基线随搬迁下移：11（Phase 1 实测）
+# → 9（Phase 6 删除 TrayManager——它那两行就是纯委托空壳），只许减少。
+$mgrDir = Join-Path $root "src\DshShell\Managers"
+# ProcessRunner/WebRuntimeInstaller/SelftestReporter/ManagerInterfaces 是无状态工具类或契约
+# 文件而非对等 Manager，豁免（把 ProcessRunner 当对等 Manager 会虚报 7 处）。
+$peerManagers = @(Get-ChildItem $mgrDir -Filter *.cs | ForEach-Object { $_.BaseName } |
+                  Where-Object { $_ -notin @('ManagerInterfaces','SelftestReporter','WebRuntimeInstaller','ProcessRunner') })
+$siblingHits = @()
+foreach ($f in (Get-ChildItem $mgrDir -Filter *.cs)) {
+    $fl = @(Get-Content $f.FullName)
+    for ($i = 0; $i -lt $fl.Count; $i++) {
+        $t = $fl[$i].Trim()
+        if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+        foreach ($m in $peerManagers) {
+            if ($m -eq $f.BaseName) { continue }
+            if ($t -cmatch "\b$([regex]::Escape($m))\b") { $siblingHits += "$($f.Name):$m"; break }
+        }
+    }
+}
+Assert-True ($siblingHits.Count -le 9) "【棘轮 G4】Manager 互不引用：兄弟引用 ≤ 9 处（实测 $($siblingHits.Count)）"
+
+# ---- G5 组合根静态流程标志冻结 ----
+# docs/00 + AGENTS.md 明文：「严禁使用全局 static bool 控流程，状态必须定义在 LifecycleState
+# 枚举中」——此前零机器检查。最刺眼的一条：Program.cs 的 _lastShellRestartUtc 上方注释原文写着
+# 「时间戳事实，不做流程控制标志（架构铁律：严禁 static bool 控流程）」，然后用 DateTime.MinValue
+# 哨兵承载状态。按字段名冻结当下集合，新增一个静态标量字段即红。
+# 冻结清单随搬迁缩短：13（Phase 1 起算）→ 12（3c 删 _serviceStartedByShell）
+# → 11（T6 迁走 _navSucceededSinceFailure）→ 8（T1 把重启预算三字段连事务迁入 ServiceRestartCoordinator）
+# → 7（T6b：构建占用状态连事务迁入 DshUpdateManager.BuildInProgress）。
+# 清单里被删掉的名字若回流，本闸立即变红（回流的名字同时进 G9 的禁止清单，双保险）。
+$staticFlagAllowed = @(
+    'ServerManagedExternally','_servicePid',
+    '_applyRestartDeferred','_cachedGlobalDshVersionLoaded',
+    '_lastBuildUiPercent','_lastBuildUiApplyTicks','_shutdownInitiated'
+)
+$staticFlagHits = @()
+for ($i = 0; $i -lt $programLines.Count; $i++) {
+    $t = $programLines[$i].Trim()
+    if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+    # 类型后允许 `?`：把 DateTime 改成 DateTime? 不得成为绕开本闸的后门
+    if ($t -cmatch '^private\s+static\s+(volatile\s+)?(readonly\s+)?(bool|int|long|DateTime|DateTimeOffset)\??\s+(\w+)\s*(=[^>]|;)') {
+        if ($staticFlagAllowed -notcontains $Matches[4]) { $staticFlagHits += "$($Matches[4]):$($i+1)" }
+    }
+}
+Assert-True ($staticFlagHits.Count -eq 0) "【G5】Program.cs 未新增冻结清单外的静态标量流程字段（新增：$(if($staticFlagHits.Count){$staticFlagHits -join ','}else{'无'})）"
+
+# ---- G6 空 catch 上限 ----
+# docs/00：「严禁出现空的 catch {}」——此前零机器检查。异常透明性是本项目硬约束（用户要能看到
+# 真实失败原因）。基线随 T2 的下沉从 37 降到 35，T5 收官 33，D1 把 6 份手写进程采集并成一份后 31，
+# Phase 6 删掉祖先链死码（其 `catch { }` 静默吞异常）后 30（只许减少；数字来源不追究——
+# 同工作树另有并行会话，抬高基线才是违规）。
+# 必须逐行剥离注释行再匹配：本闸最初用整文件正则，结果把解释性注释里写的字面量
+# `<c>catch { }</c>` 也算成违规（把说明缺陷的注释删掉来让闸变绿 = 反向激励）。
+# 与 2.2 节同源的限制：行尾注释内的命中由人工评审兜底。
+$emptyCatchTotal = 0
+foreach ($f in $srcAll) {
+    foreach ($cl in (Get-Content $f.FullName)) {
+        $t = $cl.Trim()
+        if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+        $emptyCatchTotal += ([regex]::Matches($cl, 'catch[^\{\r\n]*\{\s*\}')).Count
+    }
+}
+Assert-True ($emptyCatchTotal -le 30) "【棘轮 G6】src/DshShell 空 catch 总数 ≤ 30（实测 $emptyCatchTotal）"
+
+# ---- G7 CHANGELOG 结构闸 ----
+# CHANGELOG.md 是 884 行只增文件，而 .github/workflows/build.yml 的发布闸只校验"版本条目存在"
+# ——一个只增闸管不住只增文件。实测本窗口内它 +301 行（+58%），并长出**两个** `## [Unreleased]`
+# 锚点（一个在文件头，一个是 0.3.5 之前的空孤儿）。锚点数用 -eq 1 钉死，段长走棘轮。
+$changelogLines = @(Get-Content (Join-Path $root "CHANGELOG.md"))
+$unreleasedAnchors = @()
+for ($i = 0; $i -lt $changelogLines.Count; $i++) {
+    if ($changelogLines[$i] -match '^## \[Unreleased\]') { $unreleasedAnchors += $i }
+}
+Assert-True ($unreleasedAnchors.Count -eq 1) "【G7】CHANGELOG 恰好 1 个 [Unreleased] 锚点（实测 $($unreleasedAnchors.Count)）"
+$unrelLen = 0
+if ($unreleasedAnchors.Count -ge 1) {
+    $next = $changelogLines.Count
+    for ($i = $unreleasedAnchors[0] + 1; $i -lt $changelogLines.Count; $i++) {
+        if ($changelogLines[$i] -match '^## \[') { $next = $i; break }
+    }
+    $unrelLen = $next - $unreleasedAnchors[0]
+}
+Assert-True ($unrelLen -le 400) "【G7】CHANGELOG [Unreleased] 段 ≤ 400 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
+# 上限 315 → 400 是**用户 2026-09-19 明确授权**的例外，不是本闸被绕过：当时该段已被并行会话的
+# DPI 批次填到 315/315，任何一条新记录都会红（含本轮防臃肿整改自己的记录）。授权范围=这一次、
+# 这个数值；再往上抬仍需同等授权。段长仍只降不升：低于 400 时应收紧到当下实测值。
+
+# ---- G8 文档↔代码一致性（防"权威文档毒化后续 agent"）----
+# 实测到的真实危害：docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md 曾**正面命令**"必须使用 cmd.exe /c
+# 包装"，而 ADR-021 与 test.ps1 的 ADR-021 闸**严禁** src/ 出现 cmd.exe——AGENTS.md 又要求每个
+# agent 先读 docs/00，于是照规则办事的 agent 拿到的第一手答案是错的。78ef4b3e 的 8j 批次只改了
+# AGENTS.md，漏掉了它指向的那份。此处把两类失真都变成断言。
+$guardrailSrc = Get-Content (Join-Path $root "docs\00-ARCHITECTURE-GUARDRAILS-MANDATORY.md") -Raw
+$agentsSrc = Get-Content (Join-Path $root "AGENTS.md") -Raw
+# 只拦**正面命令**使用 cmd.exe / npm.cmd 的行；同句出现「严禁/禁止/不得/不应」的是在陈述禁令，
+# 必须放行——否则文档连"严禁 cmd.exe /c"都不能写，等于把闸改成不许有注释。
+$cmdExeDocViolations = @()
+foreach ($gl in ($guardrailSrc -split "`n")) {
+    $t = $gl.Trim()
+    if ($t -match 'cmd\.exe\s+/c|npm\.cmd') {
+        if ($t -notmatch '严禁|禁止|不得|不应|不要|已消灭|历史') { $cmdExeDocViolations += $t }
+    }
+}
+Assert-True ($cmdExeDocViolations.Count -eq 0) "【G8】docs/00 不得正面命令使用 cmd.exe /c 或 npm.cmd（首例：$(if($cmdExeDocViolations.Count){$cmdExeDocViolations[0]}else{'clean'})）"
+# AGENTS.md 项目地图必须点名 Managers/ 下每个**对等 Manager**（新增 Manager 而不忘改地图）
+$missingManagers = @()
+foreach ($mf in (Get-ChildItem $mgrDir -Filter '*Manager.cs')) {
+    $mn = $mf.BaseName
+    if ($mn -eq 'ManagerInterfaces') { continue }
+    if ($agentsSrc -notmatch [regex]::Escape($mn)) { $missingManagers += $mn }
+}
+Assert-True ($missingManagers.Count -eq 0) "【G8】AGENTS.md 项目地图列全 Managers/ 下每个对等 Manager（缺失：$(if($missingManagers.Count){$missingManagers -join ','}else{'无'})）"
+# 映射表必须声明自己的时效——它自称「唯一权威」却已 13/21 行与现状不符
+$mappingSrc = Get-Content (Join-Path $root "docs\refactor-static-mapping.md") -Raw
+Assert-True ($mappingSrc -notmatch '唯一权威' -or $mappingSrc -match 'FROZEN|历史|已过时') "【G8】refactor-static-mapping.md 不得在未标注时效的情况下自称唯一权威"
+
+# ---- G9 已迁出的运行期事务不得回流组合根（Phase 4 · T1/T3/T5）----
+# G1 只闸**总量**：把事务搬走再搬回来，只要行数不超基线就测不出来。本闸闸**位置**。
+# 搬迁同时改了名（旧名是"组合根里的一个 static 方法"这一事实的一部分），所以表里两侧都记：
+#   负向 = 旧名不得再出现在组合根的**代码行**；正向 = 新名必须活在归属文件里（搬迁被回退即红）。
+# 只扫代码行：G6 的同类教训——整文件正则会命中"解释为什么不再有第二份真相"的注释，
+# 等于逼着人删掉记录缺陷的注释。首跑就是靠这条抓到本闸自己的两个假红。
+function Get-G9CodeOnly {
+    param([string[]]$Lines)
+    $only = @()
+    foreach ($cl in $Lines) {
+        $ct = $cl.Trim()
+        if (-not $ct -or $ct.StartsWith('//') -or $ct.StartsWith('///') -or $ct.StartsWith('*')) { continue }
+        $only += $ct
+    }
+    return ,$only
+}
+$g9ProgramCode = Get-G9CodeOnly -Lines $programLines
+$g9Moves = @(
+    @{ Old='RestartDshServiceCoreAsync';           New='OnServiceExited';       Owner='Lifecycle/ServiceRestartCoordinator.cs' },
+    @{ Old='HandleRuntimeServiceExit';             New='OnServiceExited';       Owner='Lifecycle/ServiceRestartCoordinator.cs' },
+    @{ Old='TryStartSafeMode';                     New='TryEnter';              Owner='Lifecycle/SafeModeLifecycle.cs' },
+    @{ Old='WaitSafeModeVerified';                 New='WaitVerified';          Owner='Lifecycle/SafeModeLifecycle.cs' },
+    @{ Old='HandleUpdateRollbackOnBootFailure';    New='TryHandleBootFailure';  Owner='Lifecycle/UpdateRollbackCoordinator.cs' },
+    @{ Old='ArmUpdateRollbackGuardFromPersistedState'; New='ArmFromPersistedState'; Owner='Lifecycle/UpdateRollbackCoordinator.cs' },
+    @{ Old='HandleUpdateConfirmedHealthy';         New='ConfirmHealthy';        Owner='Lifecycle/UpdateRollbackCoordinator.cs' }
+)
+$g9Leaks = @()
+$g9OwnerCache = @{}
+foreach ($mv in $g9Moves) {
+    foreach ($gl in $g9ProgramCode) {
+        if ($gl -cmatch [regex]::Escape($mv.Old)) { $g9Leaks += "$($mv.Old) 回流组合根 => $gl" }
+    }
+    if (-not $g9OwnerCache.ContainsKey($mv.Owner)) {
+        $g9OwnerCache[$mv.Owner] = Get-G9CodeOnly -Lines @(Get-Content (Join-Path $root "src\DshShell/$($mv.Owner)"))
+    }
+    if (-not ($g9OwnerCache[$mv.Owner] | Where-Object { $_ -cmatch [regex]::Escape($mv.New) })) {
+        $g9Leaks += "$($mv.New) 已不在 $($mv.Owner)（搬迁被回退？）"
+    }
+}
+# 静态流程字段：出现在组合根即违规（G5 只管 bool/int/DateTime，字符串状态与取消源同样是流程控制；
+# _isBuildInProgress/_buildCts 是 T6b 迁走的，回流即红）
+foreach ($fld in @('_updateRollbackArmedVersion', '_preApplyIdentityVersion', '_runtimeRestartAttempts',
+    '_lastRuntimeRestartUtc', '_isBuildInProgress', '_buildCts')) {
+    foreach ($gl in $g9ProgramCode) { if ($gl -cmatch [regex]::Escape($fld)) { $g9Leaks += "$fld => $gl" } }
+}
+Assert-True ($g9Leaks.Count -eq 0) "【G9】已迁出的运行期事务符号未回流组合根（首例：$(if($g9Leaks.Count){$g9Leaks[0]}else{'clean'})）"
+# 回滚不得自带第二份就绪轮询：90 秒 Thread.Sleep 阻塞循环是 T5 迁走的东西，现在复用共享重启事务
+$rollbackCode = Get-G9CodeOnly -Lines @(Get-Content (Join-Path $root "src\DshShell\Lifecycle\UpdateRollbackCoordinator.cs"))
+$g9BlockingPolls = @($rollbackCode | Where-Object { $_ -cmatch 'Thread\.Sleep\(' })
+Assert-True ($g9BlockingPolls.Count -eq 0) "【G9】回滚复用 ServiceRestartCoordinator，无手写阻塞轮询（首例：$(if($g9BlockingPolls.Count){$g9BlockingPolls[0]}else{'clean'})）"
+$g9BudgetHits = @($rollbackCode | Where-Object { $_ -cmatch 'RollbackReadyBudgetSeconds' })
+Assert-True ($g9BudgetHits.Count -ge 1) "【G9】回滚就绪预算在协调器内显式声明（可被测试钉住）"
+# 运行期事务的"刷新页面"必须经 UI 投递：协调器都跑在后台线程上，而 CoreWebView2 只允许在
+# UI 线程访问。真机回滚演练实测抓到过一次回归——搬迁时把 `TryPostToMainForm(form, Navigate...)`
+# 写成了裸委托，回滚**已经成功**却在线程检查上抛异常、被 catch 判成失败（监控被停 + 无结果弹窗）。
+# 断言：Program.cs 里每一处 NavigateToServiceUrl 注入都必须是投递版（Post*/lambda），不得裸给方法名。
+$g9NavRaw = @($g9ProgramCode | Where-Object {
+    $_ -cmatch 'NavigateToServiceUrl:\s*' -and $_ -notmatch 'NavigateToServiceUrl:\s*(Post\w+|\()' })
+Assert-True ($g9NavRaw.Count -eq 0) "【G9】导航注入必须走 UI 投递线程（裸委托会抛跨线程异常：$(if($g9NavRaw.Count){$g9NavRaw[0]}else{'clean'})）"
+
+# ---- G10 DPI 换算只许一处实现（Phase 5 · D8）----
+# B4 的真实成因不是"某个布局算错"，而是同一条安全不变量（≤0 当 96、系数钳 [0.5,8]）被抄了 8 份，
+# 其中一份漏了钳制。收敛后钳制只允许存在于 ShellLogic.DpiScale；再出现第二份钳制字面量 = 又开了
+# 一个可以各自漏一条的副本。第二断言统计**未钳制**的裸 `/96f` 换算：坏驱动/RDP 给出
+# deviceDpi=0 时它们会算出 0 缩放（标题栏 0px）。原先是棘轮（实测 10 处），Phase 5 · D8 收尾时
+# 全部改走 DpiScale，现降为**硬零**：再出现一处裸除法，就是又一次"B4 式"漏钳制在酝酿。
+# （`SetResolution(96f, 96f)` 与 `_scale * 96f` 这类点/英寸换算不是 DPI 缩放，模式 `/ 96f` 不误伤。）
+$g10ClampSites = @()
+$g10RawDivisions = @()
+foreach ($gf in $srcAll) {
+    $isOwner = $gf.FullName.EndsWith('ShellLogic.cs')
+    foreach ($gl0 in (Get-Content $gf.FullName)) {
+        $gt = $gl0.Trim()
+        if (-not $gt -or $gt.StartsWith('//') -or $gt.StartsWith('///') -or $gt.StartsWith('*')) { continue }
+        if ($gt -cmatch 'Math\.Clamp' -and $gt -cmatch '96f|BaseDpi' -and -not $isOwner) {
+            $g10ClampSites += "$($gf.Name): $gt"
+        }
+        if ($gt -cmatch '/\s*96f') { $g10RawDivisions += "$($gf.Name): $gt" }
+    }
+}
+Assert-True ($g10ClampSites.Count -eq 0) "【G10 硬闸】DPI 钳制只在 ShellLogic.DpiScale 一处（第二份：$(if($g10ClampSites.Count){$g10ClampSites[0]}else{'clean'})）"
+Assert-True ($g10RawDivisions.Count -eq 0) "【G10 硬闸】无未钳制的裸 /96f 换算（DPI→系数只走 DpiScale.Of；首例：$(if($g10RawDivisions.Count){$g10RawDivisions[0]}else{'clean'})）"
+
+# ---- G11 taskkill 只有一个启动点（Phase 5 · D2）----
+# 2026-08 的"等 taskkill 自身退出"竞态修复只打在 RunTaskKill 上，因为另有一份手写 taskkill 启动
+# 代码没人记得改。第二份启动点 = 第二份可以各自漏一条腿的实现，一律并到 ShellLogic.RunTaskKill。
+$g11TaskKillSites = @()
+foreach ($gf in $srcAll) {
+    foreach ($gl0 in (Get-Content $gf.FullName)) {
+        $gt = $gl0.Trim()
+        if ($gt.StartsWith('//') -or $gt.StartsWith('///') -or $gt.StartsWith('*')) { continue }
+        if ($gt -cmatch 'ProcessStartInfo\(\s*"?taskkill') { $g11TaskKillSites += "$($gf.Name): $gt" }
+    }
+}
+Assert-True ($g11TaskKillSites.Count -le 1) "【G11】src 内 taskkill 启动点唯一（实测 $($g11TaskKillSites.Count)：$(if($g11TaskKillSites.Count){$g11TaskKillSites[0]}else{'clean'})）"
+
+# ---- G12 进程三必须只许一份实现（Phase 5 · D1）----
+# docs/00 的"双流排空 + 限时等待 + 超时 Kill(entireProcessTree)"此前被手工重推导 6 份，
+# B1 修的就是其中少了腿的那份（同步 ReadToEnd → 输出超管道缓冲即死锁 + 孤儿进程）。
+# 现收敛到 ProcessRunner.RunCapture：调用点数只许增加、自己手写 WaitForExit 的采集点只许减少。
+$g12Callers = @(); $g12HandRolled = @()
+foreach ($gf in $srcAll) {
+    $isOwner = $gf.Name -eq 'ProcessRunner.cs'
+    foreach ($gl0 in (Get-Content $gf.FullName)) {
+        $gt = $gl0.Trim()
+        if ($gt.StartsWith('//') -or $gt.StartsWith('///') -or $gt.StartsWith('*')) { continue }
+        if ($gt -cmatch 'ProcessRunner\.RunCapture\s*\(') { $g12Callers += $gf.Name }
+        if (-not $isOwner -and $gt -cmatch 'WaitForExit\s*\(\s*\d') { $g12HandRolled += "$($gf.Name): $gt" }
+    }
+}
+Assert-True ($g12Callers.Count -ge 5) "【G12】RunCapture 已是短进程采集主路径（调用点 $($g12Callers.Count)，≥5）"
+Assert-True ($g12HandRolled.Count -le 2) "【棘轮 G12】RunCapture 之外手写限时 WaitForExit 的采集点 ≤ 2（实测 $($g12HandRolled.Count)：$(if($g12HandRolled.Count){$g12HandRolled[0]}else{'clean'})）"
+
+# ---- G13 包名/作用域字面量单一真相源（Phase 5 · F9 收尾）----
+# `DshDiscovery` 的注释早就写着"路径段与提示文案一律从这里取"，但实测仍有 3 处用户可见文案 +
+# 若干 `node_modules/@deepseek-ai/dsh` 路径段是字面量——承诺与现状分叉（scope 变更时任一处漏改，
+# 文案就会教用户执行一条装不上当前包的命令）。现在把剩下的都改走常量，并用硬闸钉住。
+# 例外（合法）：SafeProfileBuilder 的 `@deepseek-ai/dsh-base` / `-dsh-web-app` 是**不同包名**，
+# 但它的 scope 前缀常量本身必须从 PackageScope 派生（第二断言）。
+$g13Hits = @()
+foreach ($gf in $srcAll) {
+    if ($gf.Name -eq 'DshDiscovery.cs') { continue }   # 唯一定义处
+    foreach ($gl0 in (Get-Content $gf.FullName)) {
+        $gt = $gl0.Trim()
+        if (-not $gt -or $gt.StartsWith('//') -or $gt.StartsWith('///') -or $gt.StartsWith('*')) { continue }
+        if ($gt -cmatch '@deepseek-ai/dsh(?!-base|-web-app)') { $g13Hits += "$($gf.Name): $gt" }
+        if ($gt -cmatch '"node_modules",\s*"@deepseek-ai"') { $g13Hits += "$($gf.Name): $gt" }
+        if ($gt -cmatch 'StartsWith\(\s*"@deepseek-ai/"') { $g13Hits += "$($gf.Name): $gt" }
+    }
+}
+Assert-True ($g13Hits.Count -eq 0) "【G13 硬闸】包名/路径段/scope 前缀字面量只从 DshDiscovery 取（首例：$(if($g13Hits.Count){$g13Hits[0]}else{'clean'})）"
+$g13ProfileSrc = Get-Content (Join-Path $root "src\DshShell\Domain\SafeProfileBuilder.cs") -Raw
+Assert-True ($g13ProfileSrc -notmatch 'DeepSeekScope\s*=\s*"@deepseek-ai/"') "【G13】bundle scope 前缀从 PackageScope 派生，不得另立第二份字面量"
 
 Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan
 # DSH_SANDBOX 门控：四个机器级副作用调用点必须被 DSH_SANDBOX 门控

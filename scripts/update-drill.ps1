@@ -56,7 +56,16 @@ while (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue) {
 }
 
 # ---- 2) 构造"旧版本"种子运行时（只读复制用户全局 dsh 包） ----
-$srcPkg = Join-Path $env:APPDATA 'npm\node_modules\@deepseek-ai\dsh'
+# 全局包目录按 `npm prefix -g` 解析，再回退 %APPDATA%\npm：本机用 fnm 管理 node 时全局包落在
+# fnm 的 multishell 目录下，写死 %APPDATA%\npm 会让前置条件假失败（2026-09-19 实测）。
+$srcPkg = ''
+try {
+    $gpre = (& npm prefix -g 2>$null | Select-Object -Last 1)
+    if ($gpre -and (Test-Path (Join-Path $gpre 'node_modules\@deepseek-ai\dsh\package.json'))) {
+        $srcPkg = Join-Path $gpre 'node_modules\@deepseek-ai\dsh'
+    }
+} catch { }
+if (-not $srcPkg) { $srcPkg = Join-Path $env:APPDATA 'npm\node_modules\@deepseek-ai\dsh' }
 Assert-Cmd (Test-Path $srcPkg) "全局 dsh 包存在（只读复制源）" "$srcPkg 不存在——本机未全局安装 dsh"
 $oldVer = '0.0.0-drill-old'
 $newVer = '0.0.0-drill-new'   # pending 目标版本；副本 package.json 须改写成同版本（完整性门禁比对）
