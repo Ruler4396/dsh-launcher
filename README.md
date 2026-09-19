@@ -1,5 +1,7 @@
 # dsh-launcher
 
+> ⚠️ **停更预告**：官方已在筹备桌面端，待官方版本正式推出后，本项目将同步停更，望各位知悉。
+
 <div align="center">
 
 [English](docs/README.en.md) · [简体中文](README.md)
@@ -20,7 +22,7 @@
 
 一个 Windows 原生壳：双击启动 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）、可设置开机自启，高度重视服务生命周期与出错诊断。安装包大小仅为 **~1.4MB**，不内置 dsh；缺失的依赖（Node.js 等）按需补齐，不改动系统环境。
 
-**克制**：本项目意在打造一个舒适的 dsh 原版体验，不添加文件面板、内置终端等额外功能，一切交给dsh的插件，由用户自行决定。仅在推出安全性更新和dsh版本更新时弹出系统通知。
+**克制**：本项目意在打造一个舒适的 dsh 原版体验，不添加文件面板、内置终端等额外功能，一切交给dsh的插件，由用户自行决定。仅在推出安全性更新和dsh版本更新时发出提醒（屏幕右下角通知卡片 + 标题栏标记；系统 Toast 因 issue #25 已整体移除）。
 
 ## 安装
 
@@ -52,6 +54,7 @@ dsh plugin --profile web add dsh-launcher-lifetime
 - **卸载会删 dsh 数据和插件吗？** 不会——只清启动器自有数据，`profiles/`、`settings.yaml` 等原样保留。
 - **服务占内存？** dsh 是完整服务，必须常驻node.js。
 - **端口 3080 被占用？** 设置 `DSH_WEB_PORT=3090` 后重启。
+- **收不到更新提醒？** 系统 Toast 通知因 Windows 通知平台（`wpnapps.dll`）的原生崩溃已**整体移除**（[issue #25](https://github.com/Ruler4396/dsh-launcher/issues/25)，Win10/Win11 均有崩溃报告）。现在所有提醒统一为屏幕右下角的自绘通知卡片：不依赖托盘图标、不抢你的焦点、到时自动收起、需要时可直接点击（如"点击下载更新""退出安全模式"）。同时标题栏会保留 `（有更新）` 标记，错过卡片也看得出没处理的更新。**插件自己的网页通知不受影响**（权限照常放行，仍由 WebView2 原生渲染）。
 - **遇到问题？** 运行 `check-prereq.cmd`；仍不行用 `DshWeb.exe --diagnose` 导出诊断包，提交至 Issue（[模板](https://github.com/Ruler4396/dsh-launcher/issues/new/choose)）。日志在 `~/.dsh\dsh-launcher\dsh.log`。
 
 ## 更多
