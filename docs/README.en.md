@@ -1,5 +1,7 @@
 # dsh-launcher
 
+> ⚠️ **Sunset notice**: An official desktop app is in the works. Once it ships, this project will stop being updated along with it — please be aware.
+
 <div align="center">
 
 [简体中文](../README.md) · [English](README.en.md)
@@ -52,6 +54,7 @@ dsh plugin --profile web add dsh-launcher-lifetime
 - **Does uninstall delete my dsh data?** No — only the launcher's own data; `profiles/`, `settings.yaml`, etc. stay untouched.
 - **The service uses a lot of memory?** dsh is a full service; staying resident is by design. For less memory choose "follow-window".
 - **Port 3080 taken?** Set `DSH_WEB_PORT=3090` and restart.
+- **No update notification?** System toasts were **removed entirely** because of a native crash in the Windows Notification Platform (`wpnapps.dll`) — [issue #25](https://github.com/Ruler4396/dsh-launcher/issues/25), reported on both Win10 and Win11. Every notice is now a self-drawn card in the lower-right corner: no tray dependency, it never steals your focus, it dismisses itself, and it is clickable when an action is available ("download the update", "leave safe mode"). The title bar also keeps a `（有更新）` marker, so a missed card is still discoverable. **Your plugins' own web notifications are unaffected** (the permission is still granted; WebView2 renders them natively).
 - **Something wrong?** Run `check-prereq.cmd`; if it persists, `DshWeb.exe --diagnose` exports a sanitized package to attach to an [issue](https://github.com/Ruler4396/dsh-launcher/issues/new/choose). Log: `~/.dsh\dsh-launcher\dsh.log`.
 
 ## More
