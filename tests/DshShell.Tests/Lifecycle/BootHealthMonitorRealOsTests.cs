@@ -30,35 +30,86 @@ public class BootHealthMonitorRealOsTests
         return null;
     }
 
-    [Fact]
-    [Trait("Category", "RealOS")]
-    public async Task RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode()
+    /// <summary>
+    /// 场景：真起一个 PowerShell 子进程，但它**不再按固定毫秒数自己消失**——它等一个标志文件
+    /// 才退出，于是"attach 先于退出落地"由测试自己保证，而不是赌一次线程池调度。
+    /// 返回 (进程层是否接上, 监控给出的裁决)。裁决预算只给 5 秒，用于"接上了却不出裁决"的分离诊断。
+    /// </summary>
+    private static async Task<(bool Attached, BootVerdict? Verdict)> RunRealExitScenarioAsync(
+        bool needVerdict = true, int attachBudgetMs = 30000, int verdictBudgetMs = 60000)
     {
         var shell = ResolveShellExe();
         Assert.True(shell != null, "no PowerShell host available for real-process test");
-        // 子进程必须活得比 attach 落地的时间久，否则这条用例外壳看起来在测"退出码被捕获"，
-        // 实际在赌一次竞态：AttachProcess 是后台任务，而进程层对"attach 时 pid 已消失"的处置
-        // 是 **只 Warn、不判死**（2026-08 误报根治：残留 pid 曾把整监控打成 E2007 弹窗）。
-        // 实测（本机复现，见 docs/ARCHITECTURE-DEBT-LEDGER.md 第 14 条）：pid 已退出时
-        // GetProcessById 抛 ArgumentException → 永远不会有裁决 → CI 满载下 20 秒超时红。
-        // 原来这里给的是 300ms，本机稳过、GitHub runner 上红过一次（同 commit 重跑即绿 = 抖动）。
-        // 改成 5 秒只是把赌局换成余量，断言强度一字未减：仍是真进程、真非零退出码、真 E2007。
-        var psi = new ProcessStartInfo(shell, "-NoProfile -Command \"Start-Sleep -Seconds 5; exit 7\"")
+        var flag = Path.Combine(Path.GetTempPath(), "dsh-exit7-" + Guid.NewGuid().ToString("N") + ".flag");
+        var psi = new ProcessStartInfo(shell!,
+            "-NoProfile -Command \"while (-not (Test-Path -LiteralPath '" + flag + "')) { "
+            + "Start-Sleep -Milliseconds 100 }; exit 7\"")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("failed to spawn real process");
         var profile = new ShellLogic.BootGuard.BootProfile { GraceMs = 60000, AbsentThreshold = 1000 };
-        using var m = new BootHealthMonitor(profile, null, "http://127.0.0.1:1", null, pid => new RealProcessHandle(pid));
-        var tcs = new TaskCompletionSource<BootVerdict>(TaskCreationOptions.RunContinuationsAsynchronously);
-        m.Failed += v => tcs.TrySetResult(v);
-        m.AttachProcess(proc.Id);
-        Assert.True(await Task.WhenAny(tcs.Task, Task.Delay(20000)) == tcs.Task,
-            "monitor did not observe real process exit within 20s");
-        var verdict = await tcs.Task;
-        Assert.Equal("E2007", verdict.ErrorCode);
-        var evidence = Assert.Single(verdict.Evidence, e => e.Layer == BootLayer.Process);
+        var attachedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var m = new BootHealthMonitor(profile, null, "http://127.0.0.1:1", null,
+            pid => new RealProcessHandle(pid),
+            trace: s => { if (s.Contains("process layer attached")) attachedTcs.TrySetResult(true); });
+        var verdictTcs = new TaskCompletionSource<BootVerdict>(TaskCreationOptions.RunContinuationsAsynchronously);
+        m.Failed += v => verdictTcs.TrySetResult(v);
+        Process? proc = null;
+        try
+        {
+            proc = Process.Start(psi) ?? throw new InvalidOperationException("failed to spawn real process");
+            m.AttachProcess(proc.Id);
+            if (await Task.WhenAny(attachedTcs.Task, Task.Delay(attachBudgetMs)) != attachedTcs.Task)
+                return (false, null);
+            File.WriteAllText(flag, "go"); // 此刻才放行：子进程下一步就是 exit 7
+            if (!needVerdict) return (true, null);
+            if (await Task.WhenAny(verdictTcs.Task, Task.Delay(verdictBudgetMs)) != verdictTcs.Task)
+                return (true, null);
+            return (true, await verdictTcs.Task);
+        }
+        finally
+        {
+            try { if (proc is not null && !proc.HasExited) proc.Kill(entireProcessTree: true); }
+            catch { /* 已退出：无子进程可回收 */ }
+            proc?.Dispose();
+            try { File.Delete(flag); } catch { /* 交给临时目录回收 */ }
+        }
+    }
+
+    // 下面三条**故意拆开**：realos-test.yml 用 `dotnet test -v q`，xUnit 的 Error Message 整段被吞，
+    // CI 红只留一行 "[FAIL] 测试名"。所以把这条链的三个环节做成三个独立断言——哪一个断，
+    // 那个环节的名字就直接出现在红灯里，不需要日志 verbosity 就能归因。
+
+    [Fact]
+    [Trait("Category", "RealOS")]
+    public async Task RealOs_BootMonitor_RealProcessNonZeroExit_AttachLayerLands()
+    {
+        var (attached, _) = await RunRealExitScenarioAsync(needVerdict: false);
+        Assert.True(attached,
+            "进程层从未接上：AttachProcess 在后台任务里跑，若 pid 已消失则 GetProcessById 抛异常、"
+            + "监控按设计只 Warn 不判死（接线问题，不是退出码问题）");
+    }
+
+    [Fact]
+    [Trait("Category", "RealOS")]
+    public async Task RealOs_BootMonitor_RealProcessNonZeroExit_FailsWithE2007()
+    {
+        var (attached, verdict) = await RunRealExitScenarioAsync(verdictBudgetMs: 15000);
+        Assert.True(attached, "前置不成立：进程层未接上（归 AttachLayerLands 那条管）");
+        Assert.NotNull(verdict); // 已接上 + 已放行退出，却拿不到裁决 = 进程层失明
+        Assert.Equal("E2007", verdict!.ErrorCode);
+        Assert.Single(verdict.Evidence, e => e.Layer == BootLayer.Process);
+    }
+
+    [Fact]
+    [Trait("Category", "RealOS")]
+    public async Task RealOs_BootMonitor_RealProcessNonZeroExit_EvidenceCarriesExitCode7()
+    {
+        var (attached, verdict) = await RunRealExitScenarioAsync();
+        Assert.True(attached, "前置不成立：进程层未接上（归 AttachLayerLands 那条管）");
+        Assert.NotNull(verdict);
+        var evidence = Assert.Single(verdict!.Evidence, e => e.Layer == BootLayer.Process);
         Assert.Contains("7", evidence.Detail);
     }
 

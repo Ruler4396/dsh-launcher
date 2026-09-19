@@ -48,13 +48,16 @@
 `Directory.Move`，可弹窗照样写"已隔离出启动发现链"，即**回滚静默失效**（坏运行时下次启动仍被
 发现链选中）；现按迁移前的时序先停服，并由 Headless 时序用例 + 真机演练各锁一遍。
 
-CI 抖动归因（同日，推送后）：`realos-test` 在 master 上红过一条
-`RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode`，同一 commit 重跑即绿。归因不是猜的——
-本机一次性诊断证明：`AttachProcess` 落在后台任务里，若子进程在 attach 之前退出，
-`GetProcessById` 抛 `ArgumentException` → 进程层只 Warn、永不出裁决 → 20 秒超时红；而该用例原先
-只让子进程活 300ms，等于用断言赌一次线程池调度。已把窗口改成 5 秒（**强度一字未减**：仍是真进程、
-真非零退出码、真 E2007），并把这条"attach 窗口"盲区连同"为什么不改成直接判死"的理由记进
-`docs/ARCHITECTURE-DEBT-LEDGER.md` 第 14 条。
+CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
+`RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode`，同一 commit 重跑即绿；把子进程寿命从
+300ms 放宽到 5 秒后**又红一次**——所以"后台 attach 输给进程退出"这条机制虽然本机可复现（已登记
+台账第 14 条），**却不能解释这次红**。真正卡住我的是看不见原因：`realos-test.yml` 用
+`dotnet test -v q`，xUnit 的 Error Message 整段被吞，红灯只剩一行测试名，而改 workflow 需要
+`workflow` scope（当前 token 只有 repo/read:org/gist）。本机侧已排除：CI 同一过滤器连跑 3 次、
+再 4 实例并发跑 4 次，共 220 次执行全绿。
+处置：把这条用例的三个环节拆成三条独立断言——接上进程层 / 出 E2007 裁决 / 证据含退出码 7，并把
+"子进程活固定毫秒"换成标志文件握手（attach 确认后才有退出）。**哪一个环节断，红灯里的测试名就说
+是哪一个**，不再依赖日志 verbosity。断言强度不减（真进程、真非零退出码、真 E2007）。
 
 未验证面（不用绿灯代替证据）：关窗三分支的真实交互（需真机 GUI 点一次"强制关闭"）。
 暂存构建事务已以 RealNet 门控用例真跑过一次（真 `npm pack` + 真构建 + 真 pending，
