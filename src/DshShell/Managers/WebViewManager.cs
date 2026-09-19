@@ -41,6 +41,16 @@ public sealed class WebViewManager : IWebViewManager
     /// 解耦：WebViewManager 不直接依赖 Program 的托盘实现（S2 防恶意自动运行提示）。</summary>
     public static Action<string>? DownloadNotifyAction { get; set; }
 
+    /// <summary>同源内部弹窗构造（组合根注入 Program.CreatePopupForm）。
+    /// 解耦铁律：WebViewManager 既不得向上回调 <c>DshWeb.Program</c> 静态，也不得引用兄弟
+    /// Manager——两者都会破坏 Manager 依赖方向，故与 <see cref="DownloadNotifyAction"/> 同法注入。
+    /// null = 未装配，调用即响亮抛错（静默降级会让"新窗口点不开"变成无迹可查）。</summary>
+    public static Func<(Form Form, WebView2 Web)>? PopupFactory { get; set; }
+
+    private static (Form Form, WebView2 Web) NewPopup()
+        => PopupFactory is { } f ? f()
+            : throw new InvalidOperationException("WebViewManager.PopupFactory 未注入（组合根必须在 Main 装配）");
+
     /// <summary>插件崩溃检测事件（任务一：安全模式触发）。
     /// dsh 前端因插件不兼容（如 bootstrap facade is missing）发送致命错误消息时广播。
     /// 组合根接线：弹模态询问用户 → 安全模式重启 dsh 服务。</summary>
@@ -95,6 +105,55 @@ public sealed class WebViewManager : IWebViewManager
 
     /// <summary>页面恢复成功后复位崩溃计数（P1-3），由导航完成回调调用。</summary>
     public static void ResetCrashCount() => Interlocked.Exchange(ref _crashCount, 0);
+
+    /// <summary>失败发生后是否曾被成功导航救回（决定是否取消延迟上报）。主窗级状态。</summary>
+    private static volatile bool _navSucceededSinceFailure;
+
+    /// <summary>
+    /// 为一次导航挂上瞬态自愈：失败先重导航（<see cref="ShellLogic.NavigationResiliencePolicy"/>），
+    /// 用尽后延迟 <see cref="ShellLogic.NavigationResiliencePolicy.EscalateQuietWindowMs"/> 才上报，
+    /// 且上报前若已被成功导航救回则静默放弃。**全仓只此一份实现**。
+    /// </summary>
+    /// <param name="urlProvider">每次重导航都要重新取地址（token 跟随下 URL 会变）。</param>
+    /// <param name="onEveryCompletion">每次完成都要跑的动作（ADR-023 页面层探针武装点）。</param>
+    /// <param name="onEscalate">确认救不回来时的用户可见上报；由调用方保证在 UI 线程执行。</param>
+    internal static void ArmNavigationRetry(
+        WebView2 web, Func<string> urlProvider, Action<string> trace,
+        Action onEveryCompletion, Action onEscalate,
+        int maxRetries = ShellLogic.NavigationResiliencePolicy.DefaultMaxRetries)
+    {
+        var attemptsLeft = maxRetries;
+        var escalated = false;
+        _navSucceededSinceFailure = false;
+        web.CoreWebView2.NavigationCompleted += (_, e) =>
+        {
+            trace($"webview nav completed: success={e.IsSuccess} http={e.HttpStatusCode} "
+                + $"url={web.CoreWebView2?.Source}");
+            if (e.IsSuccess) { _navSucceededSinceFailure = true; ResetCrashCount(); }
+            onEveryCompletion();
+            var (retry, escalate) = ShellLogic.NavigationResiliencePolicy.Decide(e.IsSuccess, attemptsLeft);
+            if (!retry && !escalate) return;
+            _navSucceededSinceFailure = false;
+            if (retry)
+            {
+                attemptsLeft--;
+                trace($"token follow: nav failed (http={e.HttpStatusCode}); "
+                    + $"retrying {attemptsLeft} more time(s)");
+                try { web.CoreWebView2.Navigate(urlProvider()); } catch { /* 关闭竞态 */ }
+                return;
+            }
+            if (escalated) return;
+            escalated = true;
+            // [2026-08-29 实测] 模态弹窗会阻塞后续 NavigationCompleted（弹窗后的 token 跟随
+            // 导航永不返回）→ 必须延迟弹出，且窗口内任何成功导航都取消它。
+            _ = Task.Delay(ShellLogic.NavigationResiliencePolicy.EscalateQuietWindowMs)
+                .ContinueWith(_ =>
+                {
+                    try { if (!_navSucceededSinceFailure) onEscalate(); }
+                    catch { /* 窗体已关闭 */ }
+                });
+        };
+    }
 
     /// <summary>IWebViewManager 接口实现（组合根可注入）：静态 InitializeAsync 的实例入口。</summary>
     Task IWebViewManager.InitializeAsync(WebView2 web, string userDataFolder)
@@ -210,7 +269,7 @@ public sealed class WebViewManager : IWebViewManager
                     var deferral = e.GetDeferral();
                     try
                     {
-                        var popup = DshWeb.Program.CreatePopupForm();
+                        var popup = NewPopup();
                         await InitializeAsync(popup.Web, userDataFolder);
                         popup.Web.CoreWebView2.DocumentTitleChanged += (_, _) =>
                         {

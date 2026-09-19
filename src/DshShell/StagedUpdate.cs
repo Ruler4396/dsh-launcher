@@ -266,7 +266,7 @@ public static class StagedUpdate
     {
         try
         {
-            var dshDir = Path.Combine(dir, "node_modules", "@deepseek-ai", "dsh");
+            var dshDir = Path.Combine(dir, DshWeb.Domain.DshDiscovery.PackageRelativeDir());
             var pkgJson = Path.Combine(dshDir, "package.json");
             if (!File.Exists(pkgJson)) return (false, false);
             using var doc = JsonDocument.Parse(File.ReadAllText(pkgJson));

@@ -60,6 +60,16 @@ internal static class Win32Constants
     public const int SM_CXSIZEFRAME = 32;   // 可缩放边框宽度（物理 px）
     public const int SM_CYSIZEFRAME = 33;   // 可缩放边框高度（物理 px）
     public const int SM_CXPADDEDBORDER = 92; // 可缩放边框额外内边距（物理 px）
+
+    // ---- T8 迁入（原在 Program.cs 组合根，且与 Win32 层重复声明）----
+    public const int SW_RESTORE = 9;
+    public const int WM_SETTINGCHANGE = 0x001A;
+    public const int SPI_SETNONCLIENTMETRICS = 0x002A;
+    public const int GWL_STYLE = -16;
+    public const int WM_NCLBUTTONDOWN = 0x00A1;
+    public const int HTCAPTION = 0x0002;
+    public const uint TPM_RETURNCMD = 0x0100;
+    public const uint TPM_RIGHTBUTTON = 0x0002;
 }
 
 /// <summary>
@@ -124,4 +134,42 @@ internal static class NativeMethods
         public POINT ptMinTrackSize;
         public POINT ptMaxTrackSize;
     }
+    // ================== T8：从 Program.cs 组合根迁入的 P/Invoke ==================
+    // 铁律：组合根不得直接持有底层互操作；且 Chrome 层此前反向调用 Program 的 internal
+    // extern（组合根成了 Win32 供给方，依赖方向倒置）。集中到本类后两侧同为调用方。
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? cls, string? title);
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    /// <summary>设置进程 DPI 感知上下文（Per-Monitor V2）。</summary>
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int attrValue, int attrSize);
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmFlush();
+
+    [DllImport("user32.dll")]
+    public static extern bool RedrawWindow(IntPtr hWnd, IntPtr rectUpdate, IntPtr hrgnUpdate, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+    [DllImport("user32.dll")]
+    public static extern IntPtr TrackPopupMenu(IntPtr hMenu, uint uFlags, int x, int y, int nReserved, IntPtr hWnd, IntPtr prcRect);
+
+    // 注：Program.cs 原有、但全仓零调用的 DestroyIcon / FindWindow 两个 extern 未迁入，直接删除。
+    // DestroyIcon 从未被调用正是图标 GDI 句柄泄漏的成因（见 docs/ARCHITECTURE-DEBT-LEDGER.md）。
 }

@@ -32,6 +32,29 @@ public class UpdateGuardPolicyContractTests
         Assert.Equal(expected, action);
     }
 
+    // ---- ShouldDowngradeGlobalPackage：回滚时是否再花一次 npm install -g（Phase 4 · T5 下沉）----
+
+    [Theory]
+    // ① 有运行时目录可隔离（SelfContained 路径）→ 绝不动全局包
+    [InlineData(@"C:\dsh\runtimes\0.1.1-rc.2", "0.1.1-rc.8", "0.1.1-rc.2", false)]
+    // ② 全局路径 + apply 前版本已知且不同 → 降级
+    [InlineData(null, "0.1.1-rc.8", "0.1.1-rc.2", true)]
+    // ③ apply 前版本未知（空/空白）→ 无从降级，也不能拿空串去 npm install -g "@''"
+    [InlineData(null, null, "0.1.1-rc.2", false)]
+    [InlineData(null, "  ", "0.1.1-rc.2", false)]
+    // ④ apply 前版本 == 失败版本 → 降级等于重装同一个包，白跑
+    [InlineData(null, "0.1.1-rc.2", "0.1.1-rc.2", false)]
+    // 版本比较大小写不敏感（与原内联条件的 OrdinalIgnoreCase 一致）
+    [InlineData(null, "0.1.0-RC.8", "0.1.0-rc.8", false)]
+    // ⑤ 版本串白名单：该串会进 install -g "pkg@<version>" 的参数，引号/空格/换行即可逃逸实参边界
+    [InlineData(null, "1.0.0\" --ignore-scripts", "0.1.1-rc.2", false)]
+    [InlineData(null, "1.0.0 -g evil", "0.1.1-rc.2", false)]
+    [InlineData(null, "../../etc", "0.1.1-rc.2", false)]
+    public void ShouldDowngradeGlobalPackage_AllFourConditionsRequired(
+        string? quarantinedRuntimeDir, string? preApply, string? failed, bool expected)
+        => Assert.Equal(expected, ShellLogic.UpdateGuardPolicy.ShouldDowngradeGlobalPackage(
+            quarantinedRuntimeDir, preApply, failed));
+
     // ---- SanitizeVersionToken：版本号 → 目录名安全 token ----
 
     [Theory]

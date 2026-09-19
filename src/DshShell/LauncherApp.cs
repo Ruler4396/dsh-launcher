@@ -16,7 +16,6 @@ public sealed class LauncherApp
     private readonly IServiceManager _service;
     private readonly IWebViewManager _webview;
     private readonly IWindowManager _window;
-    private readonly ITrayManager _tray;
     private readonly IDshUpdateManager? _updates;
     private readonly string? _serviceLogPath;
     private readonly LauncherLifecycle _lifecycle = new();
@@ -92,6 +91,14 @@ public sealed class LauncherApp
     public bool ServiceStartedByShell { get; private set; }
 
     /// <summary>
+    /// 接管了端口上的孤儿服务后，身份等价于"本壳拉起的服务"——退出时必须停它。
+    /// 【Phase 3c】此前这个事实同时存在于 <c>LauncherApp.ServiceStartedByShell</c> 与
+    /// <c>Program._serviceStartedByShell</c> 两处（组合根静态），两份真相可以互相矛盾；
+    /// 现由本方法作为唯一写入口，退出决策一律读 <see cref="ServiceStartedByShell"/>。
+    /// </summary>
+    internal void MarkServiceAdoptedByShell() => ServiceStartedByShell = true;
+
+    /// <summary>
     /// [issue #28-4] 身份装饰统一入口：未注入钩子时原样返回（Headless/外部托管逐位不变）。
     /// </summary>
     private DshWeb.Domain.DshRuntimeIdentity DecorateIdentity(DshWeb.Domain.DshRuntimeIdentity identity)
@@ -103,7 +110,6 @@ public sealed class LauncherApp
         IServiceManager? service = null,
         IWebViewManager? webview = null,
         IWindowManager? window = null,
-        ITrayManager? tray = null,
         Action<int>? staleCleanup = null,
         IDshUpdateManager? updates = null,
         string? serviceLogPath = null)
@@ -112,7 +118,6 @@ public sealed class LauncherApp
         _service = service ?? new ServiceManager();
         _webview = webview ?? new WebViewManager();
         _window = window ?? new WindowManager();
-        _tray = tray ?? new TrayManager();
         _staleCleanup = staleCleanup;
         _updates = updates;
         _serviceLogPath = serviceLogPath;
@@ -129,12 +134,11 @@ public sealed class LauncherApp
         _lifecycle.StateChanged += (_, s) => StateChanged?.Invoke(this, s);
     }
 
-    // 五个 Manager 的读取表面（供外部/测试校验装配完整性）
+    // 四个 Manager 的读取表面（供外部/测试校验装配完整性）
     public IRuntimeManager Runtime => _runtime;
     public IServiceManager Service => _service;
     public IWebViewManager WebView => _webview;
     public IWindowManager Window => _window;
-    public ITrayManager Tray => _tray;
 
     /// <summary>
     /// 驱动一次启动尝试，返回是否进入 Running。
@@ -370,7 +374,7 @@ public sealed class LauncherApp
             return false;
         }
 
-        // ---- UI 装配（WebView/Window/Tray 由组合根在返回后驱动）→ Running ----
+        // ---- UI 装配（WebView/Window 由组合根在返回后驱动）→ Running ----
         _lifecycle.Fire(LifecycleTrigger.ServiceReady);   // → InitializingUI
         _lifecycle.Fire(LifecycleTrigger.UIInitialized);  // → Running
         return true;
@@ -396,6 +400,22 @@ public sealed class LauncherApp
     /// 终结/关停态（ShuttingDown/Failed）下崩溃事件无意义——记日志吸收，不触发转移
     /// （避免向状态机投递非法转移触发其 Fail-Fast）。
     /// </summary>
+    /// <summary>
+    /// 运行期事务的受控转移入口：合法则投递并返回 true；当前状态不允许则记日志返回 false。
+    /// 【Phase 3/4 接线点】新增的 RestartingService / EnteringSafeMode / ApplyingUpdate 等
+    /// 运行期状态就靠它进入状态机——组合根不再自带 static bool 表达这些流转。
+    /// </summary>
+    public bool TryFire(LifecycleTrigger trigger)
+    {
+        if (!_lifecycle.CanFire(trigger))
+        {
+            Logger.Info($"lifecycle: {trigger} ignored while {_lifecycle.State}");
+            return false;
+        }
+        _lifecycle.Fire(trigger);
+        return true;
+    }
+
     public void HandleWebViewCrashed()
     {
         var state = _lifecycle.State;

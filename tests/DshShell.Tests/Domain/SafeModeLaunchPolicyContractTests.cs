@@ -104,4 +104,24 @@ public class SafeModeLaunchPolicyContractTests
         var afterFallback = SafeModeLaunchPolicy.Decorate(identity, safeModeActive: false, SafeDir);
         Assert.False(afterFallback.IsSafeProfile);
     }
+
+    /// <summary>
+    /// 安全模式导航 URL 的拼接（Phase 4 · T6a 自组合根的手拼三元式下沉）。
+    /// 分隔符必须看**真实 query**：token 横幅 URL 带 ?token=…，此时再拼 '?' 会把它截断成
+    /// 非法 query，用户点"进安全模式"后拿到的是没有 token 的页面（错误页驻留）。
+    /// </summary>
+    [Theory]
+    [InlineData("http://127.0.0.1:3080", "http://127.0.0.1:3080?safe_mode=1")]
+    [InlineData("http://127.0.0.1:3080/", "http://127.0.0.1:3080/?safe_mode=1")]
+    [InlineData("http://127.0.0.1:3080/?token=ab", "http://127.0.0.1:3080/?token=ab&safe_mode=1")]
+    [InlineData("http://127.0.0.1:3080/dsh?token=ab", "http://127.0.0.1:3080/dsh?token=ab&safe_mode=1")]
+    public void NavigationUrlWithSafeModeFlag_SeparatesByRealQuery(string baseUrl, string expected)
+        => Assert.Equal(expected, SafeModeLaunchPolicy.NavigationUrlWithSafeModeFlag(baseUrl));
+
+    /// <summary>非法地址必须响亮抛错，绝不静默返回"不带 safe_mode 的 URL"——
+    /// 那会让用户以为已经进了安全模式（原实现同样抛，由调用方 try/catch 留痕）。</summary>
+    [Fact]
+    public void NavigationUrlWithSafeModeFlag_MalformedUrl_Throws()
+        => Assert.Throws<UriFormatException>(
+            () => SafeModeLaunchPolicy.NavigationUrlWithSafeModeFlag("not a url"));
 }

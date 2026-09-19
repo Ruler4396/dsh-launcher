@@ -114,7 +114,7 @@ public sealed class SafeModeState
         {
             var dir = Path.GetDirectoryName(_storePath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            var tmp = _storePath + ".tmp";
+            string payload;
             using (var ms = new MemoryStream())
             {
                 using (var writer = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
@@ -130,9 +130,11 @@ public sealed class SafeModeState
                     }
                     writer.WriteEndObject();
                 }
-                File.WriteAllBytes(tmp, ms.ToArray());
+                payload = System.Text.Encoding.UTF8.GetString(ms.ToArray());
             }
-            File.Move(tmp, _storePath, overwrite: true);
+            // 原子写只允许一个实现（Guid 临时名）：固定 `.tmp` 名在跨进程/崩溃残留时会踩车。
+            // Utf8JsonWriter 不写 BOM，File.WriteAllText 默认 UTF-8 无 BOM → 字节语义不变。
+            ShellLogic.FileSystemPolicy.AtomicWrite(_storePath, payload);
         }
         catch
         {

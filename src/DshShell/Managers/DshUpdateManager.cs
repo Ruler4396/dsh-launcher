@@ -21,6 +21,15 @@ public sealed class DshUpdateManager : IDshUpdateManager
     /// <summary>apply 开始前记录的运行身份版本（npm 全局路径回滚时的降级目标）。</summary>
     public string? PreApplyIdentityVersion { get; private set; }
 
+    /// <summary>暂存构建是否正在跑（UI 线程读、后台构建线程写，故 volatile）。
+    /// 关窗拦截与"强制关闭是否该请求取消"都读这一个真相源——臃肿审计 Phase 4 · T6b 前，
+    /// 它是 <c>Program._isBuildInProgress</c>，由关窗处理器从外面伸手改写。</summary>
+    private volatile bool _buildInProgress;
+    public bool BuildInProgress => _buildInProgress;
+
+    /// <summary>正在跑的构建的取消源（null = 无构建）。仅 <see cref="BuildStagedUpdate"/> 生命周期内非空。</summary>
+    private volatile CancellationTokenSource? _buildCts;
+
     /// <summary>apply 成功落地的版本（原子切换/npm 均含）；组合根订阅以武装 update-guard 回滚闸门。</summary>
     public event Action<string>? UpdateApplied;
 
@@ -43,6 +52,84 @@ public sealed class DshUpdateManager : IDshUpdateManager
     }
 
     /// <summary>基于身份的更新判定：remoteVersion 严格大于 identity.Version 才算有新版。</summary>
+    // ================== 后台更新检查（Phase 4 · T4：自 Program.ScheduleUpdateCheck 迁入）==================
+
+    /// <summary>本次会话已下载过（MarkPending）的 dsh 版本——下载成功后不得再弹"有更新"。</summary>
+    private readonly HashSet<string> _sessionStagedVersions = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>暂存成功后登记，供本会话去重（原 Program._sessionStagedVersions 静态）。</summary>
+    public void MarkStagedThisSession(string version)
+    {
+        if (!string.IsNullOrWhiteSpace(version)) _sessionStagedVersions.Add(version);
+    }
+
+    /// <summary>
+    /// 跑一次完整的后台更新检查：读 pending 文件 + 取 launcher/dsh 远端版本 + 取本地版本，
+    /// **裁决交给纯函数 ShellLogic.UpdateNoticeFlowPolicy.Decide**。
+    /// 本方法只产生结论与留痕，不弹任何 UI——呈现留在组合根，故可脱网单测裁决、
+    /// 也可被 --ui-selftest 之外的路径复用。
+    /// </summary>
+    public async Task<ShellLogic.UpdateNoticeFlowPolicy.Outcome> CheckForUpdatesAsync(
+        Action<string> trace, CancellationToken ct = default)
+    {
+        // [DSH_TEST_UPDATE_SIGNAL] 假信号：替代真实网络检查，但下游结论与真实信号同源。
+        var signal = Environment.GetEnvironmentVariable("DSH_TEST_UPDATE_SIGNAL");
+        if (!string.IsNullOrWhiteSpace(signal))
+        {
+            trace($"update signal (test hook): {signal}");
+            if (signal.StartsWith("launcher:", StringComparison.OrdinalIgnoreCase))
+                return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(
+                    PendingApplyVersion: null,
+                    LauncherSecurityVersion: signal["launcher:".Length..].Trim().TrimStart('v'),
+                    LauncherLocalVersion: UpdateChecker.CurrentLauncherVersion ?? "?",
+                    DshAvailableVersion: null, DshLocalVersion: null, SkipReason: "test-hook");
+            if (signal.StartsWith("dsh:", StringComparison.OrdinalIgnoreCase))
+                return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(
+                    null, null, null,
+                    signal["dsh:".Length..].Trim().TrimStart('v'),
+                    UpdateChecker.ResolveLocalDshVersion(), "test-hook");
+            if (!signal.StartsWith("pending", StringComparison.OrdinalIgnoreCase))
+                return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(null, null, null, null, null, "test-hook-ignored");
+        }
+
+        var pendingVersion = StagedUpdate.ReadPendingVersion();
+
+        // launcher 安全更新：独立 try/catch——此步任何意外都不得吞掉后面的 dsh 检查
+        // （此前整段只有一个静默总 catch，一处抛出 → dsh 检查无声消失，日志零痕迹）。
+        string? launcherVersion = null, launcherLocal = UpdateChecker.CurrentLauncherVersion;
+        var launcherShouldNotify = false;
+        try
+        {
+            var lr = await UpdateChecker.FetchLatestLauncherReleaseFallbackAsync();
+            launcherVersion = lr?.Version;
+            launcherShouldNotify = lr is not null && ShellLogic.LauncherUpdateNoticePolicy
+                .ShouldNotifyLauncherSecurity(launcherLocal, lr.Version, lr.IsSecurity);
+            if (lr is { IsSecurity: true } && launcherLocal is null)
+                trace("launcher security notice suppressed: local version unknown (source build / probe failed)");
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("launcher security update check failed; continuing with dsh check",
+                ctx: new { error = ex.Message });
+        }
+
+        var latest = await UpdateChecker.FetchLatestDshVersionFallbackAsync();
+        var local = UpdateChecker.ResolveLocalDshVersion();
+        trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"}");
+
+        int Cmp(string? a, string? b) => (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
+            ? -1 : UpdateChecker.CompareVersions(a, b);
+
+        return ShellLogic.UpdateNoticeFlowPolicy.Decide(
+            pendingVersion,
+            launcherShouldNotify, launcherVersion, launcherLocal,
+            latest, local,
+            versionNewer: string.IsNullOrWhiteSpace(local) ? 1 : UpdateChecker.CompareVersions(latest, local),
+            alreadyStagedThisSession: latest is not null && _sessionStagedVersions.Contains(latest),
+            latestVsSkipped: Cmp(latest, StagedUpdate.ReadSkippedDshVersion()),
+            pendingVsLatest: Cmp(pendingVersion, latest));
+    }
+
     public bool NeedsUpdate(DshWeb.Domain.DshRuntimeIdentity local, string? remoteVersion)
         => remoteVersion is not null && UpdateChecker.CompareVersions(remoteVersion, local.Version) > 0;
 
@@ -417,6 +504,26 @@ public sealed class DshUpdateManager : IDshUpdateManager
     }
 
     /// <summary>
+    /// [update-guard] 回滚的 npm 全局路径半程：把全局包尽力降回 apply 前版本
+    ///（Phase 4 · T5 自组合根迁入——命令串拼装 + 多源重试是进程 IO，不是组合根职责）。
+    /// 快源优先、离线可用优先；返回是否成功，调用方必须透明上报失败，
+    /// 但**绝不**因降级失败而阻塞旧版重启（旧版本可能本来就是那个全局包）。
+    /// 版本串必须已过 <see cref="ShellLogic.UpdateGuardPolicy.ShouldDowngradeGlobalPackage"/>
+    /// 白名单——它直接进 npm 的参数串。
+    /// </summary>
+    public bool TryDowngradeGlobalPackageForRollback(string version)
+    {
+        var sources = ProcessRunner.GetNpmRegistrySources();
+        return ProcessRunner.TryNpmOverRegistries(
+            sources,
+            srcIdx => ProcessRunner.RunNpmCommand(
+                $"install -g \"{DshWeb.Domain.DshDiscovery.PackageName}@{version}\" --prefer-offline --no-audit --no-fund"
+                + sources[srcIdx],
+                out _, default, null),
+            "rollback-downgrade", out _);
+    }
+
+    /// <summary>
     /// 更新失败的 UI 反馈 + pending 保留/清理策略（自 Program 迁出；弹窗经 NotifyApplyFailed 回调）。
     /// - 网络/超时类失败 → 保留 pending，下次启动自动重试（不打扰）——仅记录日志；
     /// - 其他失败（权限/包损坏等）→ 清 pending（防死循环）+ 回调上层模态弹窗明确告知。
@@ -470,10 +577,243 @@ public sealed class DshUpdateManager : IDshUpdateManager
     /// pnpm 可用则 ndjson 真实百分比构建（粘住 pack 成功的镜像源），失败或不可用降级 npm
     /// （npm 无真实进度，脉冲动画由调用方维持）。构建失败（npm 亦败）时清理 buildDir。
     /// </summary>
+    // ================== 暂存构建事务（Phase 4 · T2：自 Program.DownloadDshUpdateStaged 迁入）==================
+
+    /// <summary>暂存构建的结果分类——组合根据此决定标题栏终态与是否弹窗，不再自己判 IO 细节。</summary>
+    public enum StagedBuildResult
+    {
+        Success, UnsafeVersion, DownloadFailed, BuildFailed, MissingManifest, UnresolvableBin, Threw,
+        /// <summary>用户在关窗确认里选择"强制关闭"→ 构建被请求取消。调用方不得再弹失败模态。</summary>
+        Cancelled,
+    }
+
+    /// <summary>
+    /// 一次暂存构建的完整结论。<see cref="TarballPath"/> 非空表示 tarball 仍在（可留待下次启动重试），
+    /// 失败原因文案由调用方组合——本类型只负责"发生了什么"，不负责"对用户怎么说"。
+    /// </summary>
+    public sealed record StagedBuildOutcome(
+        StagedBuildResult Result,
+        string? TarballPath = null,
+        string? TarballName = null,
+        string? StagingDir = null,
+        string? ErrorTail = null,
+        string? Detail = null,
+        string? BinEntry = null,
+        /// <summary>tarball 已挪到 staging 根并改写 pending(prefetched:false) → 下次启动免重下。</summary>
+        bool PreservedForRetry = false);
+
+    /// <summary>
+    /// 构建类失败的统一状态收口：把 tarball 挪出 buildDir 供下次启动免重下、改写 pending 为
+    /// "非预取"，然后删除 buildDir。**顺序敏感**——先挪走再删目录，反了就把下载一起删掉。
+    /// 此前这套顺序活在 Program 的 UI 方法前半段里（HandleStagedBuildFailure），
+    /// 于是"事务状态迁移"和"给用户看什么"缠在一起且不可测。
+    /// </summary>
+    private static bool PreserveRetryState(StagedBuildOutcome o, string latest)
+    {
+        var preserved = false;
+        try
+        {
+            if (o.TarballPath is not null && o.TarballName is not null)
+            {
+                preserved = StagedUpdate.PreserveTarballForRetry(o.TarballPath, o.StagingDir!, o.TarballName);
+                if (preserved) StagedUpdate.MarkPending(latest, o.TarballName, prefetched: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("staged update failure handling could not preserve retry state: " + ex.Message);
+        }
+        if (o.TarballPath is not null)
+        {
+            var buildDir = Path.GetDirectoryName(o.TarballPath);
+            if (buildDir is not null) ProcessRunner.TryDeleteDir(buildDir);
+        }
+        return preserved;
+    }
+
+    /// <summary>
+    /// 后台暂存构建：清场 → <c>npm pack</c> 下载 tarball → 构建完整运行时 → 校验产物 →
+    /// 写 pending（含 runtimeDir）。**全程不碰任何 UI**，进度经回调上报。
+    ///
+    /// 迁入理由（审计原话：这是一次"停在最别扭那半路"的抽取）：构建内核
+    /// <see cref="BuildRuntimeFromTarball"/> 与 <see cref="ResolveBuiltBinEntry"/> 早就在本类里，
+    /// 而它们外面的 staging 目录管理、裸 <c>Directory.CreateDirectory</c>、tarball 路径拼装、
+    /// <c>MarkPending</c> 却留在组合根——于是本方法在 Program.cs 里 173 行，且因贴着 Form 而无法测。
+    ///
+    /// 三条不变式随迁移保留并加测：
+    ///  1) 版本串白名单（污染串会经 buildDir 传入 TryDeleteDir 造成越界删除）；
+    ///  2) **每次全新安装**：复用残留 buildDir 会让 pnpm 命中旧 lockfile 秒级"假成功"，
+    ///     把上次中断的破损布局原样保留（两次 4 秒假成功的根因）；
+    ///  3) 旧 pending 若正指向待重建的 buildDir，必须先 ClearPending——否则下次启动"强制应用"
+    ///     会把半成品目录搬进 runtimes\&lt;ver&gt;（现场事故），既产生坏目标又让后续应用撞 already-exists。
+    /// </summary>
+    public StagedBuildOutcome BuildStagedUpdate(
+        string latest,
+        Action<string> trace,
+        Action<int> onBuildProgress,
+        Action onBuildPhaseStart)
+    {
+        // [臃肿审计 Phase 4 · T6b] "构建正在跑"是本引擎的事实，不是组合根的事实。
+        // 以前它由 Program 的 `static volatile bool _isBuildInProgress` + `static CTS` 表达，
+        // 于是 FormClosing 从外面伸手把它改成 false；现在置位/清零都在本方法的 try/finally 里，
+        // 组合根只读 <see cref="BuildInProgress"/>、最多请求取消。
+        _buildInProgress = true;
+        _buildCts = new CancellationTokenSource();
+        try
+        {
+            return BuildStagedUpdateCore(latest, trace, onBuildProgress, onBuildPhaseStart, _buildCts.Token);
+        }
+        finally
+        {
+            _buildInProgress = false;
+            _buildCts?.Dispose();
+            _buildCts = null;
+        }
+    }
+
+    /// <summary>有一次运行中的暂存构建时请求取消。返回 false = 当时没有构建在跑（幂等）。</summary>
+    public bool TryCancelRunningBuild()
+    {
+        if (!BuildInProgress) return false;
+        try { _buildCts?.Cancel(); }
+        catch (ObjectDisposedException) { return false; } // 构建恰好在同一瞬间收尾
+        return true;
+    }
+
+    private StagedBuildOutcome BuildStagedUpdateCore(
+        string latest,
+        Action<string> trace,
+        Action<int> onBuildProgress,
+        Action onBuildPhaseStart,
+        CancellationToken ct)
+    {
+        if (!ShellLogic.PathPolicy.IsSafeVersionSegment(latest))
+        {
+            Logger.Error($"update build refused: unsafe version segment '{latest}'", ErrorCodes.E4002);
+            return new StagedBuildOutcome(StagedBuildResult.UnsafeVersion, Detail: latest);
+        }
+
+        var staging = Path.Combine(_dataDir, "staging");
+        var buildDir = Path.Combine(staging, $"runtime-build-{latest}");
+        var tarballName = $"deepseek-ai-dsh-{latest}.tgz";
+        var tarballPath = Path.Combine(buildDir, tarballName);
+        string errorTail = "";
+
+        try
+        {
+            Directory.CreateDirectory(staging);
+            if (Directory.Exists(buildDir)) ProcessRunner.TryDeleteDir(buildDir); // 不变式 2
+            Directory.CreateDirectory(buildDir);
+
+            // 不变式 3：清场即令指向本 buildDir 的旧 pending 失效，必须显式清除
+            var (_, stalePendVer, _, _, stalePendRuntime) = StagedUpdate.ReadPending();
+            if (!string.IsNullOrWhiteSpace(stalePendRuntime)
+                && string.Equals(Path.GetFullPath(stalePendRuntime), Path.GetFullPath(buildDir),
+                        StringComparison.OrdinalIgnoreCase))
+            {
+                StagedUpdate.ClearPending();
+                trace($"cleared stale pending '{stalePendVer}' pointing at buildDir being rebuilt");
+            }
+
+            trace($"staged update flow started: v{latest}"); // 取证锚点：点击到 pnpm 检测不得留日志真空
+
+            // ---- 步骤 1：npm pack 下载（快源优先，失败沿序列降级）----
+            var regSources = ProcessRunner.GetNpmRegistrySources();
+            var packOk = ProcessRunner.TryNpmOverRegistries(regSources, srcIdx =>
+                ProcessRunner.RunNpmCommand(
+                    $"pack {DshWeb.Domain.DshDiscovery.PackageName}@{latest} --pack-destination \""
+                        + buildDir + "\"" + regSources[srcIdx],
+                    out errorTail, ct), "download-tarball", out var packSourceIdx);
+            if (!packOk || !File.Exists(tarballPath))
+            {
+                ProcessRunner.TryDeleteDir(buildDir);
+                if (ct.IsCancellationRequested)
+                {
+                    // 用户在选择"强制关闭"后取消：不是故障，绝不弹 E4001 打扰一个正在离场的会话
+                    Logger.Info("staged update download canceled by user (forced close)");
+                    return new StagedBuildOutcome(StagedBuildResult.Cancelled,
+                        TarballName: tarballName, StagingDir: staging);
+                }
+                Logger.Error("staged dsh update download failed: " + errorTail, ErrorCodes.E4001,
+                    new { latest });
+                return new StagedBuildOutcome(StagedBuildResult.DownloadFailed,
+                    TarballName: tarballName, StagingDir: staging, ErrorTail: errorTail);
+            }
+            trace($"dsh tarball downloaded: {tarballName}");
+
+            // ---- 步骤 2：完整构建（pnpm ~10s / npm ~60s）----
+            onBuildPhaseStart();
+            var (buildOk, tool) = BuildRuntimeFromTarball(
+                tarballPath, tarballName, buildDir, regSources, packSourceIdx,
+                percentProgress: onBuildProgress, beforeNpmFallback: onBuildPhaseStart, ct: ct);
+            if (!buildOk && ct.IsCancellationRequested)
+            {
+                // 用户"强制关闭"打断构建：tarball 已下到，按与失败同形的路径保全，
+                // 下次启动免重下继续构建（不留半成品目录，也不丢已下载的东西）。
+                var keptCancel = PreserveRetryState(new StagedBuildOutcome(StagedBuildResult.Cancelled,
+                    tarballPath, tarballName, staging), latest);
+                Logger.Info($"staged update build canceled by user (forced close); preserved={keptCancel}");
+                return new StagedBuildOutcome(StagedBuildResult.Cancelled,
+                    tarballPath, tarballName, staging, PreservedForRetry: keptCancel);
+            }
+            if (!buildOk)
+            {
+                Logger.Warn("dsh runtime build failed; preserving tarball for next launch retry",
+                    ErrorCodes.E4001, new { version = latest });
+                var kept = PreserveRetryState(new StagedBuildOutcome(StagedBuildResult.BuildFailed,
+                    tarballPath, tarballName, staging, Detail: tool), latest);
+                return new StagedBuildOutcome(StagedBuildResult.BuildFailed,
+                    tarballPath, tarballName, staging, Detail: tool, PreservedForRetry: kept);
+            }
+
+            // ---- 步骤 3：校验产物完整（bin 入口 + 包清单）----
+            var dshPkg = BuiltPackageManifestPath(buildDir);
+            if (!File.Exists(dshPkg))
+            {
+                Logger.Error($"build succeeded but dsh package.json missing: {dshPkg}", ErrorCodes.E4001);
+                var keptManifest = PreserveRetryState(new StagedBuildOutcome(StagedBuildResult.MissingManifest,
+                    tarballPath, tarballName, staging), latest);
+                return new StagedBuildOutcome(StagedBuildResult.MissingManifest,
+                    tarballPath, tarballName, staging, PreservedForRetry: keptManifest);
+            }
+            var binEntry = ResolveBuiltBinEntry(buildDir);
+            if (binEntry is null)
+            {
+                Logger.Error($"build succeeded but bin entry not resolvable in {dshPkg}", ErrorCodes.E4001);
+                var keptBin = PreserveRetryState(new StagedBuildOutcome(StagedBuildResult.UnresolvableBin,
+                    tarballPath, tarballName, staging), latest);
+                return new StagedBuildOutcome(StagedBuildResult.UnresolvableBin,
+                    tarballPath, tarballName, staging, PreservedForRetry: keptBin);
+            }
+            trace($"staged update validated: v{latest} bin={binEntry}");
+
+            // ---- 步骤 4：写 pending（含 runtimeDir）----
+            StagedUpdate.MarkPending(latest, tarballName, prefetched: true, runtimeDir: buildDir);
+            MarkStagedThisSession(latest);
+            Logger.Info("dsh runtime build complete: " + latest,
+                ctx: new { tool, bin = binEntry, buildDir });
+            return new StagedBuildOutcome(StagedBuildResult.Success,
+                tarballPath, tarballName, staging, BinEntry: binEntry);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("staged dsh update build error: " + ex.Message, ErrorCodes.E4001);
+            ProcessRunner.TryDeleteDir(buildDir);
+            return new StagedBuildOutcome(StagedBuildResult.Threw,
+                File.Exists(tarballPath) ? tarballPath : null, tarballName, staging, Detail: ex.Message);
+        }
+    }
+
+    /// <summary>构建产物里 dsh 包清单的确定性路径（原实现在校验与 ResolveBuiltBinEntry 里各拼一遍、
+    /// 同一个 JSON 解析两次；现收敛为一个来源）。</summary>
+    internal static string BuiltPackageManifestPath(string buildDir)
+        => Path.Combine(buildDir, "node_modules", DshWeb.Domain.DshDiscovery.PackageScope,
+            DshWeb.Domain.DshDiscovery.PackageShortName, "package.json");
+
     internal static (bool Ok, string Tool) BuildRuntimeFromTarball(
         string tarballPath, string tarballName, string buildDir,
         string[] regSources, int packSourceIdx,
-        Action<int>? percentProgress, Action? beforeNpmFallback)
+        Action<int>? percentProgress, Action? beforeNpmFallback, CancellationToken ct = default)
     {
         var buildOk = false;
         var buildTool = "npm";
@@ -506,6 +846,14 @@ public sealed class DshUpdateManager : IDshUpdateManager
             }
         }
 
+        if (!buildOk && ct.IsCancellationRequested)
+        {
+            // 已请求取消：绝不另起 npm 这条更长的构建链（pnpm 安装阶段本身不可中断，
+            // 见 docs/ARCHITECTURE-DEBT-LEDGER.md——但至少不让它续上一小时的 npm 安装）。
+            Logger.Info("build canceled; skipping npm fallback");
+            return (false, buildTool);
+        }
+
         if (!buildOk)
         {
             Logger.Info("building dsh runtime with npm");
@@ -517,7 +865,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
             buildOk = ProcessRunner.TryNpmOverRegistries(npmSources, srcIdx => ProcessRunner.RunNpmCommand(
                 $"install \"./{tarballName}\" --prefix . --prefer-offline --no-audit --no-fund"
                     + npmSources[srcIdx],
-                out buildTail, timeoutMs: 1200000, workingDirectory: buildDir), "npm-build", out _);
+                out buildTail, ct, timeoutMs: 1200000, workingDirectory: buildDir), "npm-build", out _);
             if (!buildOk)
             {
                 Logger.Warn($"npm build failed: {buildTail}");
@@ -534,7 +882,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
     /// </summary>
     internal static string? ResolveBuiltBinEntry(string buildDir)
     {
-        var dshPkg = Path.Combine(buildDir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+        var dshPkg = Path.Combine(buildDir, DshWeb.Domain.DshDiscovery.PackageRelativeDir("package.json"));
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(dshPkg));

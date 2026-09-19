@@ -36,7 +36,7 @@ internal sealed class TrayMenuForm : Form
     public TrayMenuForm(Action onExit, int deviceDpi)
     {
         _onExit = onExit;
-        _deviceDpi = deviceDpi <= 0 ? 96 : deviceDpi;
+        _deviceDpi = DshWeb.ShellLogic.DpiScale.Sanitize(deviceDpi);
         _g = ShellLogic.TrayMenuLayout.ComputeGeometry(_deviceDpi);
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -156,7 +156,7 @@ internal sealed class TrayMenuForm : Form
         }
         catch (Exception ex)
         {
-            DshWeb.Program.Trace("tray render failed: " + ex);
+            Logger.Info("tray render failed: " + ex);
         }
     }
 

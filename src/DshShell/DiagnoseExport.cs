@@ -252,46 +252,33 @@ public static class DiagnoseExport
 
     private static string RunCapture(string file, string args)
     {
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo(file, args)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return "（无法启动）";
-            var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止挂死阻塞
-            if (!p.WaitForExit(4000))
-            {
-                try { p.Kill(entireProcessTree: true); p.WaitForExit(); } catch { } // 超时杀进程树防泄漏
-                return "（执行超时）";
-            }
-            var outText = readTask.Result.Trim();
-            return string.IsNullOrWhiteSpace(outText) ? "（无输出）" : outText;
-        }
-        catch (Exception ex) { return "（" + ex.Message + "）"; }
+        // 进程三必须的唯一实现（Phase 5 · D1）。诊断命令大多是 Windows 控制台工具（GBK 代码页），
+        // 不强设 UTF-8——那会把要归档的诊断信息本身变成乱码，等于为了"统一"制造新缺陷。
+        var (ok, timedOut, output, error) = Managers.ProcessRunner.RunCapture(
+            file, args, 4000, utf8Output: false);
+        if (timedOut) return "（执行超时）";
+        if (!ok) return "（" + (error ?? "无法启动") + "）";
+        var outText = output.Trim();
+        return string.IsNullOrWhiteSpace(outText) ? "（无输出）" : outText;
     }
 
-    private static string[] RunCaptureLines(string file, string args)
+    /// <summary>
+    /// 采集多行外部命令输出。进程三必须（双流异步排空 + 限时等待 + 超时 Kill(entireProcessTree)）
+    /// 现在由 <see cref="Managers.ProcessRunner.RunCapture"/> 唯一实现承载（Phase 5 · D1）。
+    /// internal 暴露给回归用例 tests/.../Regression_DiagnoseExportPipeDrain。
+    /// </summary>
+    internal static string[] RunCaptureLines(string file, string args)
     {
-        try
+        var (ok, timedOut, output, error) = Managers.ProcessRunner.RunCapture(
+            file, args, 15000, utf8Output: false);
+        if (!ok)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo(file, args)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return Array.Empty<string>();
-            var lines = p.StandardOutput.ReadToEnd().Split('\n');
-            p.WaitForExit(4000);
-            return lines;
+            // 失败必须留痕：超时被强杀与启动失败是两种不同的排查方向，不能都变成"空输出"
+            Logger.Warn(timedOut
+                ? $"diagnose 命令超时并被强杀: {file} {args}"
+                : $"diagnose 外部命令采集失败: {error}");
+            return Array.Empty<string>();
         }
-        catch { return Array.Empty<string>(); }
+        return output.Split('\n');
     }
 }

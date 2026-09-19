@@ -3,7 +3,7 @@ namespace DshWeb.Managers;
 /// <summary>
 /// dsh 服务管理：端口/HTTP 就绪探测与启动决策。
 /// 探针以委托注入（默认 ShellLogic.PortOpen / IsHttpReady / GetProcessIdByPort / IsLikelyDshService /
-/// KillProcessTree / GetAncestorPids），使超时/就绪/僵尸清理逻辑可 Headless 单测。
+/// KillProcessTree），使超时/就绪/僵尸清理逻辑可 Headless 单测。
 /// 服务进程拉起/PID/僵尸清理等 UI 耦合部分留在 Main，后续按 DSH_USE_NEW_LIFECYCLE 切换迁移。
 /// </summary>
 public sealed class ServiceManager : IServiceManager
@@ -15,7 +15,6 @@ public sealed class ServiceManager : IServiceManager
     private readonly Func<int, bool> _identityCheck;
     private readonly Func<int, int, bool> _knownServicePid;
     private readonly Func<int, bool> _killProcessTree;
-    private readonly Func<int, System.Collections.Generic.List<int>> _ancestors;
     private readonly TimeSpan _pollDelay;
     private readonly TimeSpan _portReleaseTimeout;
 
@@ -27,7 +26,6 @@ public sealed class ServiceManager : IServiceManager
         Func<int, int>? pidLookup = null,
         Func<int, bool>? identityCheck = null,
         Func<int, bool>? killProcessTree = null,
-        Func<int, System.Collections.Generic.List<int>>? ancestors = null,
         TimeSpan? portReleaseTimeout = null,
         Func<int, int, bool>? knownServicePid = null)
     {
@@ -45,7 +43,6 @@ public sealed class ServiceManager : IServiceManager
         // （凡 node 皆可管理）；生产注入真实账本后，"账本外的 node"不再被判 Zombie 强杀。
         _knownServicePid = knownServicePid ?? new Func<int, int, bool>((_, _) => true);
         _killProcessTree = killProcessTree ?? ShellLogic.ProcessManagement.KillProcessTree;
-        _ancestors = ancestors ?? ShellLogic.ProcessManagement.GetAncestorPids;
         _portReleaseTimeout = portReleaseTimeout ?? TimeSpan.FromSeconds(2);
     }
 

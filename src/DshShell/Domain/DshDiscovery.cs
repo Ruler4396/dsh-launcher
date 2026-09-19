@@ -14,8 +14,32 @@ namespace DshWeb.Domain;
 /// </summary>
 public static class DshDiscovery
 {
-    /// <summary>标准 npm 包名。</summary>
-    public const string PackageName = "@deepseek-ai/dsh";
+    /// <summary>
+    /// 包标识的**唯一来源**（臃肿审计 Phase 5 · F9）。此前全仓有 2 个并存常量 + 12 处字面量：
+    /// scope 与短名各自被硬编码进 <c>node_modules/@deepseek-ai/dsh</c> 之类的路径段与用户可见
+    /// 文案里，改一次包名要动 7 个文件。现在 scope/短名是唯一定义，完整包名由它们拼出
+    /// （C# 允许常量拼接），路径段与提示文案一律从这里取。
+    /// </summary>
+    public const string PackageScope = "@deepseek-ai";
+    public const string PackageShortName = "dsh";
+
+    /// <summary>标准 npm 包名（= <see cref="PackageScope"/>/<see cref="PackageShortName"/>）。</summary>
+    public const string PackageName = PackageScope + "/" + PackageShortName;
+
+    /// <summary>
+    /// 安装布局里本包目录的相对路径（<c>node_modules/&lt;scope&gt;/&lt;short&gt;</c>，可再接一段相对路径）。
+    /// 本文件上面承诺过"路径段与提示文案一律从这里取"——F9 收尾把剩下的字面量真正改掉，
+    /// 承诺与现状从此一致。scope 变更时不再需要满仓找 <c>node_modules/@deepseek-ai/dsh</c>。
+    /// </summary>
+    public static string PackageRelativeDir(string? tail = null)
+        => Path.Combine(tail is null
+            ? new[] { "node_modules", PackageScope, PackageShortName }
+            : new[] { "node_modules", PackageScope, PackageShortName, tail });
+
+    /// <summary>已在路径字符串里定位本包目录时用的分隔符实化标记（含首尾分隔符）。</summary>
+    public static string PackagePathMarker
+        => string.Concat(Path.DirectorySeparatorChar, "node_modules", Path.DirectorySeparatorChar,
+            PackageScope, Path.DirectorySeparatorChar, PackageShortName, Path.DirectorySeparatorChar);
 
     // ---------------- 昂贵探测的记忆化 ----------------
     // DiscoverCurrentRuntime 的各步骤里唯一昂贵的是全局/shim 身份的版本探测
@@ -110,7 +134,7 @@ public static class DshDiscovery
 
             foreach (var dir in Directory.GetDirectories(runtimesDir))
             {
-                var dshPkg = Path.Combine(dir, "node_modules", "@deepseek-ai", "dsh", "package.json");
+                var dshPkg = Path.Combine(dir, PackageRelativeDir("package.json"));
                 if (!File.Exists(dshPkg)) continue;
                 try
                 {
@@ -131,7 +155,7 @@ public static class DshDiscovery
 
             if (bestDir is not null && bestVersion is not null && bestBinEntry is not null)
             {
-                var binPath = Path.Combine(bestDir, "node_modules", "@deepseek-ai", "dsh", bestBinEntry);
+                var binPath = Path.Combine(bestDir, PackageRelativeDir(bestBinEntry));
                 return new DshRuntimeIdentity(
                     DshSource.SelfContained, FindNodeExe(), binPath, bestVersion);
             }
@@ -165,7 +189,7 @@ public static class DshDiscovery
                 {
                     var sep = Path.DirectorySeparatorChar;
                     var normalized = binPath.Replace('/', sep);
-                    var fullPath = Path.Combine(runtimeDir, "node_modules", "@deepseek-ai", "dsh", normalized);
+                    var fullPath = Path.Combine(runtimeDir, PackageRelativeDir(normalized));
                     if (File.Exists(fullPath)) return normalized;
                     if (!Path.HasExtension(normalized) && File.Exists(fullPath + ".js"))
                         return normalized + ".js";
@@ -265,27 +289,15 @@ public static class DshDiscovery
         if (ProbeMemo.TryGetValue(memoKey, out var memoed)) return memoed;
         try
         {
-            var psi = new ProcessStartInfo(fileName, arguments)
+            // 进程三必须的唯一实现（Phase 5 · D1）：启动 + 双流排空 + 限时等待 + 超时杀整树
+            var (ok, timedOut, output, _) = DshWeb.Managers.ProcessRunner.RunCapture(
+                fileName, arguments, timeoutMs);
+            if (timedOut)
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-            // 异步排空两个管道（旧实现在 UI 线程同步 ReadToEnd：子进程若不关 stdout 则无限阻塞）
-            var outputTask = p.StandardOutput.ReadToEndAsync();
-            _ = p.StandardError.ReadToEndAsync();
-            if (!p.WaitForExit(timeoutMs))
-            {
-                try { p.Kill(entireProcessTree: true); p.WaitForExit(2000); } catch { /* 尽力回收 */ }
                 Logger.Warn($"version probe timed out ({timeoutMs}ms); process tree killed: {fileName}");
                 return ProbeMemo[memoKey] = null; // 失败同样记忆：防会话内反复 3s 空转
             }
-            var output = outputTask.Result; // 进程已退出（WaitForExit=true）→ 管道已关闭，任务必已完成
+            if (!ok) return null; // 启动失败/异常：不记忆，下次仍可能成功（进程不在，无空转成本）
             return ProbeMemo[memoKey] = ExtractVersionLine(output);
         }
         catch (Exception ex)

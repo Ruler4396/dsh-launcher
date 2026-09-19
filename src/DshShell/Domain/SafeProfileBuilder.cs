@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace DshWeb.Domain;
@@ -37,7 +37,7 @@ public sealed class SafeProfileBuilder
     };
 
     /// <summary>@deepseek-ai scope 前缀：判定"核心 bundle"的依据。</summary>
-    private const string DeepSeekScope = "@deepseek-ai/";
+    private const string DeepSeekScope = DshDiscovery.PackageScope + "/";
 
     private readonly string _dshHome;
     private readonly string _userProfilesDir;
@@ -78,18 +78,23 @@ public sealed class SafeProfileBuilder
                     ["profile"] = new Dictionary<string, object?> { ["bundles"] = bundles.ToArray() },
                 }
             };
-            // [铁律] 状态文件原子写：.tmp + File.Move，防中途崩溃留下损坏的 package.json
-            var tmp = SafeProfilePackageJson + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(manifest, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-            }) + "\n");
-            if (File.Exists(SafeProfilePackageJson)) File.Delete(SafeProfilePackageJson);
-            File.Move(tmp, SafeProfilePackageJson);
+            // [铁律] 状态文件原子写只允许一个实现：ShellLogic.FileSystemPolicy.AtomicWrite
+            // （Guid 临时名 + File.Move(overwrite:true)）。此前这里手写「固定 .tmp 名 + Delete + Move」，
+            // 两个故障面都被实测到：固定名让并发重建互相踩车（回归用例里 32 路并发有失败），
+            // Delete→Move 之间目标 package.json 短暂不存在（观察线程能采到缺失）——profile 缺失
+            // 即 dsh 硬失败 exit 1 → E2002，用户连界面都进不去。
+            ShellLogic.FileSystemPolicy.AtomicWrite(SafeProfilePackageJson,
+                JsonSerializer.Serialize(manifest, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                }) + "\n");
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            // 失败必须可归因：返回 false 的同时留一条 Warn（裸 catch{return false;} 违反异常透明性铁律）
+            Logger.Warn("safe profile build failed: " + ex.Message, ErrorCodes.E1010,
+                new { path = SafeProfilePackageJson, type = ex.GetType().Name });
             return false;
         }
     }

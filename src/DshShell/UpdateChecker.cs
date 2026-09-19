@@ -16,7 +16,9 @@ namespace DshWeb;
 public static class UpdateChecker
 {
     public const string LauncherRepo = "Ruler4396/dsh-launcher";
-    public const string DshNpmPackage = "@deepseek-ai/dsh";
+    /// <summary>dsh 包名的唯一来源是 DshDiscovery.PackageName；本别名只为既有调用点保持可读，
+    /// 不再另写字面量（臃肿审计 Phase 5 · F9：此前两处并存常量，改包名会漏改一处）。</summary>
+    public const string DshNpmPackage = DshWeb.Domain.DshDiscovery.PackageName;
 
     /// <summary>launcher 最新版下载页（版本信息弹窗 / 安全更新提示共用，单一事实源）。
     /// [2026-09] 此前两处（ShowPortableUpdateDialog）硬编码同一 URL 字符串，统一收口于此。</summary>
@@ -75,28 +77,16 @@ public static class UpdateChecker
         {
             var repoRoot = FindRepoRoot();
             if (repoRoot is null) return null;
-            var psi = new ProcessStartInfo("git", "describe --tags")
+            // 进程三必须的唯一实现（Phase 5 · D1）：双流排空 + 限时等待 + 超时杀整树
+            var (ok, timedOut, output, _) = Managers.ProcessRunner.RunCapture(
+                "git", "describe --tags", 4000, repoRoot);
+            if (timedOut)
             {
-                WorkingDirectory = repoRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-            var outputTask = p.StandardOutput.ReadToEndAsync();
-            _ = p.StandardError.ReadToEndAsync();
-            if (!p.WaitForExit(4000))
-            {
-                try { p.Kill(entireProcessTree: true); p.WaitForExit(2000); } catch { /* 尽力回收 */ }
                 Logger.Warn("git describe probe timed out; launcher version stays unknown");
                 return null;
             }
-            var tag = outputTask.Result; // 进程已退出 → 管道已关闭，任务必已完成
-            return ParseDescribeOutput(tag);
+            if (!ok) return null;
+            return ParseDescribeOutput(output);
         }
         catch (Exception ex)
         {

@@ -104,7 +104,6 @@ public class ServiceManagerTests
             pidLookup: _ => 123,
             identityCheck: _ => true,
             killProcessTree: pid => { killed.Add(pid); portOpen = false; return true; },
-            ancestors: _ => new List<int> { 456, 457 }, // 旧"cmd/npx 外壳"链（加固后绝不触碰）
             portReleaseTimeout: TimeSpan.FromMilliseconds(300));
 
         // ① 三重验证判定僵尸
@@ -112,9 +111,10 @@ public class ServiceManagerTests
 
         // ② 清理触发：taskkill /T /F 语义——只杀端口归属进程树，祖先外壳绝不沾手
         Assert.True(sm.KillZombieTree(3080));
-        Assert.Equal(new[] { 123 }, killed); // node（监听端口的服务进程）……
-        Assert.DoesNotContain(456, killed);  // ……但祖先（外壳/启动器/终端）一律不动
-        Assert.DoesNotContain(457, killed);
+        // 精确断言：被杀的**恰好且只有**端口归属进程。Phase 6 删掉 ServiceManager 的 ancestors
+        // 注入参数后，原先的 DoesNotContain(456/457) 已无从成立（那两个 PID 根本不再进得来），
+        // 留着就是恒真断言 → 删除；"没有祖先可杀"改由构造（参数已不存在）在编译期保证。
+        Assert.Equal(new[] { 123 }, killed);
         Assert.False(portOpen);              // 端口最终释放
     }
 

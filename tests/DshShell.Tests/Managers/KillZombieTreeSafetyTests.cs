@@ -29,13 +29,14 @@ public class KillZombieTreeSafetyTests
             tcpProbe: (_, _) => false,                       // 端口立即释放
             pidLookup: _ => 111,
             killProcessTree: killer.Invoke,
-            ancestors: _ => new System.Collections.Generic.List<int> { 222, 333, 444 },
             portReleaseTimeout: TimeSpan.FromMilliseconds(200));
 
         var ok = svc.KillZombieTree(3080);
 
         Assert.True(ok);
-        // Z1/Z2：只杀端口归属进程；祖先（222/333/444，可代表启动器自身/终端）绝不沾手
+        // Z1/Z2：只杀端口归属进程。祖先链杀伤在 2026-08 已停用，Phase 6 把那条死参数
+        // （ServiceManager 的 ancestors 注入点）整个删除——现在**构造上就不存在**可杀的祖先列表，
+        // 编译器即证明；本用例继续验证"只杀 111 这一个 PID"。
         Assert.Equal(new[] { 111 }, killer.Killed);
     }
 
@@ -46,8 +47,7 @@ public class KillZombieTreeSafetyTests
         var svc = new ServiceManager(
             tcpProbe: (_, _) => true,
             pidLookup: _ => 0,
-            killProcessTree: killer.Invoke,
-            ancestors: _ => new System.Collections.Generic.List<int> { 999 });
+            killProcessTree: killer.Invoke);
 
         var ok = svc.KillZombieTree(3080);
 
@@ -63,7 +63,6 @@ public class KillZombieTreeSafetyTests
             tcpProbe: (_, _) => true,                        // 端口一直占着
             pidLookup: _ => 111,
             killProcessTree: killer.Invoke,
-            ancestors: _ => new System.Collections.Generic.List<int>(),
             portReleaseTimeout: TimeSpan.FromMilliseconds(150));
 
         var ok = svc.KillZombieTree(3080);
