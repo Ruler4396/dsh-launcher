@@ -27,9 +27,46 @@ public class NoticeCardLayoutContractTests
         Assert.Equal((int)Math.Round(baseG.TextWidth * s), g.TextWidth);
         Assert.Equal((int)Math.Round(baseG.Padding * s), g.Padding);
         Assert.Equal((int)Math.Round(baseG.CloseSize * s), g.CloseSize);
-        // 窗口宽 = 文字宽 + 左右内边距（不是再乘一次系数——issue #28-3 的 s² 放大根因）
-        Assert.Equal(g.TextWidth + 2 * g.Padding, g.Width);
+        Assert.Equal((int)Math.Round(baseG.AccentWidth * s), g.AccentWidth);
+        // 窗口宽 = 文字宽 + 左右内边距 + 色条 + 色条与文字的一个间距
+        //（不是再乘一次系数——issue #28-3 的 s² 放大根因）
+        Assert.Equal(g.TextWidth + 2 * g.Padding + g.AccentWidth + g.Gap, g.Width);
     }
+
+    [Theory]
+    [InlineData(96)]
+    [InlineData(192)]
+    public void Place_AccentBarSpansFullHeight_AndTextYieldsToIt(int dpi)
+    {
+        var g = G(dpi);
+        var p = ShellLogic.NoticeCardLayout.Place(g, 18, 32, hasAction: true);
+        Assert.Equal(g.AccentWidth, p.AccentRect.Width);
+        Assert.Equal(p.Height, p.AccentRect.Height);   // 撑满全高，才是一条真正的级别标识
+        Assert.Equal(0, p.AccentRect.X);
+        // 文字一律从色条右侧开始：色条压住正文 = 视觉上"字被切了一半"
+        Assert.True(p.TitleRect.X >= g.AccentWidth + g.Padding);
+        Assert.True(p.BodyRect.X >= g.AccentWidth + g.Padding);
+        Assert.True(p.ActionRect.X >= g.AccentWidth + g.Padding);
+    }
+
+    /// <summary>测量宽度与排版宽度必须同源：否则"按 A 宽换行、按 B 宽绘制"会裁字。</summary>
+    [Fact]
+    public void MeasureWidths_AreTheWidthsPlaceUses()
+    {
+        var g = G(96);
+        var m = ShellLogic.NoticeCardLayout.MeasureWidths(g);
+        var p = ShellLogic.NoticeCardLayout.Place(g, m.TitleWidth, m.BodyWidth, hasAction: true);
+        Assert.Equal(m.TitleWidth, p.TitleRect.Width);
+        Assert.Equal(m.BodyWidth, p.BodyRect.Width);
+        Assert.Equal(m.BodyWidth, p.ActionRect.Width);
+    }
+
+    /// <summary>级别 → 提示线索：Urgent 才走警示音/红色条（安全更新、构建失败、安全模式）。</summary>
+    [Theory]
+    [InlineData(ShellLogic.NoticeKind.Info, false)]
+    [InlineData(ShellLogic.NoticeKind.Urgent, true)]
+    public void NoticePolicy_WarningCueOnlyForUrgent(ShellLogic.NoticeKind kind, bool expected)
+        => Assert.Equal(expected, ShellLogic.NoticePolicy.UseWarningCue(kind));
 
     [Theory]
     [InlineData(0)]

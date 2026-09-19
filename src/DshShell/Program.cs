@@ -1498,7 +1498,8 @@ internal static class Program
             + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。",
             TimeSpan.FromSeconds(25),
             onAction: () => ExitSafeModeRequested(form),
-            actionText: "点击此处退出安全模式并重启");
+            actionText: "点击此处退出安全模式并重启",
+            kind: ShellLogic.NoticeKind.Urgent);
         Logger.Info(presented
             ? "safe-mode notice presented: 第三方插件已临时禁用（点击可退出）"
             : "safe-mode notice not presented; title bar 安全模式 marker is the only cue");
@@ -1515,15 +1516,57 @@ internal static class Program
         }
         SafeMode.Deactivate();
         Trace("SAFEMODE: user exited safe mode via notice → restarting service with normal profile");
+        RestartOutOfSafeMode(form);
+    }
+
+    /// <summary>
+    /// 真正执行"以正常配置重新拉起服务"。独立成方法是为了**退出失败后还能再点一次**：
+    /// 粘滞标志在第一次点击时已清除，重试入口若还走 ExitSafeModeRequested，会被
+    /// !IsActive 闸门挡回去只清横幅、服务永远停在安全模式。
+    /// 失败提示**只有一条通道**：把"重试"并进同一个对话框（Yes/No），不再另发通知卡片——
+    /// 一次失败弹两条（模态 + 卡片）正是本轮要消灭的"重复提示"。
+    /// </summary>
+    private static void RestartOutOfSafeMode(DshShellForm form)
+    {
         _ = Task.Run(async () =>
         {
             var outcome = await RestartDshServiceCoreAsync("exit-safe-mode");
             if (outcome is ServiceRestartOutcome.StartFailed or ServiceRestartOutcome.NotReady)
             {
-                var (code, message) = outcome == ServiceRestartOutcome.StartFailed
-                    ? (ErrorCodes.E2001, "退出安全模式失败：无法以正常配置拉起 dsh 服务。请查看统一日志后重新打开 dsh-launcher。")
-                    : (ErrorCodes.E2004, "退出安全模式后 dsh 服务 60 秒内未就绪，请查看统一日志。");
-                try { form.BeginInvoke(() => ShowError(code, message, log: false)); }
+                var reason = outcome == ServiceRestartOutcome.StartFailed
+                    ? "无法以正常配置拉起 dsh 服务（E2001）。"
+                    : "dsh 服务 60 秒内未就绪（E2004）。";
+                try
+                {
+                    form.BeginInvoke(() =>
+                    {
+                        Logger.Error($"exit safe mode incomplete: {reason}",
+                            outcome == ServiceRestartOutcome.StartFailed ? ErrorCodes.E2001 : ErrorCodes.E2004);
+                        if (E2EMode)
+                        {
+                            Trace("exit-safe-mode retry prompt suppressed in E2E/probe mode");
+                            return;
+                        }
+                        DialogResult r;
+                        try
+                        {
+                            r = MessageBox.Show(form,
+                                reason + "\n\n安全模式的粘滞标志已清除：\n"
+                                + "· 点「重试」再拉起一次；\n"
+                                + "· 点「取消」则保持现状——重新打开 dsh-launcher 即恢复正常配置。",
+                                "退出安全模式未完成", MessageBoxButtons.RetryCancel,
+                                MessageBoxIcon.Warning);
+                        }
+                        catch (Exception ex)
+                        {
+                            // 对话框本身失败（窗体已关闭等）：留痕，绝不抛进后台任务
+                            Logger.Warn("exit-safe-mode retry prompt failed: " + ex.Message);
+                            return;
+                        }
+                        Trace($"exit-safe-mode retry prompt answered: {r}");
+                        if (r == DialogResult.Retry) RestartOutOfSafeMode(form);
+                    });
+                }
                 catch { /* 窗体已关闭 */ }
                 return;
             }
@@ -2677,7 +2720,9 @@ internal static class Program
         // （OnPendingBalloonClicked），语义与当年 BalloonTipClicked / Toast 激活一致。
         if (Windows.NoticeCard.Present(_pendingForm, title, body,
                 TimeSpan.FromSeconds(25),      // 驻留 25s，安全更新要让人看到
-                () => OnPendingBalloonClicked(null, EventArgs.Empty)))
+                () => OnPendingBalloonClicked(null, EventArgs.Empty),
+                kind: type == PendingUpdate.LauncherSecurity
+                    ? ShellLogic.NoticeKind.Urgent : ShellLogic.NoticeKind.Info))
             Logger.Info($"update notice presented: {title} / {body.Replace("\n", " ")}");
         // 标题栏标记是**状态指示**（卡片会自动收起，错过的人仍要看得出"有更新待处理"），
         // 不构成第二条通知通道。
@@ -3140,7 +3185,7 @@ internal static class Program
         {
             var noticeShown = Windows.NoticeCard.Present(form, "dsh 更新构建失败",
                 $"dsh {latest} 后台构建失败。{(preserved ? "已保留下载，下次启动启动器时将自动重试。" : "可重新点击更新重试。")}",
-                TimeSpan.FromSeconds(8));
+                TimeSpan.FromSeconds(8), kind: ShellLogic.NoticeKind.Urgent);
             Logger.Info($"update failure notification: card={noticeShown}, preserved={preserved}");
         }
         catch (Exception ex)
