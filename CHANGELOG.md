@@ -116,6 +116,25 @@
   （高分屏真机变红）+ E2E 把 `>=60x20` 这条抄自缺陷常量的同义反复断言改成**派生不变量**
   （按钮尺寸/位置与窗口矩形成比例）。
 
+- **按点取显示器 DPI 的采样器取的是"物理角 DPI"，不是有效 DPI（`Win32/MonitorDpi`，影响所有自绘窗口）**：
+  排查"通知卡片还是不够显眼"时实测发现——本机 1920×1080 @100%（有效 DPI 96）上
+  `MonitorDpi.ForPoint` 恒返回 **89**，卡片按 s=0.93 整体缩一档（设计宽 445px → 实际 413px）。
+  根因是 shcore `MONITOR_DPI_TYPE` 里 **`MDT_EFFECTIVE_DPI = 0`**，而代码传的 **`1` 是
+  `MDT_ANGULAR_DPI`**——面板的物理角 DPI。偏差取决于屏幕尺寸（24" 1080p ≈ 89、27" ≈ 81），
+  换一台机器就换一档，100% 缩放下肉眼完全看不出，所以它躲过了 #28-3 那轮高 DPI 修复和全部截图对照。
+  受影响面 = 所有经 `ForPoint` 取样的窗口：通知卡片 + 托盘右键菜单（#28-3 的"按光标所在屏缩放"
+  修复被这一档悄悄吃掉了一半）。修复：常量改 0 并在注释里写清三个枚举值；
+  回归 `Regression_MonitorDpiAngular.RealOs` 两路——① 反射钉死常量必须等于 0（任意机器/CI 都有效，
+  因为这是与 SDK 字面值对齐的问题）；② 真机交叉核对 `ForPoint(显示器中心)` 必须等于同一块屏的
+  `GetDpiForMonitor(MDT_EFFECTIVE)`，并在"物理 DPI 恰等于有效 DPI"的机器上如实记 NOTE 说明该断言
+  在此无区分度（不给假绿）。另：`CustomTitleBar` 启动脉冲分支每帧 `new Font(...)` 不释放
+  （~30fps → 每秒约 30 个 GDI 句柄），改 `using`。
+  同轮顺带把通知卡片的**定位来源**也换成物理像素：原先用 `Screen.FromControl(owner).WorkingArea`
+  喂 `PlaceAtBottomRight`，而 `Form.Location` 是物理像素——本仓库既有不变式（见
+  `Win32/DisplayMetricsProvider` 注释）明确二者不可混用，125%/150% 屏上卡片会贴不到右下角或
+  算错让开任务栏的高度（100% 下两者相等，所以看不出）。现改经
+  `Win32DisplayMetricsProvider.GetMonitorMetrics(owner.Handle)` 一次取齐"该监视器的物理工作区 +
+  该窗口 DPI"，尺寸与定位**同源**；取不到时回退逻辑工作区 + `DeviceDpi` 并 Warn。
 - **通知通道整体收口：删除 WPN/系统 Toast 通路，统一为自绘通知卡片（issue #25）**
   宿主 DshWeb.exe 在 `wpnapps.dll` 内原生崩溃（`0xc0000005`），托管层无法拦截，进入
   "守护拉起 → 再崩"自愈循环并连带整个 dsh 运行时/QQ Bot 插件下线。同一签名在两代 Windows
@@ -157,6 +176,16 @@
     ④ **鼠标悬停暂停倒计时**、移开按剩余时间续（自动收起与"来不及读/来不及点"的矛盾）；
     级别判定沉淀为纯函数 `ShellLogic.NoticePolicy.UseWarningCue`，几何新增
     `NoticeCardLayout.MeasureWidths`（测量与排版同源，避免"按 A 宽换行、按 B 宽绘制"裁字）。
+  - **第四轮：字号与整卡尺寸放大**（用户仍反馈"不够显眼"）。前三轮改的是对比度/字重/声音，
+    **尺寸**一直没动——13px 标题在 1080p @100% 上和正文同权重。设计基准改为标题 16px / 正文 14px，
+    并同步放大承载它的外框（文字宽 360→400、内边距 14→16、间距 6→8、动作行 26→30、
+    × 命中区 20→24、色条 4→5），避免"只把字撑大、留白不变"挤成高塔。同一台 1080p @100%
+    机器实测：改基准后、修 DPI 前 413×77（被 89 DPI 缩了一档），修完 DPI 后 **445×84**；
+    标题有效字号从 13px 到 16px（相对用户此前看到的约 12px 是 +33%）。
+    新增契约 `Geometry_ProminenceFloorAt96dpi`（字号/× 尺寸/动作行高/文字宽的**下限**，
+    防止后人再缩回去）+ `EmSizes_ScaleOnceWithDpi`（字号也只许乘一次 s，#28-3 的 s² 教训）。
+    `notice displayed` 日志一并带上 `w/h/dpi/textW/pad/gap/accent/em`——高 DPI 的问题只看代码
+    推不出来，本轮就是靠这组一手数据当场抓到 `MonitorDpi` 取错 DPI 的。
   - **退出安全模式必须真能退出**：`ExitSafeModeRequested` 拆出 `RestartOutOfSafeMode`——
     粘滞标志在首次点击即清除，重试若仍走原方法会被 `!IsActive` 闸门挡回去只清横幅、
     服务永远停在安全模式。失败提示**只留一条通道**：把「重试」并进同一个对话框

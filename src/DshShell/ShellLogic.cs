@@ -2516,18 +2516,24 @@ public static class ShellLogic
     public static class NoticeCardLayout
     {
         // 设计基准（96dpi 逻辑像素）
-        public const int DesignTextWidth = 360;
-        public const int DesignPadding = 14;
-        public const int DesignGap = 6;
-        public const int DesignActionHeight = 26;
+        //
+        // 【为什么字号一版版往上调】issue #25 收口后用户仍反馈"通知不够显眼"。前三轮修的是
+        // 图地分离（色条/边框对比度）、字重（粗体）、声音与悬停——**尺寸**一直没动：13px 标题
+        // 在 1920×1080 @100% 上约等于正文，视觉权重和它要承载的"必须看到并行动"不相称。
+        // 这里加的是字号与随之放大的整卡尺寸（不是只把字撑大留白不变——那样会挤成一条高塔）。
+        // 折算仍只乘一次 s：几何全部由 ComputeGeometry 出，绘制侧不再自己乘系数（#28-3 的 s² 根因）。
+        public const int DesignTextWidth = 400;
+        public const int DesignPadding = 16;
+        public const int DesignGap = 8;
+        public const int DesignActionHeight = 30;
         public const int DesignCornerRadius = 8;
         public const int DesignScreenMargin = 12;
-        public const int DesignTitleEmPx = 13;
-        public const int DesignBodyEmPx = 12;
-        public const int DesignCloseSize = 20;
+        public const int DesignTitleEmPx = 16;
+        public const int DesignBodyEmPx = 14;
+        public const int DesignCloseSize = 24;
         /// <summary>左侧强调色条宽度：卡片此前只有 1.24:1 的边框，与浅色页面/桌面几乎无图地
         /// 分离（实测 #E5E7EB/白 = 1.24:1），"不显眼"的主因在此。色条同时承载严重级别。</summary>
-        public const int DesignAccentWidth = 4;
+        public const int DesignAccentWidth = 5;
 
         public readonly record struct Geometry(
             int TextWidth, int Width, int Padding, int Gap, int ActionHeight,

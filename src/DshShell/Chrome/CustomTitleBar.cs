@@ -299,7 +299,9 @@ internal sealed class CustomTitleBar : Panel
             // 文本显示
             if (!string.IsNullOrEmpty(_buildProgressText))
             {
-                var statusFont = new Font("Microsoft YaHei UI", 8F);
+                // using：这段在启动脉冲定时器下每帧都跑（~30fps），Font 不释放就是
+                // 每秒 ~30 个 GDI 句柄的泄漏（下方 Ready/Failed 分支已经是 using 写法）。
+                using var statusFont = new Font("Microsoft YaHei UI", 8F);
                 var statusText = " " + _buildProgressText;
                 var statusWidth = TextRenderer.MeasureText(statusText, statusFont).Width;
                 TextRenderer.DrawText(g, statusText, statusFont,
