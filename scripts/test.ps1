@@ -146,6 +146,19 @@ Assert-True ($noticeCardSrc -match 'NoticeDedupe\.ShouldSuppress') "通知对象
 $traySrc = Get-Content (Join-Path $root "src\DshShell\Managers\WindowManager.cs") -Raw
 Assert-True ($traySrc -notmatch 'ShowBalloonTip') "托盘气泡不再是通知通道（避免第二套呈现实现回潮）"
 
+# ---- DPI 纪律：自绘窗口的几何只许来自纯函数，且一律物理像素 ----
+# 事故链：#28-3（字号按 Point 又被 DC 折算 → s²）、#25 卡片（MonitorDpi 取到面板物理角 DPI
+# → 整窗缩一档）、版本信息窗（硬编码 96dpi 像素 + 无 OnDpiChanged → 缩放屏叠列）、
+# 托盘菜单（逻辑工作区钳物理坐标 → 菜单离图标越来越远）。四起同一个形状：**单位/来源不同源**。
+$verDlgSrc = Get-Content (Join-Path $root "src\DshShell\Windows\VersionInfoDialog.cs") -Raw
+Assert-True ($verDlgSrc -match 'VersionDialogLayout\.Compute') "版本信息窗版式必须来自纯函数（不得再写死 96dpi 像素列位）"
+Assert-True ($verDlgSrc -match 'OnDpiChanged') "版本信息窗必须响应 DPI 变化整体重排（跨屏/改倍率）"
+Assert-True ($traySrc -match 'MonitorWorkArea\.ForPoint') "托盘菜单钳位必须用物理像素工作区 rcWork，不是逻辑 Screen.WorkingArea"
+Assert-True ($traySrc -match 'TrayMenuLayout\.PlaceAtCursor') "托盘菜单落点必须是纯函数（贴边偏移随 DPI 折算一次）"
+$ctbSrc = Get-Content (Join-Path $root "src\DshShell\Chrome\CustomTitleBar.cs") -Raw
+Assert-True ($ctbSrc -notmatch 'new Font\("[^"]+",\s*\d+(\.\d+)?F') "自绘标题栏不得用 Point 单位字号（s² 根因，见 issue #28-3）"
+Assert-True ($noticeCardSrc -match 'Win32DisplayMetricsProvider') "通知卡片的定位与 DPI 必须同源，且取物理像素工作区"
+
 # ---- issue #28-4 同族缺口：粘滞安全模式 → 拉起身份，只允许一个 ensure 入口 ----
 # 真机端到端实测到的第二次事故：ensure（缺 .dsh-safe 先重建、重建失败退回正常模式）只补在重启
 # 路径 StartDshServiceViaIdentity，初始启动的装饰钩子仍裸调 Decorate → dsh 硬失败

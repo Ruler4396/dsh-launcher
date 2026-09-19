@@ -133,14 +133,18 @@ public sealed class WindowManager : IWindowManager
             // [issue #28-3] 先取光标所在屏的 DPI 再构造菜单：菜单窗手工布局、WinForms 不替它缩放，
             // 构造时（Location 仍为 0,0）采样 DPI 会恒取到主屏，混屏下副屏菜单尺寸全错。
             var pt = Cursor.Position;
-            var menu = TrayMenuFactory(exitAction, Win32.MonitorDpi.ForPoint(pt));
-            var wa = Screen.FromPoint(pt).WorkingArea;
-            var loc = new Point(pt.X - menu.Width + 12, pt.Y - menu.Height - 6);
-            if (loc.X < wa.Left) loc.X = pt.X + 12;
-            if (loc.Y < wa.Top) loc.Y = pt.Y + 6;
-            if (loc.X + menu.Width > wa.Right) loc.X = wa.Right - menu.Width;
-            if (loc.Y + menu.Height > wa.Bottom) loc.Y = wa.Bottom - menu.Height;
-            menu.Location = loc;
+            var dpi = Win32.MonitorDpi.ForPoint(pt);
+            var menu = TrayMenuFactory(exitAction, dpi);
+            // 物理像素工作区（rcWork）+ 纯函数落点：逻辑工作区钳物理坐标会在缩放屏上
+            // 把菜单推离图标，12/6 的贴边偏移也必须随 DPI 折算（issue #28-3 同族）。
+            var wa = Win32.MonitorWorkArea.ForPoint(pt);
+            if (wa.IsEmpty)
+            {
+                Logger.Warn("tray menu: physical rcWork unavailable, falling back to logical work area");
+                wa = Screen.FromPoint(pt).WorkingArea;
+            }
+            menu.Location = ShellLogic.TrayMenuLayout.PlaceAtCursor(
+                pt.X, pt.Y, wa, menu.Width, menu.Height, dpi);
             menu.Show();
         }
         catch { /* 菜单显示失败不影响壳 */ }

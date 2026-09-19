@@ -1,3 +1,4 @@
+using System.Drawing;
 using DshWeb;
 using Xunit;
 
@@ -130,5 +131,65 @@ public class TrayMenuLayoutContractTests
         Assert.Equal(10 + 36 / 2, place.IconCenterX);   // 左对齐到条目起点，图标中心不越出卡片
         Assert.True(place.IconCenterX - 18 >= 10, "图标左缘必须在条目矩形内");
         Assert.Equal(place.FirstCharX + 53 + 4, place.SecondCharX); // 字距契约在溢出时同样成立
+    }
+
+    // ==================== 菜单落点（物理工作区，缩放屏回归） ====================
+
+    private static Rectangle Work(int x, int y, int w, int h) => new(x, y, w, h);
+
+    /// <summary>
+    /// 主屏 + **负坐标左侧副屏**两种拓扑下，菜单在任意光标位置都必须完整落在所在工作区内。
+    /// 旧实现在 WindowManager 里用 <c>Screen.FromPoint(...).WorkingArea</c>（逻辑像素）钳
+    /// 物理像素坐标，且 12/6 偏移不随 DPI 折算——150% 屏上菜单会离托盘图标越来越远。
+    /// </summary>
+    [Theory]
+    [InlineData(96)]
+    [InlineData(144)]
+    [InlineData(192)]
+    public void Contract_MenuAlwaysInsideWorkArea(int dpi)
+    {
+        var g = ShellLogic.TrayMenuLayout.ComputeGeometry(dpi);
+        foreach (var work in new[] { Work(0, 0, 1920, 1040), Work(-1920, 0, 1920, 1080) })
+        {
+            foreach (var (cx, cy) in new[]
+            {
+                (work.Left + 4, work.Top + 4),          // 左上角：必须翻到光标右下
+                (work.Right - 4, work.Bottom - 4),      // 右下角：必须被钳回来
+                (work.Left + work.Width / 2, work.Top + work.Height / 2),
+                (work.Right - 4, work.Top + work.Height / 2),
+                (work.Left + 4, work.Bottom - 4),
+            })
+            {
+                var p = ShellLogic.TrayMenuLayout.PlaceAtCursor(
+                    cx, cy, work, g.FormWidth, g.FormHeight, dpi);
+                var rect = new Rectangle(p, new Size(g.FormWidth, g.FormHeight));
+                Assert.True(work.Contains(rect),
+                    $"dpi={dpi} work={work} cursor=({cx},{cy}) → {rect} 越出工作区");
+            }
+        }
+    }
+
+    /// <summary>贴边偏移随 DPI 折算一次（12/6 是设计像素，不是物理像素常量）。</summary>
+    [Theory]
+    [InlineData(96, 12, 6)]
+    [InlineData(144, 18, 9)]
+    [InlineData(192, 24, 12)]
+    public void Contract_AnchorOffsets_ScaleOnceWithDpi(int dpi, int expectedInset, int expectedLift)
+    {
+        var g = ShellLogic.TrayMenuLayout.ComputeGeometry(dpi);
+        var work = Work(0, 0, 4000, 3000);   // 远离边缘，不触发翻转/钳位
+        var p = ShellLogic.TrayMenuLayout.PlaceAtCursor(
+            2000, 1500, work, g.FormWidth, g.FormHeight, dpi);
+        Assert.Equal(2000 - g.FormWidth + expectedInset, p.X);
+        Assert.Equal(1500 - g.FormHeight - expectedLift, p.Y);
+    }
+
+    [Fact]
+    public void Contract_MenuLargerThanWork_ClampsToWorkOrigin()
+    {
+        // 极端：800% 屏上的菜单比整块工作区还大 → 宁可被裁，也不许跑到屏幕外（旧实现会算出负坐标）
+        var p = ShellLogic.TrayMenuLayout.PlaceAtCursor(
+            10, 10, Work(0, 0, 60, 40), menuWidth: 200, menuHeight: 120, deviceDpi: 96);
+        Assert.Equal(new Point(0, 0), p);
     }
 }

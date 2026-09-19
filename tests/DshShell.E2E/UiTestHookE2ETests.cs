@@ -106,6 +106,16 @@ public class UiTestHookE2ETests : IAsyncLifetime
         var dialog = await E2ETestHelpers.WaitForWindowByTitleAsync("版本信息", TimeSpan.FromSeconds(15));
         Assert.NotEqual(IntPtr.Zero, dialog);
 
+        // 【DPI 纪律】无边框窗的窗口矩形 == 客户端尺寸，必须等于纯函数按**该窗口所在屏的 DPI**
+        // 算出的结果。旧实现把 520×188 写死在 96dpi 像素上（且没有 OnDpiChanged），
+        // 缩放屏上"窗口不跟着长、字体跟着长"→ 叠列；这条断言在真实 GUI 上钉死它，
+        // 不靠肉眼（AGENTS.md：改窗口布局/DPI 必须用 --ui-selftest 或 E2E 量）。
+        var dpi = (int)GetDpiForWindow(dialog);
+        Assert.True(GetWindowRect(dialog, out var rect), "GetWindowRect 失败");
+        var expected = DshWeb.ShellLogic.VersionDialogLayout.Compute(dpi);
+        Assert.InRange(rect.Right - rect.Left, expected.ClientWidth - 1, expected.ClientWidth + 1);
+        Assert.InRange(rect.Bottom - rect.Top, expected.ClientHeight - 1, expected.ClientHeight + 1);
+
         // 关闭（等价点标题栏 X / 按 ESC）：模态循环结束正是崩溃路径 B 的时刻
         PostMessage(dialog, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
@@ -218,6 +228,15 @@ public class UiTestHookE2ETests : IAsyncLifetime
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, IntPtr dwExtraInfo);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
 
     /// <summary>发送一条命令并读取单行 JSON 回复；服务端未就绪时按 deadline 重试连接。</summary>
     private static async Task<string> SendAsync(string pipeName, string request, TimeSpan timeout)
