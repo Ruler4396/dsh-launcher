@@ -124,6 +124,11 @@ public class WebCacheVersionChangeOutcomes
             Assert.Equal(requestsBeforeSecondNav, server.BigJsRequests); // 铁证：二次导航命中缓存，计数零增长
             long cacheBefore = DirBytes(cacheDir);
             Assert.True(cacheBefore > 128 * 1024, $"前置条件：磁盘缓存应有存量（实际 {cacheBefore} B）");
+            // Service Worker / Code Cache 由 Chromium **异步落盘且会被引擎自己压缩整理**：
+            // 基线若在 cache.put() 刚返回时取，后续"目录字节数不得减少"就会把引擎的正常
+            // 整理误判成"我们删了用户数据"（CI runner 上必红、本机必绿——正是这种断言的签名）。
+            await WaitForStableBytesAsync(Path.Combine(profileDir, "Service Worker"), TimeSpan.FromSeconds(15));
+            await WaitForStableBytesAsync(codeCacheDir, TimeSpan.FromSeconds(15));
             long codeBefore = DirBytes(codeCacheDir);
             long csDirBefore = DirBytes(Path.Combine(profileDir, "Service Worker"));
 
@@ -148,12 +153,17 @@ public class WebCacheVersionChangeOutcomes
             var cacheGet = await JsPollAsync(web, CacheGetStart, TimeSpan.FromSeconds(30));
             Assert.True(cacheGet == CacheBody, $"I2d CacheStorage(Service Worker 缓存)必须完好，实际={cacheGet}");
             Assert.True(DirBytes(lsDir) > 0, "I2e Local Storage LevelDB 目录不得被清空");
-            Assert.True(DirBytes(Path.Combine(profileDir, "Service Worker")) >= csDirBefore,
-                "I2f Service Worker 目录不得缩水");
+            // 安全属性是"没被我们清掉"，不是"一个字节都没少"——Chromium 自己会压缩/重建 SW 索引
+            // 与 Code Cache（它们本就是可淘汰的引擎内部缓存）。条目完好由 I2d 功能性证明，
+            // 那才是强判据；这里按"目录不得被清空"判，与 I2e 同一口径。
+            var csDirAfter = DirBytes(Path.Combine(profileDir, "Service Worker"));
+            Assert.True(csDirAfter > 0,
+                $"I2f Service Worker 目录不得被清空: before={csDirBefore} after={csDirAfter}");
 
-            // I3: Code Cache 不缩水
-            Assert.True(DirBytes(codeCacheDir) >= codeBefore,
-                $"I3 Code Cache 不应被清理触碰: before={codeBefore} after={DirBytes(codeCacheDir)}");
+            // I3: Code Cache 不被清空（同理，不断言字节数不降）
+            var codeAfter = DirBytes(codeCacheDir);
+            Assert.True(codeAfter > 0 || codeBefore == 0,
+                $"I3 Code Cache 不得被清空: before={codeBefore} after={codeAfter}");
 
             // I1b：行为级铁证——同 URL 再次导航必然回源（清理后计数 = 首航 +1，相对断言吸收环境重试）
             await NavigateAndWaitAsync(web, page);
@@ -317,6 +327,25 @@ public class WebCacheVersionChangeOutcomes
         {
             if (DateTime.UtcNow >= deadline)
                 throw new TimeoutException($"等待条件超时（{timeout.TotalSeconds}s）");
+            await Task.Delay(250);
+        }
+    }
+
+    /// <summary>
+    /// 等目录字节数**稳定**（连续两次采样相等）后再取基线。Chromium 的 Service Worker /
+    /// Code Cache 是异步落盘、且引擎会自行压缩重建，取早了基线就是浮动的。
+    /// 与 <see cref="WaitUntilAsync"/> 不同：这是尽力而为的 settle，超时不抛——
+    /// 稳定不下来也不该把"引擎在动"升级成测试失败，真正的判据是后面的功能性断言。
+    /// </summary>
+    private static async Task WaitForStableBytesAsync(string dir, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        long prev = -1;
+        while (DateTime.UtcNow < deadline)
+        {
+            var now = DirBytes(dir);
+            if (now > 0 && now == prev) return;
+            prev = now;
             await Task.Delay(250);
         }
     }
