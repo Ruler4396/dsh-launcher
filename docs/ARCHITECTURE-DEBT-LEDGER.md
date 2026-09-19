@@ -143,6 +143,23 @@
 - 合法保留：`SafeProfileBuilder` 的 `@deepseek-ai/dsh-base` / `-dsh-web-app` 是**不同包名**
   （核心 bundle 成员），闸按后缀豁免。
 
+## 14. `BootHealthMonitor.AttachProcess` 的"attach 窗口"盲区（进程层可静默失去）
+
+`AttachProcess` 在后台任务里跑；若服务进程**在 attach 落地之前**就退出，`GetProcessById(pid)` 抛
+`ArgumentException: Process with an Id of N is not running.` → 该异常被 catch 成一条 Warn，
+**不产生任何裁决**。这是 2026-08 误报根治有意为之的取舍（残留/陈旧 pid 曾把整监控打成 E2007 弹窗），
+代价是：进程层在这条窄窗口里失明，真死要靠 HTTP 层（连续 2 次 miss）兜底，检测不丢但**晚几秒**。
+
+- 实测证据（2026-09-19 本机一次性诊断）：给一个已退出的 pid 走 attach → `factoryThrew=True`、
+  `verdictArrived=False`；给一个存活 pid → `E2007 / pid exit code=7` 正常出裁决。
+- 它咬到人的方式：`BootHealthMonitorRealOsTests.RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode`
+  原先让子进程只活 300ms，等于拿断言赌一次线程池调度——本机稳过，GitHub runner 满载下红一次
+  （同一 commit 重跑即绿）。已把窗口改成 5 秒，**断言强度未变**。
+- 未做的更硬改法（记录理由）：让 `AttachProcess` 在 pid 已消失时直接判 E2007 ——会重新引入
+  2026-08 那批误报（壳自己停服的窗口里 pid 必然"已消失"）；把调用方手里的 `Process` 对象传进来
+  （生产侧 `ServiceManager` 确实持有）是正解，但那要给 `IBootProcessHandle` 加一条"由持有者提供
+  退出码"的形状，属于独立改造，不在本轮范围。
+
 ---
 
 ## 附：本轮新增的机器闸一览（防止上述债务再增长）
