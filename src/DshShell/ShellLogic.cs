@@ -2525,12 +2525,16 @@ public static class ShellLogic
         public const int DesignTitleEmPx = 13;
         public const int DesignBodyEmPx = 12;
         public const int DesignCloseSize = 20;
+        /// <summary>左侧强调色条宽度：卡片此前只有 1.24:1 的边框，与浅色页面/桌面几乎无图地
+        /// 分离（实测 #E5E7EB/白 = 1.24:1），"不显眼"的主因在此。色条同时承载严重级别。</summary>
+        public const int DesignAccentWidth = 4;
 
         public readonly record struct Geometry(
             int TextWidth, int Width, int Padding, int Gap, int ActionHeight,
-            int CornerRadius, int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize);
+            int CornerRadius, int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize,
+            int AccentWidth);
 
-        /// <summary>deviceDpi ≤ 0 视为 96（未知按 1x）。窗口宽 = 文字宽 + 左右内边距。</summary>
+        /// <summary>deviceDpi ≤ 0 视为 96（未知按 1x）。窗口宽 = 文字宽 + 左右内边距 + 色条。</summary>
         public static Geometry ComputeGeometry(int deviceDpi)
         {
             var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
@@ -2538,9 +2542,10 @@ public static class ShellLogic
             int Px(int design) => Math.Max(1, (int)Math.Round(design * s));
             var padding = Px(DesignPadding);
             var textWidth = Px(DesignTextWidth);
+            var accent = Px(DesignAccentWidth);
             return new Geometry(
                 TextWidth: textWidth,
-                Width: textWidth + 2 * padding,
+                Width: textWidth + 2 * padding + accent + Px(DesignGap),
                 Padding: padding,
                 Gap: Px(DesignGap),
                 ActionHeight: Px(DesignActionHeight),
@@ -2548,27 +2553,42 @@ public static class ShellLogic
                 ScreenMargin: Px(DesignScreenMargin),
                 TitleEmPx: Px(DesignTitleEmPx),
                 BodyEmPx: Px(DesignBodyEmPx),
-                CloseSize: Px(DesignCloseSize));
+                CloseSize: Px(DesignCloseSize),
+                AccentWidth: accent);
         }
 
         public readonly record struct Placement(
-            int Width, int Height, Rectangle TitleRect, Rectangle BodyRect,
-            Rectangle ActionRect, Rectangle CloseRect);
+            int Width, int Height, Rectangle AccentRect, Rectangle TitleRect,
+            Rectangle BodyRect, Rectangle ActionRect, Rectangle CloseRect);
 
-        /// <summary>按实测文字高度排四块（左上角原点，供 OnPaint 绘制与点击命中测试）。
+        public readonly record struct TextWidths(int TitleWidth, int BodyWidth);
+
+        /// <summary>文字测量宽度（与 Place 用的是同一套算式——测量与排版必须同源，否则
+        /// "按 A 宽换行、按 B 宽绘制"就会裁字）。左侧让开色条，标题再让开 ×。</summary>
+        public static TextWidths MeasureWidths(Geometry g)
+        {
+            var textLeft = g.Padding + g.AccentWidth + g.Gap;
+            var textWidth = Math.Max(1, g.Width - textLeft - g.Padding);
+            return new TextWidths(Math.Max(1, textWidth - g.CloseSize - g.Gap), textWidth);
+        }
+
+        /// <summary>按实测文字高度排五块（左上角原点，供 OnPaint 绘制与点击命中测试）。
         /// 无动作时 ActionRect 为 Empty 且不计其 Gap/高度——否则底部多一段空白。
-        /// 标题宽度让开右上角的 ×；总高再与 × 的下沿取大，保证 × 永不被裁掉。</summary>
+        /// 文字统一让开左侧色条；标题再让开右上角的 ×；总高与 × 的下沿取大。</summary>
         public static Placement Place(Geometry g, int titleHeight, int bodyHeight, bool hasAction)
         {
+            var accent = new Rectangle(0, 0, g.AccentWidth, 0); // 高度随内容，绘制时按 Height 撑满
+            var textLeft = g.Padding + g.AccentWidth + g.Gap;
+            var (titleWidth, textWidth) = MeasureWidths(g);
             var close = new Rectangle(g.Width - g.Padding - g.CloseSize, g.Padding, g.CloseSize, g.CloseSize);
-            var titleWidth = Math.Max(1, g.TextWidth - g.CloseSize - g.Gap);
-            var title = new Rectangle(g.Padding, g.Padding, titleWidth, Math.Max(1, titleHeight));
-            var body = new Rectangle(g.Padding, title.Bottom + g.Gap, g.TextWidth, Math.Max(1, bodyHeight));
+            var title = new Rectangle(textLeft, g.Padding, titleWidth, Math.Max(1, titleHeight));
+            var body = new Rectangle(textLeft, title.Bottom + g.Gap, textWidth, Math.Max(1, bodyHeight));
             var action = hasAction
-                ? new Rectangle(g.Padding, body.Bottom + g.Gap, g.TextWidth, g.ActionHeight)
+                ? new Rectangle(textLeft, body.Bottom + g.Gap, textWidth, g.ActionHeight)
                 : Rectangle.Empty;
             var contentBottom = Math.Max((hasAction ? action.Bottom : body.Bottom), close.Bottom);
-            return new Placement(g.Width, contentBottom + g.Padding, title, body, action, close);
+            var height = contentBottom + g.Padding;
+            return new Placement(g.Width, height, accent with { Height = height }, title, body, action, close);
         }
 
         /// <summary>贴工作区**右下角**（任务栏自然排除在外），带 ScreenMargin 间距；
@@ -2577,6 +2597,18 @@ public static class ShellLogic
             => (
                 Math.Max(workArea.Left + g.ScreenMargin, workArea.Right - width - g.ScreenMargin),
                 Math.Max(workArea.Top + g.ScreenMargin, workArea.Bottom - height - g.ScreenMargin));
+    }
+
+    /// <summary>通知级别：卡片靠它选强调色条与提示音（不显眼的主因之一是"和普通文本一样"）。</summary>
+    public enum NoticeKind { Info, Urgent }
+
+    /// <summary>
+    /// 通知呈现策略纯函数。Urgent = 需要用户行动且不能错过（安全更新 / 构建失败 /
+    /// 安全模式启动）→ 红色条 + 警示音；Info → 蓝色条 + 轻提示音。
+    /// </summary>
+    public static class NoticePolicy
+    {
+        public static bool UseWarningCue(NoticeKind kind) => kind == NoticeKind.Urgent;
     }
 
     /// <summary>
