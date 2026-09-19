@@ -48,6 +48,14 @@
 `Directory.Move`，可弹窗照样写"已隔离出启动发现链"，即**回滚静默失效**（坏运行时下次启动仍被
 发现链选中）；现按迁移前的时序先停服，并由 Headless 时序用例 + 真机演练各锁一遍。
 
+CI 抖动归因（同日，推送后）：`realos-test` 在 master 上红过一条
+`RealOs_BootMonitor_RealProcessNonZeroExit_CapturedWithCode`，同一 commit 重跑即绿。归因不是猜的——
+本机一次性诊断证明：`AttachProcess` 落在后台任务里，若子进程在 attach 之前退出，
+`GetProcessById` 抛 `ArgumentException` → 进程层只 Warn、永不出裁决 → 20 秒超时红；而该用例原先
+只让子进程活 300ms，等于用断言赌一次线程池调度。已把窗口改成 5 秒（**强度一字未减**：仍是真进程、
+真非零退出码、真 E2007），并把这条"attach 窗口"盲区连同"为什么不改成直接判死"的理由记进
+`docs/ARCHITECTURE-DEBT-LEDGER.md` 第 14 条。
+
 未验证面（不用绿灯代替证据）：关窗三分支的真实交互（需真机 GUI 点一次"强制关闭"）。
 暂存构建事务已以 RealNet 门控用例真跑过一次（真 `npm pack` + 真构建 + 真 pending，
 `DSH_FORCE_REALNET=1 dotnet test --filter StagedBuildRealNetTests`），回滚链路已在隔离沙盒真机

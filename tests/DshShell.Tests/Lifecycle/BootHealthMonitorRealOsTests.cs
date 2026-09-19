@@ -36,7 +36,14 @@ public class BootHealthMonitorRealOsTests
     {
         var shell = ResolveShellExe();
         Assert.True(shell != null, "no PowerShell host available for real-process test");
-        var psi = new ProcessStartInfo(shell, "-NoProfile -Command \"Start-Sleep -Milliseconds 300; exit 7\"")
+        // 子进程必须活得比 attach 落地的时间久，否则这条用例外壳看起来在测"退出码被捕获"，
+        // 实际在赌一次竞态：AttachProcess 是后台任务，而进程层对"attach 时 pid 已消失"的处置
+        // 是 **只 Warn、不判死**（2026-08 误报根治：残留 pid 曾把整监控打成 E2007 弹窗）。
+        // 实测（本机复现，见 docs/ARCHITECTURE-DEBT-LEDGER.md 第 14 条）：pid 已退出时
+        // GetProcessById 抛 ArgumentException → 永远不会有裁决 → CI 满载下 20 秒超时红。
+        // 原来这里给的是 300ms，本机稳过、GitHub runner 上红过一次（同 commit 重跑即绿 = 抖动）。
+        // 改成 5 秒只是把赌局换成余量，断言强度一字未减：仍是真进程、真非零退出码、真 E2007。
+        var psi = new ProcessStartInfo(shell, "-NoProfile -Command \"Start-Sleep -Seconds 5; exit 7\"")
         {
             UseShellExecute = false,
             CreateNoWindow = true,
