@@ -172,9 +172,8 @@ internal sealed class NoticeCard : Form
         }
         if (_shared is null || _shared.IsDisposed)
         {
-            var work = SafeWorkAreaOf(owner);
-            _shared = new NoticeCard(MonitorDpi.ForPoint(
-                new Point(work.Left + work.Width / 2, work.Top + work.Height / 2)));
+            // DPI 与定位同源（owner 所在监视器），不再从"工作区中心点"二次采样
+            _shared = new NoticeCard(MonitorOf(owner).Dpi);
         }
         Accept(item, now);
         _shared.ShowItem(owner, item);
@@ -185,6 +184,27 @@ internal sealed class NoticeCard : Form
     {
         _lastKey = item.Key;
         _lastAcceptedUtc = at;
+    }
+
+    /// <summary>卡片"贴哪块屏、按多少 DPI 画"的**同一来源**：owner 所在监视器的物理像素工作区
+    /// + 该窗口的 DPI。二者必须同源，且必须是物理像素——<c>Screen.WorkingArea</c> 返回的是
+    /// 96 DPI 基准的**逻辑**像素（本仓库既有不变式，见 Win32/DisplayMetricsProvider 注释），
+    /// 而 <c>Form.Location</c> 是物理像素：125%/150% 屏上混用，卡片会贴不到右下角、
+    /// 或按错的高度让开任务栏。取不到时回退逻辑工作区 + 窗口 DeviceDpi 并留痕
+    /// （位置略偏远好于把异常抛进通知调用方）。</summary>
+    private static (Rectangle Work, int Dpi) MonitorOf(Form owner)
+    {
+        try
+        {
+            var m = new Win32DisplayMetricsProvider().GetMonitorMetrics(owner.Handle);
+            return (m.WorkArea, (int)m.Dpi);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn("notice card monitor metrics unavailable, falling back to logical work area: "
+                + ex.Message);
+            return (SafeWorkAreaOf(owner), owner.DeviceDpi);
+        }
     }
 
     /// <summary>owner 已销毁/最小化时退回主屏工作区——通知定位绝不能抛进调用方。</summary>
@@ -206,7 +226,7 @@ internal sealed class NoticeCard : Form
         _current = item;
         _hovering = false;
         Relayout();
-        var work = SafeWorkAreaOf(owner);
+        var work = MonitorOf(owner).Work;
         var (x, y) = ShellLogic.NoticeCardLayout.PlaceAtBottomRight(work, _g, _p.Width, _p.Height);
         Location = new Point(x, y);
         // ExpiresMs == 0 → sticky：不启动倒计时，只能由用户点击动作或 × 关闭。
@@ -220,11 +240,19 @@ internal sealed class NoticeCard : Form
         BringToFront();
         Invalidate();
         // "受理"与"真的显示出来"是两件事（排队中的那条要等前一条收起）。诊断与回归都以后者为准。
+        // 带上物理尺寸与 DPI：高 DPI/缩放变更的问题只看代码推不出来，日志里有一手数据才能定位。
         Logger.Info($"notice displayed: {item.Title}", ctx: new
         {
             kind = item.Kind.ToString(),
             ms = item.ExpiresMs,
             queued = _pending.Count,
+            w = _p.Width,
+            h = _p.Height,
+            dpi = DeviceDpi,
+            // 折算后的几何输入：只看 w/h 分不清"采样到别的 DPI"还是"某项被钳制"，
+            // 高 DPI 问题必须能从日志里反推出 ComputeGeometry 的入参。
+            textW = _g.TextWidth, pad = _g.Padding, gap = _g.Gap, accent = _g.AccentWidth,
+            em = _g.TitleEmPx + "/" + _g.BodyEmPx,
         });
         // 提示音：卡片没有 OS toast 的滑动动画与声音，静音是"不显眼"的一半原因。
         // Play() 本身非阻塞；失败只留痕（无声不该让通知整体失败）。
@@ -284,7 +312,7 @@ internal sealed class NoticeCard : Form
         Relayout();
         if (_anchor is { IsDisposed: false } anchor)
         {
-            var work = SafeWorkAreaOf(anchor);
+            var work = MonitorOf(anchor).Work;
             var (x, y) = ShellLogic.NoticeCardLayout.PlaceAtBottomRight(work, _g, _p.Width, _p.Height);
             Location = new Point(x, y);
         }

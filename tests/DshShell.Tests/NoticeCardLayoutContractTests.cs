@@ -34,6 +34,35 @@ public class NoticeCardLayoutContractTests
         Assert.Equal(g.TextWidth + 2 * g.Padding + g.AccentWidth + g.Gap, g.Width);
     }
 
+    /// <summary>字号也**只乘一次** s：#28-3 的真实事故就是字号按 Point 单位给，再被绘制 DC
+    /// 自带的 DPI 折算一遍 → 200% 屏上文字按 s² 长大。</summary>
+    [Theory]
+    [InlineData(120)]
+    [InlineData(144)]
+    [InlineData(192)]
+    public void EmSizes_ScaleOnceWithDpi(int dpi)
+    {
+        var g = G(dpi);
+        var baseG = G(96);
+        Assert.Equal((int)Math.Round(baseG.TitleEmPx * dpi / 96f), g.TitleEmPx);
+        Assert.Equal((int)Math.Round(baseG.BodyEmPx * dpi / 96f), g.BodyEmPx);
+    }
+
+    /// <summary>显眼度下限（96dpi 逻辑像素）。用户连续反馈"通知不够显眼"，前三轮修的是对比度/
+    /// 字重/声音，尺寸没动——这里把尺寸底线钉成契约：缩回去就等于把"必须看到并要据此行动"的
+    /// 提示降级成正文大小。同时约束卡片别无限撑宽（小屏/低倍率也要放得下）。</summary>
+    [Fact]
+    public void Geometry_ProminenceFloorAt96dpi()
+    {
+        var g = G(96);
+        Assert.True(g.TitleEmPx >= 16, $"标题字号不得低于 16px，当前 {g.TitleEmPx}");
+        Assert.True(g.BodyEmPx >= 14, $"正文字号不得低于 14px，当前 {g.BodyEmPx}");
+        Assert.True(g.TitleEmPx > g.BodyEmPx, "标题必须比正文大，否则没有层级");
+        Assert.True(g.CloseSize >= g.BodyEmPx, $"× 至少和正文一样大，否则点不中（当前 {g.CloseSize}）");
+        Assert.True(g.ActionHeight >= g.BodyEmPx * 2, "动作行要给可点区域留出高度");
+        Assert.True(g.TextWidth is >= 360 and <= 520, $"文字宽要够读又不能撑爆小屏，当前 {g.TextWidth}");
+    }
+
     [Theory]
     [InlineData(96)]
     [InlineData(192)]

@@ -501,6 +501,7 @@ internal static class Program
         form.Shown += (_, _) =>
         {
             Trace("main form shown");
+            LogDisplayTopology(form);
             if (SafeMode.IsActive && !safeModeNoticeSent)
             {
                 safeModeNoticeSent = true;
@@ -1514,6 +1515,32 @@ internal static class Program
             });
         }
         catch (Exception ex) { Logger.Warn("safe-mode visibility update failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// 启动时记录一次显示拓扑，用来收口一个本仓库**自相矛盾**的前提：
+    /// <c>Screen.WorkingArea</c> 与 Win32 <c>GetMonitorInfo().rcWork</c> 是否同一坐标空间？
+    /// <c>Win32/DisplayMetricsProvider</c> 的注释说前者是"96 DPI 基准的逻辑像素"，而
+    /// <c>ShellLogic.RestoreWindowPosition</c> 的注释说"两者均为物理像素"。托盘菜单钳位
+    /// （WindowManager.ShowTrayMenu）与窗口位置还原分别依赖其中一种说法——说法不同就是不同的
+    /// 正确代码。100% 缩放下两者数值相等，本机永远测不出差别，所以这里只**测量并留痕**：
+    /// 不一致时 Warn（在缩放屏上第一次启动就能看见），一致时一行 INFO。
+    /// 不做任何"顺手统一"——那需要一台真正缩放机器的数据，猜错会把好的改成坏的。
+    /// </summary>
+    private static void LogDisplayTopology(DshWeb.Windows.DshShellForm form)
+    {
+        try
+        {
+            var m = new Win32.Win32DisplayMetricsProvider().GetMonitorMetrics(form.Handle);
+            var wa = Screen.FromControl(form).WorkingArea;
+            var same = wa == m.WorkArea;
+            var line = "display topology: winforms.workArea=" + wa + " win32.rcWork=" + m.WorkArea
+                + " win32.dpi=" + m.Dpi + " form.deviceDpi=" + form.DeviceDpi
+                + " screens=" + Screen.AllScreens.Length + " sameSpace=" + same;
+            if (same) Trace(line);
+            else Logger.Warn(line);
+        }
+        catch (Exception ex) { Logger.Warn("display topology probe failed: " + ex.Message); }
     }
 
     /// <summary>

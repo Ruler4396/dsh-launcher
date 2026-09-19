@@ -13,11 +13,18 @@ namespace DshWeb.Win32;
 ///
 /// 回退链：shcore.GetDpiForMonitor(MDT_EFFECTIVE) → user32.GetDpiForSystem → 96。
 /// 每一级失败都留痕（异常透明铁律：绝不静默降级成"看起来正常"的尺寸）。
+///
+/// 【实测事故二（本文件自己踩过）】`MONITOR_DPI_TYPE` 里 **MDT_EFFECTIVE_DPI = 0**，
+/// `1` 是 **MDT_ANGULAR_DPI**——显示器面板的**物理角 DPI**（本机 1920×1080 @100% 实测 89）。
+/// 传 1 会让所有按本函数取样的窗口整体小一档（NoticeCard 445→413px、托盘菜单同理），
+/// 且缩放的偏差取决于面板尺寸，换台机器就不一样——所以它骗过了 100% 下的肉眼检查。
 /// </summary>
 internal static class MonitorDpi
 {
     private const uint MonitorDefaultToNearest = 0x00000002;
-    private const int MdEffectiveDpi = 1;
+    /// <summary>shcore MONITOR_DPI_TYPE：0 = EFFECTIVE（含用户缩放，正是手工布局要的），
+    /// 1 = ANGULAR（面板物理 DPI，**不是**缩放后的有效 DPI）。</summary>
+    private const int MdEffectiveDpi = 0;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint { public int X, Y; }
