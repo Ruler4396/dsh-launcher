@@ -53,11 +53,11 @@ $env:DSH_FORCE_NPM_SMOKE = "1"
 # -RealNet：显式开启重型真实网络全链路用例（DshUpdatePipelineRealTests，分钟级、依赖镜像可达性）。
 # 默认关闭——CI build 流水线总是调用本脚本，若默认开启会把发布门禁劫持给外部网络状况。
 if ($RealNet) { $env:DSH_FORCE_REALNET = "1" } else { Remove-Item Env:DSH_FORCE_REALNET -ErrorAction SilentlyContinue }
-$testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v q 2>&1
+$testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v minimal 2>&1
 $testCode = $LASTEXITCODE
-# 失败时把断言详情也留下：原来只取最后 12 行，xUnit 的 Error Message 块被截掉，
-# CI 红了查不到原因（issue #25 排查时踩过一次）。
-$testOut | Select-Object -Last 60
+# 失败时把断言详情也留下：原来 -v q + 只取最后 12 行，xUnit 的 Error Message 块被整体截掉，
+# CI 红了只能靠读代码猜原因（issue #25 排查时踩过）。改 -v minimal + 120 行留证。
+$testOut | Select-Object -Last 120
 Assert-True ($testCode -eq 0) "dotnet test 通过（含真实环境冒烟测试）"
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
