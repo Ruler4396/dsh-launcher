@@ -5,6 +5,26 @@
 
 ---
 
+## 前缀：符号搬家对照（2026-09 防臃肿整改 · Phase 4 事务搬迁）
+
+下面各"落点"是**当时**的修复记录，其中的 `Program.xxx` 符号名多数已在 2026-09 的搬迁中离开组合根
+（G9 闸现在会拦它们回流）。按旧名 grep 本文件命中的节点仍然有效，只是实现换了归属：
+
+| 旧（组合根静态） | 新归属 | 新名字 |
+|---|---|---|
+| `Program.RestartDshServiceCoreAsync` | `Lifecycle/ServiceRestartCoordinator` | `RestartAsync` |
+| `Program.HandleRuntimeServiceExit` | `Lifecycle/ServiceRestartCoordinator` | `OnServiceExited` |
+| `Program.TryStartSafeMode` / `WaitSafeModeVerified` | `Lifecycle/SafeModeLifecycle` | `TryEnter` / `WaitVerified` |
+| `Program.HandleUpdateRollbackOnBootFailure` | `Lifecycle/UpdateRollbackCoordinator` | `TryHandleBootFailure` |
+| `Program.ArmUpdateRollbackGuardFromPersistedState` | `Lifecycle/UpdateRollbackCoordinator` | `ArmFromPersistedState` |
+| `Program.HandleUpdateConfirmedHealthy` | `Lifecycle/UpdateRollbackCoordinator` | `ConfirmHealthy` |
+
+**因果链上新增的一条不变式**：回滚 saga 复用 `ServiceRestartCoordinator.RestartAsync`
+（`driveLifecycleState:false`）——"停服→拉起→等 token→等就绪→重挂监控"在全仓**只有一份**实现。
+再写第二份（哪怕只是"回滚要等 90 秒"）就会重新制造本次审计发现的分支漂移。
+
+---
+
 ## 0. v0.4.x 用户回归修复批注（2026-09：静默失败 / 开窗慢 / Release 空日志）
 
 > 本次修复在因果链中的落点与身份一致性检查记录（铁律第 3 步要求）。

@@ -41,14 +41,17 @@
 ## ⚙️ 核心约束二：进程、网络与外部依赖 (Process & External Dependencies)
 
 1. **外部进程调用的"三必须"**：
-   - 调用任何外部进程（`npm`, `node`, `wscript`, `taskkill`），**必须**使用 `cmd.exe /c` 包装（解决 `.cmd` 执行陷阱）。
+   - 调用任何外部进程（`npm`, `node`, `taskkill`），**必须**直启可执行文件本身；node 脚本一律
+     **`node.exe` 直启 `.js` 入口**（`RuntimeResolver.ResolveNpmCliJs`）。**严禁** `cmd.exe /c` 包装
+     与 `.cmd` shim 中间层（ADR-021：引号剥离 / GBK 乱码 / Kill 不干净三类陷阱）。
+     System32 原生 exe（`taskkill`、`netstat`）可直启。
    - **必须**重定向 `StandardOutput` 和 `StandardError`，并使用异步读取（`ReadToEndAsync`）防止管道死锁。
    - **必须**设置合理的超时（`WaitForExit(timeout)`），超时后**必须**调用 `p.Kill(entireProcessTree: true)` 清理僵尸进程树。
 2. **网络与 IO 的防锁死机制**：
    - 读取可能被其他进程（如 `cmd >>`）锁定的日志文件时，**必须**使用 `FileShare.ReadWrite`。
    - 写入核心状态文件（如 `pending-update.json`, `window-state.json`），**必须**使用 `ShellLogic.AtomicWrite`（写 `.tmp` 后 `File.Move`），**严禁**直接 `File.WriteAllText`。
 3. **环境解析的绝对路径化**：
-   - 调用 `npm` 或 `node` 时，**严禁**盲目依赖系统 `PATH`。**必须**优先使用 `RuntimeManager` 解析出的绝对路径（如 `Path.Combine(PortableNodeDir, "npm.cmd")`）。
+   - 调用 `npm` 或 `node` 时，**严禁**盲目依赖系统 `PATH`。**必须**优先使用 `RuntimeManager` 解析出的绝对路径（如 `Path.Combine(PortableNodeDir, "node.exe")` + `npm-cli.js` 入口，见 ADR-021）。
 
 ---
 

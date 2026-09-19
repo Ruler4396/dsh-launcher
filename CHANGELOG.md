@@ -4,6 +4,58 @@
 
 ## [Unreleased]
 
+### 维护 — 防臃肿整改（2026-09-19，Phase 1–6）
+
+起因：2026-08-28 的 ADR-024 大重构把 `Program.cs` 压到 2819 行，22 天后回涨到 3855 行——删掉的
+约 87% 又被吸了回去。审计结论：根因不是有人削弱门禁，而是"组合根只做装配"这条铁律**只有散文、
+没有机器检查**（`test.ps1` 历史上从来没有过任何文件行数断言）。纯决策早就沉到 `ShellLogic`，
+**漏下去的是事务**。本轮四件事：
+
+1. **闸门**：`scripts/test.ps1` 新增 13 条只降不升的棘轮与硬闸（G1–G13：组合根代码行数、单方法
+   长度、下层不得回调组合根、Manager 互不引用、静态流程字段冻结、空 catch 上限、CHANGELOG 结构、
+   文档↔代码一致性、已搬迁事务符号不得回流、DPI 换算唯一实现、taskkill 启动点唯一、进程采集唯一、
+   npm 包名唯一真相源）。每条都做过反向验证——注入违规必须变红；测量器自带自检断言，防止"坏掉的
+   门显示绿灯"。
+2. **真 bug（测试先行，每条都有红→绿证据）**：诊断导出管道排空缺失导致的死锁+孤儿进程；启动健康
+   监控的日志增量读取器在日志轮转后永久致盲；安全模式 profile 的写入不是原子写（Delete→Move 窗口
+   可留下缺失的 `package.json`，即 #25/#28 那类事故形态）；通知卡片 DPI 换算缺钳制（坏驱动下塌成
+   1px / 跑出屏幕）；Manager 向上回调组合根静态；CHANGELOG 出现两个 `[Unreleased]` 锚点。
+3. **事务搬迁**：运行期重启、安全模式进/出、更新回滚三条多步事务离开组合根，落在
+   `Lifecycle/ServiceRestartCoordinator`、`Lifecycle/SafeModeLifecycle`、
+   `Lifecycle/UpdateRollbackCoordinator`；暂存构建与更新检查编排落在 `Managers/DshUpdateManager`。
+   配套地，`LifecycleState` 补上 `RestartingService`/`EnteringSafeMode`/`ExitingSafeMode`/
+   `ApplyingUpdate`/`RollingBackUpdate` 等运行态——此前这些流转在状态机表里**根本没有落点**，
+   只能落到组合根的静态标志上。回滚 saga 顺带复用共享重启事务，消掉了第二份手写的
+   "停服→拉起→等 token→等就绪→重挂监控"（含一个 90 秒阻塞轮询）。
+4. **消重与死代码**：DPI→缩放→像素、taskkill 调用、短进程输出采集、npm 包名各自收敛为一处；
+   删除祖先链杀伤整套死码（其收集器只写不读，而 `test.ps1` 原先还在文字上保护它存在）、
+   删除 11 行委托空壳 `TrayManager`，并把 `LauncherApp` 的托盘注入面一并撤掉。
+
+量化：`Program.cs` 3870 → **2887 行**（代码行 2014，回到重构收官水位以下）；
+`static` 流程标志冻结清单 13 → 7；空 catch 37 → 30；纯函数文件里的不纯原语 12 → 11；
+包名/DPI/taskkill/进程采集的重复实现全部归零。新增 12 个测试文件、约 130 例用例。
+
+搬迁过程中修掉的两处"名字改了语义没跟上"级别的缺陷：服务重启的冷却窗原来按"上次**成功**"计时，
+一次失败的重启会把预算清零 → 服务反复起不来时可以无限静默重启；"强制关闭打断构建"的取消令牌
+从未传给任何子进程，日志却写着"构建已取消"——现在令牌真接进了可中断的那两段进程调用，
+不可中断的那段（pnpm 安装）如实记录在 `docs/ARCHITECTURE-DEBT-LEDGER.md`，不再假装成功。
+
+**搬迁本身引入、又被真机演练当场抓到的两处回归**（单测全绿也照样错，所以必须写进发布记录）：
+① 回滚 saga 的"重挂导航"委托直接碰 `CoreWebView2` —— 它是 UI 线程亲和对象，后台线程访问即抛，
+于是把一次**本来成功的回滚**判成失败；现在该委托经组合根投递回主窗口，`scripts/test.ps1` 的 G9
+加了一条"此委托必须是投递形式"的结构断言。
+② 回滚把"隔离坏运行时"排在"停服"之前 —— Windows 因该目录正是活服务的工作目录而拒绝
+`Directory.Move`，可弹窗照样写"已隔离出启动发现链"，即**回滚静默失效**（坏运行时下次启动仍被
+发现链选中）；现按迁移前的时序先停服，并由 Headless 时序用例 + 真机演练各锁一遍。
+
+未验证面（不用绿灯代替证据）：关窗三分支的真实交互（需真机 GUI 点一次"强制关闭"）。
+暂存构建事务已以 RealNet 门控用例真跑过一次（真 `npm pack` + 真构建 + 真 pending，
+`DSH_FORCE_REALNET=1 dotnet test --filter StagedBuildRealNetTests`），回滚链路已在隔离沙盒真机
+走通"启动自检失败 → 数据还原 + 运行时隔离 → 旧版重新拉起 → 二次启动不再回滚"。
+本节所在线数受 G7 上限约束——上限由 315 上调到 **400**，是用户在 2026-09-19 明确授权
+（当时该段已被并行会话的 DPI 批次填到 315/315，加任何一条都会红），理由记在
+`scripts/test.ps1` 的 G7 注释与 `docs/ARCHITECTURE-DEBT-LEDGER.md`。
+
 ### 修复
 
 - **点击标题栏版本徽标导致启动器闪退（issue #28-2，0xc0000005）**：用户报告"点击左上角版本号
@@ -451,8 +503,6 @@
 - **E2E 稳定性加固**：禁用并行（全局单实例 Mutex 竞争导致窗口不出现）；UIA 控件查找轮询等待（窗口就绪≠控件树就绪，CI 偶发 null）；取消触发改 UIA InvokePattern（鼠标 Click 不激活前台窗口导致取消不生效）；进程退出断言改轮询。
 - **僵尸端口/日志锁/更新进度契约测试**：`ServiceManagerTests` 三重验证四态（Closed/Healthy/Zombie/Foreign）+ `ZombieCleanup_PortOccupiedButHttpFails_KillsProcessTree`（杀 node + 祖先 cmd/npx 外壳 + 端口释放）；`LauncherAppScenarioTests` 僵尸清理成功重启/失败 E2004 快速失败/非 dsh 占用不误杀；`LoggerTests.Logger_Lock_Fallback_MainLockedByFileShareNone`（`FileShare.None` 独占 → fallback 含完整日志）+ 路径阻塞 fallback；`UpdateFlowContractTests` 更新进度上报（"正在应用更新"+ npm 日志）、更新失败不阻断启动（旧版继续）、`IsRetryableNpmError` pending 保留/清理契约（Theory 11 例）。
 - 单测 **407 个全部通过**（含真实环境冒烟 + 真实 OS 交互测试）。
-
-## [Unreleased]
 
 ## [0.3.5] - 2026-08-18
 
