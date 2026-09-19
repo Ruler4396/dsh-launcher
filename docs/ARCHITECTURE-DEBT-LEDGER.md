@@ -1,0 +1,168 @@
+# 架构债务台账（Architecture Debt Ledger）
+
+> 2026-09 防臃肿整改（Phase 1–6）产出之一。**本文件只登记"本轮明确不做或做不到验证"的项**，
+> 每条都写清：现状证据、为什么本轮不动、动它的前置条件、以及防止恶化的机器闸。
+>
+> 规矩：台账里的项不得靠"记得改"来管理——要么有闸拦着（列在最后一栏），要么在下次触碰同一
+> 文件时顺手做掉并从本文件删除。**新增项必须带证据**（文件+符号，行号会漂移所以少写）。
+
+---
+
+## 1. 双 node.exe 解析器（D3）— 决定**不合并**
+
+- 现状：`RuntimeResolver`（解析**宿主** node：便携版/系统 node，用于跑 npm-cli.js）与
+  `Domain/DshDiscovery`（解析 **dsh 运行时**的 node）各有一套"注册表 hive 循环 + PATH 兜底"，
+  代码近乎逐字相同。
+- 为什么不合并：**两者解析对象不同**，合并会把"宿主 node 版本门槛（≥18）"与"dsh 运行时布局"
+  两条独立演化路径焊死；一旦焊错，症状是首装链或更新链整体起不来，排查成本远高于两份重复代码。
+  ADR-019 的"单一真相源"针对的是**版本比较**与**包名**（那两条已真合并：
+  `ShellLogic.VersionPolicy.CompareVersions` 唯一实现 + 两个一行转发；
+  `DshDiscovery.PackageScope`/`PackageShortName` 派生出 `PackageName`）。
+- 前置条件：真要合，先给两份解析各写 RealOS 用例钉住现有差异（不同 hive、不同失败语义），
+  再谈抽象。
+- 防线：无专门闸；靠本条记录 + 两份各自的现有测试。
+
+## 2. `ShellLogic.UpdateProxyPolicy.LocalProxyAlive` — 纯函数文件里开真 socket
+
+- 现状：`ShellLogic.cs` 的 `UpdateProxyPolicy` 在自称纯函数的文件里 `new TcpClient` 探测本地代理，
+  且**没有契约测试**。违反该文件自己的抽取规则（有生命周期状态的资源必须抽走）。
+- 为什么本轮不动：它被 `G1b`（ShellLogic 不纯原语计数棘轮，基线 12）锁住不再增长；把它挪去
+  Managers 需要新增一个"代理探测"归属，而代理策略目前只有这一个消费者。
+- 前置条件：先补契约测试（注入一个可 Fake 的探针委托），再决定归属。
+- 防线：`test.ps1` 的 **G1b**（≤12 且不纯行号列表逐条可见）。
+
+## 3. `ShellLogic.RuntimeConfig` 读环境变量的包装层
+
+- 现状：`ResolveTarget` 一类既有纯重载（有测试）也有读 `Environment.GetEnvironmentVariable`
+  的薄包装（无测试，因为需要进程环境）。
+- 为什么不动：纯重载已经是真相源，包装层只是取环境；把它挪走等于给一行代码建一个 Manager。
+- 防线：G1b 的 `Process.Start(` / `TcpClient` 等模式不覆盖环境变量读取 → 该项**无闸**，
+  新增环境变量读取请优先放到 `AppEnvironment`。
+
+## 4. `Managers/WebViewManager` 的三个 per-window 静态
+
+- 现状：`MainWeb` / `RecoveryNeeded` / `HiddenSince` 是 `public static`，而
+  `docs/refactor-static-mapping.md` 对 `_mainWeb` 明写"不能是静态进程级，否则多窗场景引用混乱"。
+  代码注释却自称符合该映射的 B 组。
+- 为什么本轮不 un-static：un-static 会要求所有消费者（弹窗、恢复、托盘隐藏计时、健康监控页面层）
+  都拿到"哪一个 WebView"的引用，那是一次独立的窗口化改造，不属于"防臃肿"范围。
+- 前置条件：先决定弹窗/多窗的所有权模型（`WindowManager` 已经是弹窗工厂的注入口，是天然落点）。
+- 防线：**G3 硬零**（下层不得回调 `Program.` 静态）+ **G1** 组合根体量棘轮，防止用静态绕路新增。
+
+## 5. `BrowserProcessExited` 在 `WebViewManager.ProcessFailed` 无分支（已知独立缺陷）
+
+- 现状：WebView2 的**浏览器进程**（非渲染进程）退出时，壳没有专门分支处理。若网页通知相关的
+  WPN 崩溃落在浏览器进程，结果是**永久白屏且无自愈**（渲染进程崩溃才有重载路径）。
+- 为什么本轮不修：它独立于 issue #25 与本次审计，且修法需要先确认浏览器进程退出后
+  `EnsureCoreWebView2Async` 重建的正确姿势（现有测试覆盖不到）。
+- 前置条件：真机复现一次浏览器进程退出（或 Fake `ICoreWebView2Environment`），再补分支 + E2E。
+- 防线：无。**下一次触碰 WebViewManager 时应连带处理**（处理完请删除本条）。
+
+## 6. `ProcessRunner.RunCapture` 的**第 6 份**副本留在 ShellLogic（D1 未完部分）
+
+- 现状：进程三必须（双流排空 + 限时等待 + 超时 `Kill(entireProcessTree)`）此前有 6 份手写实现。
+  Phase 5 · D1 已把其中 5 份并到 `Managers.ProcessRunner.RunCapture`
+  （`Domain/DshDiscovery.ProbeVersionOutput`、`RuntimeResolver.IsUsableNode`、
+  `UpdateChecker.ProbeGitDescribeVersion`、`DiagnoseExport.RunCapture` + `RunCaptureLines`）。
+  最后一份在 `ShellLogic.cs` 的 npm 帮助类里。
+- 为什么不动那一份：改成调用 `ProcessRunner.RunCapture` 会让**纯逻辑层反向依赖 Managers 层**
+  （现在是 Managers → ShellLogic）。方向一旦反掉，ShellLogic 里就能塞任意 IO，比一份重复更贵。
+- 前置条件：把那段采集本身从 ShellLogic 挪进 Managers（顺带清 G1b 的一处原语），再复用 helper。
+- 防线：**G1b** 锁住 ShellLogic 的原语行数不涨。
+
+## 7. pnpm 安装阶段不可取消（T6b 顺带发现）
+
+- 现状：关窗时"正在构建更新"的确认框提供"强制关闭"。Phase 4 · T6b 把构建占用状态
+  （`BuildInProgress` + 取消源）从组合根静态迁入 `DshUpdateManager`，并把取消令牌**真正**接进了
+  `npm pack` 下载与 npm 安装回退两条 `RunNpmCommand` 路径（取消即 Kill 进程树）。
+  **但 `ProcessRunner.RunPnpmInstall` 自己 `new Process` + 逐行读 ndjson，没有 ct 形参** →
+  pnpm 阶段（常见路径，约 10~24 秒）打不断。
+  修复前的状态更糟：`_buildCts` 从未传给任何进程，日志却写"build process canceled"——一句谎话。
+- 现在留下的路径：取消请求会让 `BuildRuntimeFromTarball` **跳过 npm 回退**（不再续一条最长
+  20 分钟的安装），tarball 按失败同形保全供下次启动免重下。
+- 前置条件：给 `RunPnpmInstall` 加 `CancellationToken` + `ct.Register(() => p.Kill(entireProcessTree:true))`
+  并在读循环里响应取消；需要一次真机长构建验证（网络门控 `-RealNet`）。
+- 防线：`BuildStatusOutcomes.Outcome_NoBuildRunning_IsIdleAndCancelIsNoOp`（幂等语义），
+  以及取消日志现在如实打印 `cancellation requested=True/False`。
+
+## 8. 未钳制的裸 `/96f` DPI 换算 —— **已闭环（同日，D8 收尾）**
+
+- 曾经：8 份钳制副本（B4 修的就是"其中一份漏了钳制"）+ **10 处完全没有钳制**的
+  `form.DeviceDpi / 96f`（标题栏高度、`CustomTitleBar` 缩放、版本弹窗/探针的 `Rescale`）。
+- 现在：`ShellLogic.DpiScale` 是唯一实现（`Of` 系数 / `Px` 设计像素→物理像素 / `Sanitize`
+  "≤0 当 96"），12 个调用点全部改走它，src 代码行里的裸 `/96f` 换算**归零**。
+- 闸：**G10 两条硬零**（第二份钳制字面量 = 0、裸 `/96f` = 0）。已反向验证：注入一次即红并点名违例行。
+- 验证边界（不得夸大）：`--ui-selftest` 真机 `pass=True` 只证明**正常 DPI 下逐位不变**；
+  "坏驱动给出 `DeviceDpi == 0` 时不再塌成 0px"由 `DpiScaleContractTests` 的边界例钉住，
+  没有在真造的 0 DPI 屏上跑过。
+- 保留编号以免交叉引用错位；本条已无待办。
+
+## 9. `Program._shutdownInitiated` 与状态机 `ShuttingDown` 并存
+
+- 现状：退出编排的幂等闸门是组合根的 `static bool`（在 G5 冻结清单里）。状态机里
+  `LifecycleState.ShuttingDown` 已经存在并且 `RequestShutdown()` 会投递它。
+- 为什么本轮不合并：关窗、托盘退出、看门狗强杀三条入口对"谁先跑清理"的时序依赖没有被测过；
+  把物理互斥换成状态判定，最坏情况是清理跑两遍或一遍都不跑。
+- 前置条件：先给 `BeginShutdownAsync` 补 Headless 用例（三入口并发调用只清理一次），再合并。
+- 防线：**G5** 冻结清单（该名字若在，新增同类静态标量即红）。
+
+## 10. `BuildStatusOutcomes` 的 BuildStatus 用例只校验枚举成员
+
+- 现状：该类的 `Outcome_BuildStatus_*` 用例断言的是枚举成员/序数存在，**不**校验状态流转
+  （标题栏需要真实窗体，属 `UiTestHookE2ETests` 的 E2E 面）。本轮已删掉其中一条
+  `Assert.True(true, ...)` 的纯空断言，并补了一条真的读行为的
+  `Outcome_NoBuildRunning_IsIdleAndCancelIsNoOp`。
+- 前置条件：E2E 里驱动一次真实构建状态变化（`--ui-probe` + 标题栏取词）。
+- 防线：无。**新增测试不得再写恒真断言**（AGENTS.md 反 Mock 幻觉条款）。
+
+## 11. CHANGELOG `[Unreleased]` 段顶到 G7 上限 —— **已按用户授权放行（同日）**
+
+- 当时状态：**G7** 规定锚点恰好 1 个且该段 ≤315 行；T5 收官时实测**正好 315**（并行会话的 DPI 批次
+  填满，防臃肿整改自己一条都没写），加任何一条都会红。
+- 用户 2026-09-19 的决定：**放宽上限并写明理由**。G7 现 ≤400 行，授权范围（一次、此数值、再抬需
+  同等授权）写在该断言正上方；本轮整改已写成 `### 维护` 一节，段长实测 356。
+- 闸没有被绕开：锚点仍 `-eq 1`，段长仍"低于上限时收紧到当下实测"，定版仍是真正的收口动作。
+- 遗留：项目停更，可能永不定版；那就每轮按同等显式授权处理，**不许默默抬高手**。
+
+## 12. `DshUpdatePipelineRealTests` 的过期注释
+
+- 现状：文件中一段注释仍在描述"prerelease 序数比较"这一**已被删除**的旧行为（F1 已真修好：
+  `VersionPolicy.CompareVersions` 唯一实现，prerelease 与 build metadata 均按 SemVer 处理）。
+- 处理：下次触碰该文件时改正注释并删除本条。属"注释与实现分叉"，无行为影响。
+
+## 13. 包名单一真相源（F9）—— **已闭环（同日）**
+
+- 现在：`DshDiscovery.PackageScope` / `PackageShortName`（唯一定义）+ 由它们派生的
+  `PackageName` / `PackageRelativeDir()`（安装布局路径段）/ `PackagePathMarker`（在既有路径串里
+  定位本包目录）。用户可见的"手动执行 npm install -g …"文案、`node_modules\@deepseek-ai\dsh`
+  路径段、bundle scope 前缀判定（`ShellLogic` 两处 `StartsWith`、`SafeProfileBuilder.DeepSeekScope`）
+  全部改从常量取——`DshDiscovery` 注释里"路径段与提示文案一律从这里取"的承诺与现状终于一致。
+- 闸：**G13 两条硬零**（除 `DshDiscovery.cs` 外的代码行里不得出现完整包名 / `"node_modules",
+  "@deepseek-ai"` 路径段三连 / `StartsWith("@deepseek-ai/")`；`SafeProfileBuilder` 的 scope 常量
+  不得再自立字面量）。已反向验证：注入一条即红并点名违例行。
+- 合法保留：`SafeProfileBuilder` 的 `@deepseek-ai/dsh-base` / `-dsh-web-app` 是**不同包名**
+  （核心 bundle 成员），闸按后缀豁免。
+
+---
+
+## 附：本轮新增的机器闸一览（防止上述债务再增长）
+
+| 闸 | 拦什么 | 反向验证 |
+|---|---|---|
+| G1 / G1b | 组合根代码行数 ≤ 当下实测；纯函数文件的不纯原语行数 ≤ 当下实测 | 注入 2 行代码 → 红 |
+| G2 | 单方法行数 ≤ 当下实测（含扫描器自检"必须找到一个成体量级的方法"，防解析退化成恒绿） | 注入 90 行方法 → 红 |
+| G3 | 下层（Managers/Windows/Chrome/Domain/Lifecycle/Win32）回调 `Program.` 静态 = **硬零** | 写一处回调 → 红 |
+| G4 | Manager 互不引用（兄弟引用计数棘轮） | 加一处 `WindowManager.Instance` → 红 |
+| G5 | 组合根静态标量流程字段冻结清单（只减不增；现 7 项） | 新增同类字段 → 红 |
+| G6 | 全仓空 `catch {}` 总数棘轮 | 加一个空 catch → 红 |
+| G7 | CHANGELOG 单一 `[Unreleased]` 锚点 + 段长棘轮 | 复制锚点 → 红 |
+| G8 | 文档↔代码一致性（docs/00 不得正面命令 cmd.exe；AGENTS.md 地图列全 Manager；映射表必须自称时效） | 删地图条目 → 红 |
+| G9 | 已迁出的运行期事务符号**不得回流**组合根（方法名 + 静态字段 + 回滚无阻塞轮询 + 重挂导航的委托必须是投递形式） | 注入旧方法名/字段/`Thread.Sleep`/裸方法名委托 → 红 |
+| G10 | DPI 钳制只在 ShellLogic.DpiScale 一处（硬零）；未钳制裸 `/96f` 处数棘轮 | 再抄一份钳制 → 红 |
+| G11 | `taskkill` 启动点唯一 | 新增第二处启动点 → 红 |
+| G12 | 短进程采集走 `ProcessRunner.RunCapture`（调用点 ≥5 为下限）；RunCapture 之外手写限时 `WaitForExit(n)` 处数棘轮（现 2） | 手写第二套采集 → 红 |
+| G13 | npm 包名/作用域字面量只在 `DshDiscovery` 一处（硬零） | 在别处再写一次 `@deepseek-ai/dsh` → 红 |
+
+G9–G12 的反向验证方式是**一次注入多项违规**（在 `WindowManager` 里临时放第二份 DPI 钳制 +
+第二处 taskkill 启动 + 手写 `WaitForExit(5000)`），实测**恰好 4 条断言变红**且各自报出违例行，
+随后删除探针并复核（`GATE-PROBE` 全仓命中 0）。没红过的闸等于没写。

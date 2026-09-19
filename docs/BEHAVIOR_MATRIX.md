@@ -59,7 +59,7 @@
 | L2 | 托盘左键先 `SW_RESTORE` 再 `Activate`（最小化后 Activate 无效） | 托盘左键/菜单唤起 | `ShowMainWindow` | — | — | — | ✅ 托盘左键唤起 |
 | L3 | 单实例聚焦（Mutex + FindWindow 标题，第二次启动 restore+foreground） | 二次启动 | Program.Main 编排 | — | ✅ 现有 E3（second instance exits） | — | ✅ 二次启动聚焦已有窗 |
 | L4 | 窗口位置+最大化状态记忆（SaveWindowState / Load） | 退出→重启 | WindowManager + WindowStateStore | ✅ 越界钳制单测 | ✅ 现有 E4 | — | ✅ 位置/最大化记忆 |
-| L5 | 主题即时切换（DWM 沉浸式 + FSW + 系统事件） | 系统/文件主题变化 | TrayManager.RegisterThemeWatcher | — | — | — | ✅ 深浅主题即时切换 |
+| L5 | 主题即时切换（DWM 沉浸式 + FSW + 系统事件） | 系统/文件主题变化 | WindowManager.RegisterThemeWatcher | — | — | — | ✅ 深浅主题即时切换 |
 | L6 | lifetime 三模式关窗语义（常驻0/托盘驻留1/跟随窗口2） | 关窗 | `ResolveEffectiveLifetime` + FormClosing | ✅ 现有 ShellLogicTests | ✅ E3 alive=False（跟随窗口） | — | ✅ 三模式关窗 |
 | L7 | 事件接线"顺序即语义"：HandleCreated 先于主题应用；订阅次数恰一次（防双订阅/漏订阅静默丢失） | 启动 | WindowManager 构造"接线自检" Debug 断言 | ✅ 接线次数断言 | — | — | ✅ 启动无双重载/双主题 |
 

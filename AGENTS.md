@@ -35,7 +35,7 @@
 ## 🧭 项目地图（定位代码）
 
 - `src/DshShell/Program.cs` — 组合根（仅启动 + 消息泵，业务下沉）
-- `src/DshShell/Managers/` — `ServiceManager`/`RuntimeManager`/`WebViewManager`（互不引用，经 `LauncherApp` 注入）
+- `src/DshShell/Managers/` — 对等 Manager：`ServiceManager`/`RuntimeManager`/`WebViewManager`/`WindowManager`/`DshUpdateManager`（目标：互不引用，经 `LauncherApp` 注入；现状实测的兄弟引用条数由 `test.ps1` 棘轮 G4 锁住只减不增）。`TrayManager`/`ITrayManager` 已于 2026-09 防臃肿整改 Phase 6 删除——它是 11 行委托空壳、两个方法在 src 与 tests 中零调用方，托盘生命周期真身在 `WindowManager`（`EnsureTrayIcon`/`RegisterThemeWatcher`）。`ProcessRunner`/`AppEnvironment`/`ServiceLifecycleOps`/`WebRuntimeInstaller`/`F11LowLevelHook`/`SelftestReporter` 为无状态工具类，`ManagerInterfaces.cs` 为契约面
 - `src/DshShell/Lifecycle/` — `LauncherLifecycle` 状态机（`LifecycleState` 枚举 + `Triggers`）
 - `src/DshShell/ShellLogic.cs` — 所有纯逻辑（`static` 纯函数 + 契约测试）
 - `src/DshShell/Windows/` — `DshShellForm`/`SplashForm` 等 UI

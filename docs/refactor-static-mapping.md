@@ -1,4 +1,19 @@
-# static 字段语义映射表（Program → WindowManager / WebViewManager / TrayManager）
+# static 字段语义映射表（Program → WindowManager / WebViewManager）
+
+> ## ⚠️ 本表已 **FROZEN / 已过时**（2026-09-19 标注）——它是历史交付物，不是当前真值
+>
+> 本表最后更新于 `refactor(Task0)`（2026-08-19），此后 `Program.cs` 又增长约 880 行、内容整体
+> 位移，表内引用的行号已全部失效；21 个字段中 **13 个的归属与现状不符**（§C/§E/§G 曾把 7 个字段
+> 承诺给 `TrayManager`，而它们实际全在 `WindowManager`——`TrayManager.cs` 当时是 11 行委托空壳，
+> **已于 2026-09 Phase 6 连同 `ITrayManager` 一起删除**：两个方法在 src 与 tests 中零调用方，
+> 托盘生命周期的真身一直是 `WindowManager.EnsureTrayIcon` / `RegisterThemeWatcher`。
+> 下表「归属」列已就地改成真值 `WindowManager`）。
+>
+> **因此下方「本表是唯一权威」一句自 2026-09-19 起作废**：查当前真值请直接读代码。
+> 本表保留的价值是**生命周期语义的判据**（进程级 vs 每窗级为什么不能错配、A 组节流降级的
+> v0.3.4 血泪事故），这部分不会因为位移而失效。
+>
+> 唯一仍然有效且**已被机器锁定**的约束见 `scripts/test.ps1` 的 2.3 节棘轮（G1~G8）。
 
 > 本文档是 Task 4（`InitWebViewAsync` 迁入 `WebViewManager`）与 Task 5（生命周期编排迁出）的
 > **先决交付物**，并随 Step 4/5 的 commit message 一起提交。
@@ -7,7 +22,8 @@
 > 进程级节流错误降级为实例级（崩溃 10s/3 次节流变每个窗口各记各的 → 形同虚设），或把每窗级
 > 状态错误提升为进程级（多弹窗互相污染 `_webviewRecoveryNeeded` → 白屏恢复错乱）。
 >
-> 行号基于 `Program.cs`（refactor/baseline 前的现状）。本表是**唯一权威**，任何迁移不得偏离。
+> 行号基于 `Program.cs`（refactor/baseline 前的现状）。~~本表是**唯一权威**，任何迁移不得偏离。~~
+> （该声明已按上方横幅作废；保留原句以免篡改历史语境。）
 
 ## 图例
 
@@ -41,13 +57,13 @@
 
 ---
 
-## C. 主题监听（进程级，归 TrayManager / WindowManager，进程退出释放）
+## C. 主题监听（进程级，归 WindowManager，进程退出释放）
 
 | 字段 | 行号 | 类型 | 现语义 | 新归属 | 生命周期 | 迁移铁律 |
 |---|---|---|---|---|---|---|
-| `_themeTimer` | 121 | `Timer` | 主题轮询兜底（FSW 失效时定时重查） | `TrayManager` | **进程级** | 真实退出时 `ReleaseThemeWatcher` 释放；**FormClosing 拦截先于释放**（ORDER-INVARIANT） |
-| `_themeWatcher` | 122 | `FileSystemWatcher` | settings.yaml 文件变化 → 即时切主题 | `TrayManager` | **进程级** | 同上 |
-| `_themeEventsHandler` | 123 | `UserPreferenceChangedEventHandler` | 系统深/浅色切换事件 | `TrayManager` | **进程级** | 同上 |
+| `_themeTimer` | 121 | `Timer` | 主题轮询兜底（FSW 失效时定时重查） | `WindowManager` | **进程级** | 真实退出时 `ReleaseThemeWatcher` 释放；**FormClosing 拦截先于释放**（ORDER-INVARIANT） |
+| `_themeWatcher` | 122 | `FileSystemWatcher` | settings.yaml 文件变化 → 即时切主题 | `WindowManager` | **进程级** | 同上 |
+| `_themeEventsHandler` | 123 | `UserPreferenceChangedEventHandler` | 系统深/浅色切换事件 | `WindowManager` | **进程级** | 同上 |
 
 ---
 
@@ -60,12 +76,12 @@
 
 ---
 
-## E. 托盘（进程级，归 TrayManager）
+## E. 托盘（进程级，归 WindowManager）
 
 | 字段 | 行号 | 类型 | 现语义 | 新归属 | 生命周期 | 迁移铁律 |
 |---|---|---|---|---|---|---|
-| `_trayIcon` | 143 | `NotifyIcon` | 托盘图标（按需显示，见 `EnsureTrayIcon`） | `TrayManager` | **进程级** | 退出路径 `Dispose`；托盘驻留隐藏路径**不** dispose（需保留唤起） |
-| `_trayExitRequested` | 146 | `bool` | 托盘"退出"请求（放行 FormClosing 真关） | `TrayManager` | **进程级** | `ShouldInterceptCloseToTray(mode, trayExitRequested)` 决策纯函数依赖它 |
+| `_trayIcon` | 143 | `NotifyIcon` | 托盘图标（按需显示，见 `EnsureTrayIcon`） | `WindowManager` | **进程级** | 退出路径 `Dispose`；托盘驻留隐藏路径**不** dispose（需保留唤起） |
+| `_trayExitRequested` | 146 | `bool` | 托盘"退出"请求（放行 FormClosing 真关） | `WindowManager` | **进程级** | `ShouldInterceptCloseToTray(mode, trayExitRequested)` 决策纯函数依赖它 |
 
 ---
 
@@ -82,9 +98,9 @@
 
 | 字段 | 行号 | 类型 | 现语义 | 新归属 | 生命周期 | 迁移铁律 |
 |---|---|---|---|---|---|---|
-| `_darkWhaleIcon` | 2683 | `Icon` | 深色鲸鱼图标（浅色主题/任务栏用） | `TrayManager`/`WindowManager` | **进程级** | `Icon.FromHandle(GetHicon())` 的 GDI 句柄随进程退出释放；**不 dispose**（托盘驻留/主题切换复用时若 dispose 会悬挂句柄） |
+| `_darkWhaleIcon` | 2683 | `Icon` | 深色鲸鱼图标（浅色主题/任务栏用） | `WindowManager`/`WindowManager` | **进程级** | `Icon.FromHandle(GetHicon())` 的 GDI 句柄随进程退出释放；**不 dispose**（托盘驻留/主题切换复用时若 dispose 会悬挂句柄） |
 | `_lightWhaleIcon` | 2686 | `Icon` | 白色鲸鱼图标（深色主题/托盘用） | 同上 | **进程级** | 同上 |
-| `_blueWhaleIcon` | 2689 | `Icon` | 蓝色鲸鱼（任务栏/托盘固定） | `TrayManager` | **进程级** | `TrayWhaleIcon` 属性 `??=` 懒加载 |
+| `_blueWhaleIcon` | 2689 | `Icon` | 蓝色鲸鱼（任务栏/托盘固定） | `WindowManager` | **进程级** | `TrayWhaleIcon` 属性 `??=` 懒加载 |
 
 ---
 
