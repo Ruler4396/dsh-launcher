@@ -68,9 +68,7 @@ public sealed record DshRuntimeIdentity(
         get
         {
             if (Source != DshSource.SelfContained || DshEntryJsPath is null) return null;
-            var marker = string.Concat(Path.DirectorySeparatorChar, "node_modules",
-                Path.DirectorySeparatorChar, "@deepseek-ai", Path.DirectorySeparatorChar,
-                "dsh", Path.DirectorySeparatorChar);
+            var marker = DshDiscovery.PackagePathMarker;
             var idx = DshEntryJsPath.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
             return idx > 0 ? DshEntryJsPath[..idx] : null;
         }

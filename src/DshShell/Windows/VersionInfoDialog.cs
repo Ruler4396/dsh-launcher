@@ -158,7 +158,7 @@ internal sealed class VersionInfoDialog : Form
         Font = new Font("Microsoft YaHei UI", g.EmPx, FontStyle.Regular, GraphicsUnit.Pixel);
 
         _titleBar.Bounds = new Rectangle(1, 1, g.ClientWidth - 2, g.TitleHeight);
-        _titleBar.Rescale(deviceDpi / 96f);
+        _titleBar.Rescale(DshWeb.ShellLogic.DpiScale.Of(deviceDpi));
 
         PlaceRow(g, _dshNameLabel, _dshCurrentLabel, _dshLatestLabel, _dshStatusLabel, g.Row1Y);
         PlaceRow(g, _launcherNameLabel, _launcherCurrentLabel, _launcherLatestLabel,
@@ -243,6 +243,6 @@ internal sealed class VersionInfoDialog : Form
     /// <summary>诊断留痕（复用 Program.Trace 语义，便于"版本弹窗显示异常"排查）。</summary>
     private void Trace(string msg)
     {
-        try { DshWeb.Program.Trace(msg); } catch { /* 留痕失败不影响弹窗 */ }
+        try { Logger.Info(msg); } catch { /* 留痕失败不影响弹窗 */ }
     }
 }

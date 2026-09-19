@@ -45,4 +45,14 @@ public static class SafeModeLaunchPolicy
     /// 取舍是明确的——"插件被禁用但界面能用"远好于"界面起不来且无法退出"。
     /// </summary>
     public static bool ShouldFallBackToNormal(bool rebuildSucceeded) => !rebuildSucceeded;
+
+    /// <summary>
+    /// 安全模式导航 URL：给服务地址追加 <c>safe_mode=1</c>（已有 query 则用 <c>&amp;</c> 续接）。
+    /// "有没有 query"必须经 <see cref="Uri"/> 解析，不能字符串找 <c>'?'</c>——dsh 的 token 横幅
+    /// URL 里 <c>'?'</c> 只可能出现在 query 起点，但 path 段允许出现编码后的字符，手找会误判。
+    /// 非法 URL 让它抛（调用方沿用既有的 try/catch 留痕路径），绝不静默退回"不带标志的 URL"——
+    /// 那等于用户以为进了安全模式、实际没有。
+    /// </summary>
+    public static string NavigationUrlWithSafeModeFlag(string baseUrl)
+        => baseUrl + (new Uri(baseUrl).Query.Length > 0 ? "&" : "?") + "safe_mode=1";
 }

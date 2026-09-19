@@ -147,23 +147,10 @@ public static class RuntimeResolver
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo(nodeExe, "--version")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            using var p = System.Diagnostics.Process.Start(psi);
-            if (p is null) return false;
-            var readTask = p.StandardOutput.ReadToEndAsync(); // 后台排空管道，防止子进程挂死时阻塞
-            if (!p.WaitForExit(3000))
-            {
-                // 超时：杀进程树防泄漏（Kill(true) 杀子进程，避免 node worker 成孤儿）
-                try { p.Kill(entireProcessTree: true); p.WaitForExit(); } catch { }
-                return false;
-            }
-            return IsUsableNodeVersion(readTask.Result.Trim());
+            // 进程三必须的唯一实现（Phase 5 · D1）
+            var (ok, timedOut, output, _) = Managers.ProcessRunner.RunCapture(nodeExe, "--version", 3000);
+            if (!ok) return false; // 超时已强杀进程树；启动失败/异常由 RunCapture 如实上报原因
+            return IsUsableNodeVersion(output.Trim());
         }
         catch { return false; }
     }

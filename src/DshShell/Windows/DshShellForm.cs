@@ -68,7 +68,7 @@ internal sealed class DshShellForm : Form
         // 之前"全屏模式隐藏标题栏"反复造成"标题栏消失"困扰）。
         WindowState = WindowState == FormWindowState.Maximized
             ? FormWindowState.Normal : FormWindowState.Maximized;
-        DshWeb.Program.Trace($"ToggleFullscreen: WindowState={WindowState}");
+        Logger.Info($"ToggleFullscreen: WindowState={WindowState}");
     }
 
     /// <summary>

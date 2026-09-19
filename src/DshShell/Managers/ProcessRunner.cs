@@ -23,6 +23,56 @@ internal static class ProcessRunner
             Environment.GetEnvironmentVariable("DSH_NPM_MIRROR"));
 
     /// <summary>
+    /// 短进程输出采集——全仓**唯一**实现（臃肿审计 Phase 5 · D1）。
+    ///
+    /// 【为什么只能有一个】"启动 → stdout/stderr 双流异步排空 → 限时等待 → 超时
+    /// Kill(entireProcessTree)" 是 docs/00 写死的进程三必须。它此前被手工重推导 6 份
+    /// （DshDiscovery / RuntimeResolver / UpdateChecker / DiagnoseExport×2 / ShellLogic），
+    /// 每份都能悄悄少一条腿——B1 修的就是已经少了腿的那份（诊断导出里的同步 ReadToEnd：
+    /// 子进程输出超过管道缓冲就死锁，并且留下孤儿进程）。
+    ///
+    /// 语义：<c>Ok=false</c> = 没拿到可信输出（启动失败/抛异常）；<c>TimedOut=true</c> = 进程被
+    /// 强杀、Stdout 不可信。异常**不静默**：<c>Error</c> 带真实原因，降级还是上报由调用方决定。
+    /// <paramref name="utf8Output"/>=false 供输出编码本就不是 UTF-8 的命令（Windows 控制台工具
+    /// 走 GBK 代码页，强设 UTF-8 会把诊断信息变成乱码——那不是改进而是新缺陷）。
+    /// </summary>
+    internal static (bool Ok, bool TimedOut, string Stdout, string? Error) RunCapture(
+        string file, string args, int timeoutMs, string? workingDirectory = null, bool utf8Output = true)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(file, args)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            if (utf8Output)
+            {
+                psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
+                psi.StandardErrorEncoding = System.Text.Encoding.UTF8;
+            }
+            if (!string.IsNullOrEmpty(workingDirectory)) psi.WorkingDirectory = workingDirectory;
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p is null) return (false, false, "", "进程未启动");
+            // 两路都要排空：只排一路时另一路写满管道缓冲 → 子进程阻塞在写上 → 父进程永远等不到退出
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try { p.Kill(entireProcessTree: true); p.WaitForExit(2000); } catch { /* 尽力回收 */ }
+                return (false, true, "", $"执行超时（{timeoutMs}ms），进程树已强杀");
+            }
+            return (true, false, stdoutTask.Result, null); // 已退出 → 管道已关，读任务必已完成
+        }
+        catch (Exception ex)
+        {
+            return (false, false, "", ex.Message);
+        }
+    }
+
+    /// <summary>
     /// 按 npm 源序列依次尝试（优先最快可达的源，失败才降级下一个）。
     /// run(sourceIndex)：用 sources[sourceIndex] 的 --registry 参数执行一次，返回是否成功。
     /// 成功来源记入日志；winningIndex 返回首个成功源下标（-1=全部失败），供同流程

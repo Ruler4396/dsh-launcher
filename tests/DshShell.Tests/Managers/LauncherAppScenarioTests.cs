@@ -7,7 +7,7 @@ namespace DshShell.Tests.Managers;
 
 /// <summary>
 /// LauncherApp 组合根的 Headless 场景测试（维度二，重构后新增）：Fake Manager 驱动生命周期，
-/// 不起 UI / 不起 Node / 不进网络。覆盖四个核心场景：
+/// 不起 UI / 不起 Node / 不进网络。覆盖四个核心启动场景 + 运行期事务轨迹（场景 5，见文件末）：
 ///   1. Happy Path：所有 Manager 成功 → Idle→…→Running，UI 初始化事件被触发；
 ///   2. Runtime Failure：IRuntimeManager 报 E1004（便携 Node 校验和不匹配）→ Failed + 错误码保留；
 ///   3. Service Readiness Timeout：HTTP 探测超时 → ShuttingDown + E2002 语义 + 僵尸清理回调被触发；
@@ -344,6 +344,68 @@ namespace DshShell.Tests.Managers;
         Assert.True(await app.RunStartupAsync());
         Assert.False(service.LastStartArgs!.Value.Identity.IsSafeProfile);
         Assert.Equal(IdentityFixtures.Launchable(), service.LastStartArgs!.Value.Identity);
+    }
+
+    // ---------------- 场景 5：运行期事务经过 LauncherApp 的轨迹 ----------------
+    // AGENTS.md 铁律「修改生命周期流转必须在 LauncherAppScenarioTests 补 Headless 测试」。
+    // 臃肿审计 Phase 3 给状态机补了 RestartingService / EnteringSafeMode / ExitingSafeMode /
+    // ApplyingUpdate / RollingBackUpdate 五个运行态，Phase 4 把三条事务搬进协调器后，
+    // 事务是通过 LauncherApp.TryFire 这个**唯一**受控入口投递的——所以轨迹必须在这个缝上断言，
+    // 而不是只在 LauncherLifecycle 的单元测试里断言（那测的是表，测不到缝）。
+
+    [Theory]
+    [InlineData(LifecycleTrigger.RestartRequested, LifecycleState.RestartingService, LifecycleTrigger.RestartCompleted)]
+    [InlineData(LifecycleTrigger.SafeModeEntryRequested, LifecycleState.EnteringSafeMode, LifecycleTrigger.SafeModeEntered)]
+    [InlineData(LifecycleTrigger.SafeModeExitRequested, LifecycleState.ExitingSafeMode, LifecycleTrigger.SafeModeExited)]
+    [InlineData(LifecycleTrigger.UpdateApplyRequested, LifecycleState.ApplyingUpdate, LifecycleTrigger.UpdateApplied)]
+    [InlineData(LifecycleTrigger.RollbackRequested, LifecycleState.RollingBackUpdate, LifecycleTrigger.RollbackCompleted)]
+    public async Task RuntimeTransaction_TransitsOutOfRunningAndBack_ThroughAppSeam(
+        LifecycleTrigger begin, LifecycleState transientState, LifecycleTrigger end)
+    {
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        Assert.True(await app.RunStartupAsync());
+        Assert.Equal(LifecycleState.Running, app.State);
+        var states = Trace(app);
+
+        Assert.True(app.TryFire(begin), "稳态下开始事务必须被接受");
+        Assert.Equal(transientState, app.State);
+        Assert.True(app.TryFire(end), "事务完成事件必须把状态送回 Running");
+        Assert.Equal(LifecycleState.Running, app.State);
+        Assert.Equal(new[] { transientState, LifecycleState.Running }, states);
+    }
+
+    /// <summary>
+    /// 两个运行期事务不得同时占用状态机：回滚 saga 复用共享重启事务时靠
+    /// <c>driveLifecycleState:false</c> 避免争态。这里锁住"缝"的语义——非法嵌套被**吸收**而不是抛，
+    /// 否则自愈路径会把自己的事务炸掉（TryFire 与直接 Fire 的区别正在这里）。
+    /// </summary>
+    [Fact]
+    public async Task NestedRuntimeTransaction_IsAbsorbed_AndOriginalTransactionStillCloses()
+    {
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        Assert.True(await app.RunStartupAsync());
+        Assert.True(app.TryFire(LifecycleTrigger.RollbackRequested));
+
+        Assert.False(app.TryFire(LifecycleTrigger.RestartRequested), "回滚中再投重启必须被吸收");
+        Assert.Equal(LifecycleState.RollingBackUpdate, app.State);
+
+        Assert.True(app.TryFire(LifecycleTrigger.RollbackCompleted));
+        Assert.Equal(LifecycleState.Running, app.State);
+    }
+
+    /// <summary>事务进行中用户关窗必须放行（否则"退出"被瞬时态卡死，退出路径直接抛异常）。</summary>
+    [Fact]
+    public async Task ShutdownDuringRuntimeTransaction_IsAllowed()
+    {
+        var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
+        Assert.True(await app.RunStartupAsync());
+        Assert.True(app.TryFire(LifecycleTrigger.RestartRequested));
+
+        Assert.True(app.TryFire(LifecycleTrigger.ShutdownRequested));
+        Assert.Equal(LifecycleState.ShuttingDown, app.State);
+        // 已进终态后事务完成事件被吸收：不得把会话从 ShuttingDown 拉回 Running
+        Assert.False(app.TryFire(LifecycleTrigger.RestartCompleted));
+        Assert.Equal(LifecycleState.ShuttingDown, app.State);
     }
 
     /// <summary>每测试用一次性临时目录（与 UpdateFlowContractTests 同风格）。</summary>

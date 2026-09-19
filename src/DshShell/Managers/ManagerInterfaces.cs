@@ -132,11 +132,3 @@ public interface IWindowManager
     bool ResolveDarkMode();
 }
 
-/// <summary>托盘图标/菜单与主题监听。</summary>
-public interface ITrayManager
-{
-    /// <summary>确保托盘图标存在（按需显示）。</summary>
-    void EnsureTray(Form owner, bool force = false);
-    /// <summary>注册主题监听（系统/文件变化 → 即时切换）。</summary>
-    void RegisterThemeWatcher(Form form);
-}

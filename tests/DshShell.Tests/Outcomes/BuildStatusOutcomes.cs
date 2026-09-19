@@ -7,20 +7,29 @@ namespace DshShell.Tests.Outcomes;
 /// <summary>
 /// 【L3 Outcome — 任务五】后台更新构建状态验证。
 ///
-/// 不关心 CustomTitleBar 内部如何渲染进度条，只关心系统的最终物理状态：
-/// - 构建中时 _isBuildInProgress == true
-/// - 构建完成/失败后 _isBuildInProgress == false
-/// - CustomTitleBar 的 _buildStatus 反映真实构建状态
+/// 物理状态断言（臃肿审计 Phase 4 · T6b 后，构建占用状态的真相源是更新引擎，不再是组合根静态）：
+/// - 无构建在跑时 <c>DshUpdateManager.BuildInProgress == false</c>，且请求取消返回 false；
+/// - CustomTitleBar 的 BuildStatus 枚举仍含 Idle/Building/Ready 三态。
 ///
-/// 因果链验证：
-///   Given: DownloadDshUpdateStaged 被调用
-///   When:  npm build 正在执行
-///   Then:  _isBuildInProgress == true，标题栏显示"构建中..."
-///   When:  npm build 完成/失败/异常
-///   Then:  _isBuildInProgress == false，标题栏恢复 Idle
+/// 【已如实标注的弱断言】下面 BuildStatus 相关用例只校验枚举成员与序数，**没有**校验任何
+/// 状态流转（标题栏需要真实窗体，属 E2E 的 <c>UiTestHookE2ETests</c> 面）。它们能防的是"枚举被
+/// 重排/删项"，防不了"流转写错"。登记在 docs/ARCHITECTURE-DEBT-LEDGER.md 待补。
 /// </summary>
 public class BuildStatusOutcomes
 {
+    /// <summary>
+    /// 构建占用状态的真相源在更新引擎：新建实例必须是"空闲"，且此时请求取消不得谎报成功。
+    /// 这条取代了原先写在文档注释里、却从未真正读取 <c>Program._isBuildInProgress</c> 的断言。
+    /// </summary>
+    [Fact]
+    public void Outcome_NoBuildRunning_IsIdleAndCancelIsNoOp()
+    {
+        var updates = new DshWeb.Managers.DshUpdateManager(
+            Path.Combine(Path.GetTempPath(), "dsh-nobuild-" + Guid.NewGuid().ToString("N")), 3080);
+        Assert.False(updates.BuildInProgress, "未开始构建却自称在构建，会让关窗拦截误判");
+        Assert.False(updates.TryCancelRunningBuild(), "无构建时取消必须返回 false（调用方据此不提已取消）");
+    }
+
     /// <summary>
     /// 【L3 Outcome — BuildStatus 枚举契约】
     /// 验证 BuildStatus 枚举包含所有必要的状态。
@@ -45,20 +54,6 @@ public class BuildStatusOutcomes
         // 注：CustomTitleBar 需要 DshShellForm 实例，此处验证枚举契约
         // 实际 UI 测试需通过 E2E（UiTestHookE2ETests）
         Assert.Equal(CustomTitleBar.BuildStatus.Idle, (CustomTitleBar.BuildStatus)0);
-    }
-
-    /// <summary>
-    /// 【L3 Outcome — 线程安全契约】
-    /// 验证 _buildStatus 字段的 volatile 语义（跨线程可见性）。
-    /// 注：此测试验证设计意图，实际 volatile 语义由编译器保证。
-    /// </summary>
-    [Fact]
-    public void Outcome_BuildStatus_VolatileField_DesignIntent()
-    {
-        // CustomTitleBar._buildStatus 被声明为 volatile
-        // 这保证了从构建线程写入后，UI 线程（OnPaint）能立即读取到最新值
-        // 注：volatile 的正确性由 C# 编译器和 CLR 内存模型保证
-        Assert.True(true, "_buildStatus 字段已声明为 volatile，保证跨线程可见性");
     }
 
     /// <summary>

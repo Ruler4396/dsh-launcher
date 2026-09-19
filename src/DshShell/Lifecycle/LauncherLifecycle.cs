@@ -10,6 +10,16 @@ public enum LifecycleState
     WaitingForReadiness,
     InitializingUI,
     Running,
+    /// <summary>运行期服务重启中（自愈或用户确认）：瞬时态，完成/失败均回 Running。</summary>
+    RestartingService,
+    /// <summary>进入安全模式的事务进行中（建 profile→激活→停服→拉起→验证）。</summary>
+    EnteringSafeMode,
+    /// <summary>退出安全模式的事务进行中。</summary>
+    ExitingSafeMode,
+    /// <summary>更新应用/暂存构建事务进行中。</summary>
+    ApplyingUpdate,
+    /// <summary>更新回滚 saga 进行中（还原数据 → 隔离/降级 → 旧版重启 → 重挂监控）。</summary>
+    RollingBackUpdate,
     ShuttingDown,
     Failed,
 }
@@ -28,6 +38,30 @@ public enum LifecycleTrigger
     WebViewCrashed,
     ShutdownRequested,
     Fatal,
+
+    // ---- 运行期事务（臃肿审计 Phase 3：此前这些流转在状态机表里根本没有落点，
+    //      只能落到 Program.cs 的静态标志上——那正是 static bool 控流程的成因）----
+    /// <summary>请求重启服务（自愈或用户确认）。</summary>
+    RestartRequested,
+    /// <summary>重启完成且已确认就绪。</summary>
+    RestartCompleted,
+    /// <summary>重启失败：回到 Running 并由调用方升级为可见询问（服务可残留旧态，但应用不终结）。</summary>
+    RestartFailed,
+    SafeModeEntryRequested,
+    SafeModeEntered,
+    SafeModeEntryFailed,
+    SafeModeExitRequested,
+    SafeModeExited,
+    SafeModeExitFailed,
+    UpdateApplyRequested,
+    UpdateApplied,
+    UpdateApplyFailed,
+    /// <summary>启动自检失败 × 更新回滚闸门已武装 → 开始回滚 saga。</summary>
+    RollbackRequested,
+    /// <summary>回滚完成且旧版服务已就绪。</summary>
+    RollbackCompleted,
+    /// <summary>回滚后旧版没能起来/没就绪：界面仍在，错误由调用方可见化。</summary>
+    RollbackFailed,
 }
 
 /// <summary>
@@ -75,6 +109,41 @@ public sealed class LauncherLifecycle
         [(LifecycleState.Running, LifecycleTrigger.WebViewCrashed)] = LifecycleState.Running,
 
         [(LifecycleState.ShuttingDown, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown, // 幂等：收尾可再次确认
+
+        // ---- 运行期事务：一律"从稳态出发、回到稳态"，瞬时态之间的重入**故意不入表**——
+        //      重启中再来一次重启 = 编程错误，交给 Fire 的 Fail-Fast 抛错暴露。
+        //      调用方须照 HandleWebViewCrashed / RequestShutdown 的先例先判态再 Fire。----
+        [(LifecycleState.Running, LifecycleTrigger.RestartRequested)] = LifecycleState.RestartingService,
+        [(LifecycleState.RestartingService, LifecycleTrigger.RestartCompleted)] = LifecycleState.Running,
+        // 重启失败不终结应用（界面还在、用户会看到询问），但绝不能留在 RestartingService
+        [(LifecycleState.RestartingService, LifecycleTrigger.RestartFailed)] = LifecycleState.Running,
+
+        [(LifecycleState.Running, LifecycleTrigger.SafeModeEntryRequested)] = LifecycleState.EnteringSafeMode,
+        // 启动自检失败后用户可选安全模式：Failed 是唯一允许"再起来"的非稳态来源
+        [(LifecycleState.Failed, LifecycleTrigger.SafeModeEntryRequested)] = LifecycleState.EnteringSafeMode,
+        [(LifecycleState.EnteringSafeMode, LifecycleTrigger.SafeModeEntered)] = LifecycleState.Running,
+        [(LifecycleState.EnteringSafeMode, LifecycleTrigger.SafeModeEntryFailed)] = LifecycleState.Failed,
+
+        [(LifecycleState.Running, LifecycleTrigger.SafeModeExitRequested)] = LifecycleState.ExitingSafeMode,
+        [(LifecycleState.ExitingSafeMode, LifecycleTrigger.SafeModeExited)] = LifecycleState.Running,
+        [(LifecycleState.ExitingSafeMode, LifecycleTrigger.SafeModeExitFailed)] = LifecycleState.Failed,
+
+        [(LifecycleState.Running, LifecycleTrigger.UpdateApplyRequested)] = LifecycleState.ApplyingUpdate,
+        [(LifecycleState.ApplyingUpdate, LifecycleTrigger.UpdateApplied)] = LifecycleState.Running,
+        [(LifecycleState.ApplyingUpdate, LifecycleTrigger.UpdateApplyFailed)] = LifecycleState.Running,
+
+        // 更新回滚 saga：启动自检失败时应用仍是 Running（服务起来过又被判死），故只从稳态出发。
+        [(LifecycleState.Running, LifecycleTrigger.RollbackRequested)] = LifecycleState.RollingBackUpdate,
+        // 回滚失败不终结应用（界面还在、用户会看到 E4003），但绝不能停在 RollingBackUpdate
+        [(LifecycleState.RollingBackUpdate, LifecycleTrigger.RollbackCompleted)] = LifecycleState.Running,
+        [(LifecycleState.RollingBackUpdate, LifecycleTrigger.RollbackFailed)] = LifecycleState.Running,
+
+        // 事务进行中用户关窗必须放行（否则"退出"被瞬时态卡死）；不入表即抛错，那会变成退出路径崩溃
+        [(LifecycleState.RestartingService, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
+        [(LifecycleState.EnteringSafeMode, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
+        [(LifecycleState.ExitingSafeMode, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
+        [(LifecycleState.ApplyingUpdate, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
+        [(LifecycleState.RollingBackUpdate, LifecycleTrigger.ShutdownRequested)] = LifecycleState.ShuttingDown,
     };
 
     /// <summary>
@@ -82,6 +151,17 @@ public sealed class LauncherLifecycle
     /// [F17] 转移日志补全四要素中的三要素：旧状态 → 触发源 → 新状态（时间戳由 Logger 补）。
     /// 旧实现只记新状态，排障时无法回答"谁把它变成 Running/ShuttingDown"。
     /// </summary>
+    /// <summary>
+    /// 该触发源在当前状态下是否是【合法】转移（不改状态、不抛错）。
+    /// 运行期事务的入口用它先判再投：非稳态时记日志吸收，而不是向状态机投递非法转移
+    /// 把自己的退出/自愈路径炸掉——Fail-Fast 语义完整保留给真正的编程错误
+    /// （直接调 Fire 仍然会抛）。与 RequestShutdown / HandleWebViewCrashed 同法。
+    /// </summary>
+    public bool CanFire(LifecycleTrigger trigger)
+        => trigger == LifecycleTrigger.Fatal
+           || (_state is not (LifecycleState.Failed or LifecycleState.ShuttingDown)
+               && Table.ContainsKey((_state, trigger)));
+
     public void Fire(LifecycleTrigger trigger)
     {
         if (trigger == LifecycleTrigger.Fatal)

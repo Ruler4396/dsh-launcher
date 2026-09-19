@@ -819,6 +819,22 @@ public static class ShellLogic
                 ? BootFailureAction.ExistingRecoveryFlow
                 : BootFailureAction.RollbackAndRestart;
 
+        /// <summary>
+        /// 回滚时是否还要"尽力把全局包降回 apply 前版本"。四个条件缺一不可：
+        /// ① 本次回滚**没有**运行时目录可隔离（即 npm/pnpm 全局安装路径，旧版就是那个全局包）；
+        /// ② apply 前的身份版本已知；③ 它与刚失败的版本确实不同（相同则降级 = 白跑一次 npm install -g）；
+        /// ④ 版本串过 <see cref="PathPolicy.IsSafeVersionSegment"/> 白名单——它会被拼进
+        ///    <c>install -g "pkg@&lt;version&gt;"</c> 的参数串，含引号/空白即可逃逸出被引号包裹的实参
+        ///    （2026-09 臃肿审计 Phase 4 · T5 下沉时发现原组合根的内联判定漏了这条；
+        ///    UpdateDataGuard 的删除/移动路径早已有同款白名单）。
+        /// SelfContained 路径由 <c>QuarantinedRuntimeDir</c> 隔离出发现链，不需要也不应该动全局包。
+        /// </summary>
+        public static bool ShouldDowngradeGlobalPackage(
+            string? quarantinedRuntimeDir, string? preApplyVersion, string? failedVersion)
+            => quarantinedRuntimeDir is null
+               && PathPolicy.IsSafeVersionSegment(preApplyVersion)
+               && !string.Equals(preApplyVersion, failedVersion, StringComparison.OrdinalIgnoreCase);
+
         /// <summary>版本号 → 文件名安全 token：非法字符替换 '_'，清理收尾点/空格，空值 → "unknown"。</summary>
         public static string SanitizeVersionToken(string? version)
         {
@@ -1211,12 +1227,6 @@ public static class ShellLogic
             return $"{entry} {bootMode} --host 127.0.0.1 --port {port} --no-open";
         }
 
-        /// <summary>旧签名兼容转发（binJs + 显式安全 profile 名）——语义等价于 BuildArgs。</summary>
-        public static string BuildSelfContainedArgs(string binJs, int port, string? safeProfileName)
-        {
-            var bootMode = safeProfileName is null ? "web" : "--profile " + safeProfileName;
-            return $"\"{binJs}\" {bootMode} --host 127.0.0.1 --port {port} --no-open";
-        }
     }
 
     /// <summary>
@@ -1712,6 +1722,130 @@ public static class ShellLogic
             if (occupantAgeSeconds >= 0 && occupantAgeSeconds >= graceSeconds) return OccupantDecision.Kill;
             return OccupantDecision.WaitGrace;
         }
+
+        /// <summary>运行期服务退出的自愈预算裁决。</summary>
+        public enum RestartBudget
+        {
+            /// <summary>会话已进入退出编排：不再拉起（否则会留下无主服务）。</summary>
+            AbsorbShuttingDown,
+            /// <summary>预算内：静默自愈重启，不打扰用户。</summary>
+            QuietRestart,
+            /// <summary>连续超限：升级为可见询问（静默循环没有意义）。</summary>
+            EscalateToUser,
+        }
+
+        /// <summary>
+        /// 「这次自愈算第几次、还要不要静默」的纯函数裁决。
+        ///
+        /// 【为什么单独抽出来】原实现把这条决策摊在组合根的三个静态字段上：
+        ///   <c>if (now - _lastRuntimeRestartUtc &gt; cooldown) _runtimeRestartAttempts = 0;</c>
+        ///   <c>var attempt = Interlocked.Increment(ref _runtimeRestartAttempts);</c>
+        /// 裸读-比较-写与 <c>Interlocked.Increment</c> 并存 = 竞态（退避轮线程与进程事件线程
+        /// 同时进入时，计数可被重置或提前耗尽）；且"上次重启时刻"用 <c>DateTime.MinValue</c>
+        /// 兼作"从未发生过"的标志——那正是铁律禁止的 static bool 控流程换了个马甲。
+        /// 现在：入参用 <c>DateTime?</c> 显式表达"没有上次"，决策与状态更新分离，
+        /// 调用方只需在一个锁里做一次读-改-写。
+        /// </summary>
+        /// <param name="lastQuietRestartUtc">上次静默自愈成功的时刻；null = 本会话从未发生过。</param>
+        /// <param name="attemptsSoFar">上次结算后的连续尝试数（已过冷却窗时本参数被忽略）。</param>
+        /// <returns>预算结论 + 本次结算后的尝试计数（调用方负责写回）。</returns>
+        public static (RestartBudget Budget, int Attempts) DecideRestartBudget(
+            DateTime? lastQuietRestartUtc, int attemptsSoFar, DateTime nowUtc,
+            TimeSpan cooldown, int maxRestarts, bool sessionShuttingDown)
+        {
+            if (sessionShuttingDown) return (RestartBudget.AbsorbShuttingDown, attemptsSoFar);
+            var budgetFresh = lastQuietRestartUtc is not { } last || (nowUtc - last) > cooldown;
+            var attempts = budgetFresh ? 1 : attemptsSoFar + 1;
+            return (attempts > maxRestarts ? RestartBudget.EscalateToUser : RestartBudget.QuietRestart, attempts);
+        }
+    }
+
+    /// <summary>
+    /// 后台更新检查的**通知裁决**（臃肿审计 Phase 4 · T4）。
+    ///
+    /// 此前这套裁决连网络带状态写在组合根 ScheduleUpdateCheck 的一段 126 行任务体里，
+    /// 所以完全无法脱网测试——四条规则（pending 优先提示 / launcher 安全更新抢占并终止 /
+    /// 三条去重跳过 / local 为 null 仍提示）全靠读代码确认。纯函数化后 Manager 只做 IO
+    /// （读 pending 文件、取两个远端版本、取本地版本），结论由此处一次算出。
+    /// </summary>
+    public static class UpdateNoticeFlowPolicy
+    {
+        /// <summary>
+        /// 一次检查的完整结论。三个提示槽位互斥性由本函数负责：
+        /// launcher 安全更新命中时 <see cref="DshAvailableVersion"/> 必为 null（原实现是 return 提前终止）。
+        /// </summary>
+        public sealed record Outcome(
+            string? PendingApplyVersion,
+            string? LauncherSecurityVersion,
+            string? LauncherLocalVersion,
+            string? DshAvailableVersion,
+            string? DshLocalVersion,
+            string? SkipReason)
+        {
+            public static readonly Outcome Nothing = new(null, null, null, null, null, null);
+        }
+
+        /// <summary>
+        /// <param name="pendingVersion">已下载待应用的版本（非空即提示一次，不因此终止后续检查）。</param>
+        /// <param name="launcherShouldNotify">launcher 安全更新是否该提示（由
+        ///   <see cref="LauncherUpdateNoticePolicy.ShouldNotifyLauncherSecurity"/> 判定，
+        ///   含"本地版本未知则静默"这条）。</param>
+        /// <param name="versionNewer">latest 与 local 的比较结果（&gt;0 表示有更新）；
+        ///   local 缺失时调用方传 &gt;0 表示"未知也提示"。
+        /// <param name="latestVsSkipped">latest 与用户已跳过版本的比较结果；无跳过记录传负数。</param>
+        /// <param name="pendingVsLatest">pending 与 latest 的比较结果，用于"已暂存同版本不再弹"。</param>
+        /// </param>
+        public static Outcome Decide(
+            string? pendingVersion,
+            bool launcherShouldNotify, string? launcherVersion, string? launcherLocalVersion,
+            string? latest, string? local, int versionNewer,
+            bool alreadyStagedThisSession, int latestVsSkipped, int pendingVsLatest)
+        {
+            // 1) 已下载待应用：先记一笔（原实现是立刻 BeginInvoke 提示，然后继续往下查）
+            var pending = string.IsNullOrWhiteSpace(pendingVersion) ? null : pendingVersion;
+
+            // 2) launcher 安全更新优先：命中即抢占并终止，不再评估 dsh
+            if (launcherShouldNotify && !string.IsNullOrWhiteSpace(launcherVersion))
+                return new Outcome(pending, launcherVersion, launcherLocalVersion ?? "?", null, null, null);
+
+            // 3) dsh 有没有新版
+            if (string.IsNullOrWhiteSpace(latest)) return new Outcome(pending, null, null, null, null, "no-latest");
+            if (versionNewer <= 0) return new Outcome(pending, null, null, null, local, "up-to-date");
+
+            // 4) 三条去重跳过（顺序与原实现一致：pending 覆盖 → 本会话已下载 → 用户跳过该版本）
+            if (pending is not null && pendingVsLatest >= 0)
+                return new Outcome(pending, null, null, null, local, "already-pending");
+            if (alreadyStagedThisSession)
+                return new Outcome(pending, null, null, null, local, "already-staged-session");
+            if (latestVsSkipped <= 0)
+                return new Outcome(pending, null, null, null, local, "skipped-by-user");
+
+            return new Outcome(pending, null, null, latest, local, null);
+        }
+    }
+
+    /// <summary>
+    /// 瞬态导航失败的自愈决策（臃肿审计 Phase 4 · T6）。
+    ///
+    /// 背景：dsh 服务重启的空窗里首页导航会拿到 404/拒绝连接。壳的做法是先自行重导航几次、
+    /// 仍失败才延迟弹 E2004（弹窗若在成功后立刻弹出就是纯打扰）。这套决策此前被**抄了两遍**
+    /// 在 Program.cs 的 Load 处理器里（首次初始化 / WebView2 修复后重试），且两份已经漂移——
+    /// 第二份漏掉了重试留痕 Trace。抄两遍迟早一份改一份漏，是本类缺陷的固定成因。
+    /// </summary>
+    public static class NavigationResiliencePolicy
+    {
+        /// <summary>瞬态失败时的默认重导航次数。</summary>
+        public const int DefaultMaxRetries = 5;
+
+        /// <summary>重试用尽到弹用户可见错误之间的静默窗：窗口内任何成功导航都取消弹窗。</summary>
+        public const int EscalateQuietWindowMs = 6000;
+
+        /// <summary>本次失败该重试还是该升级上报？（成功一律两者皆否）</summary>
+        public static (bool Retry, bool Escalate) Decide(bool isSuccess, int attemptsLeft)
+        {
+            if (isSuccess) return (false, false);
+            return (attemptsLeft > 0, attemptsLeft <= 0);
+        }
     }
 
     /// <summary>安全模式隔离 profile（.dsh-safe）的清理决策（issue #28-4 纯函数）。</summary>
@@ -1842,7 +1976,7 @@ public static class ShellLogic
                     && deps.ValueKind == System.Text.Json.JsonValueKind.Object)
                 {
                     foreach (var dep in deps.EnumerateObject())
-                        if (!dep.Name.StartsWith("@deepseek-ai/", StringComparison.Ordinal))
+                        if (!dep.Name.StartsWith(DshWeb.Domain.DshDiscovery.PackageScope + "/", StringComparison.Ordinal))
                             return true;
                 }
                 if (root.TryGetProperty("dsh", out var dshSeg)
@@ -1857,7 +1991,7 @@ public static class ShellLogic
                         if (b.ValueKind != System.Text.Json.JsonValueKind.String) continue;
                         var name = b.GetString();
                         if (!string.IsNullOrWhiteSpace(name)
-                            && !name.StartsWith("@deepseek-ai/", StringComparison.Ordinal))
+                            && !name.StartsWith(DshWeb.Domain.DshDiscovery.PackageScope + "/", StringComparison.Ordinal))
                             return true;
                     }
                 }
@@ -1962,35 +2096,6 @@ public static class ShellLogic
         private static extern uint GetExtendedTcpTable(
             IntPtr pTcpTable, ref int pdwSize, bool bOrder, int ulAf, uint tableClass, uint reserved);
 
-        private const uint Th32csSnapprocess = 0x2;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ProcessEntry32
-        {
-            public uint DwSize;
-            public uint CntUsage;
-            public uint Th32ProcessID;
-            public IntPtr Th32DefaultHeapID;
-            public uint Th32ModuleID;
-            public uint CntThreads;
-            public uint Th32ParentProcessID;
-            public int PcPriClassBase;
-            public uint DwFlags;
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
-            public string SzExeFile;
-        }
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
-
-        [DllImport("kernel32.dll")]
-        private static extern bool Process32First(IntPtr hSnapshot, ref ProcessEntry32 lppe);
-
-        [DllImport("kernel32.dll")]
-        private static extern bool Process32Next(IntPtr hSnapshot, ref ProcessEntry32 lppe);
-
-        [DllImport("kernel32.dll")]
-        private static extern bool CloseHandle(IntPtr hObject);
 
         /// <summary>
         /// 按端口反查监听进程 PID（任务一：精确端口归属，替代仅靠 netstat 字符串解析）。
@@ -2025,42 +2130,18 @@ public static class ShellLogic
         }
 
         /// <summary>强杀进程树（taskkill /PID &lt;pid&gt; /T /F）：连同挂死的 cmd / npx 外壳一并结束。
-        /// 返回是否已发起（taskkill 执行成功）；端口释放由调用方轮询确认。</summary>
+        /// 返回 taskkill 自身是否在超时前退出（true 只说明"杀指令跑完了"，端口释放仍由调用方轮询
+        /// 确认；false 说明 taskkill 超时/启动失败，目标很可能仍在）。</summary>
         internal static bool KillProcessTree(int pid)
         {
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo("taskkill", $"/PID {pid} /T /F")
-                { UseShellExecute = false, CreateNoWindow = true };
-                using var p = System.Diagnostics.Process.Start(psi);
-                if (p is null) return false;
-                p.WaitForExit(3000);
-                return true;
-            }
-            catch { return false; }
+            // 臃肿审计 Phase 5 · D2：本方法此前自己 new ProcessStartInfo("taskkill", ...) 且
+            // **不等 taskkill 自身退出**就返回 true。2026-08 那个"必须等 taskkill 退出，否则
+            // 端口尚未释放就被下一次拉起抢注"的竞态修复只打在了 RunTaskKill 上，于是同一件事
+            // 有两份实现、一份是旧的。现在统一走 RunTaskKill（含超时强杀 + 失败留痕）。
+            // 语义随之收紧：taskkill 超时/未退出现在返回 false，而不是无条件 true。
+            return RunTaskKill($"/PID {pid} /T /F", 3000);
         }
 
-        /// <summary>收集指定 PID 的祖先进程链（向上 8 层）：用于清理"cmd/npx 外壳"这类监听端口进程的
-        /// 父进程（taskkill /T 只向下杀子进程，不会结束父外壳）。失败/无祖先返回空列表。</summary>
-        internal static List<int> GetAncestorPids(int pid)
-        {
-            var result = new List<int>();
-            try
-            {
-                var parents = SnapshotParentPids();
-                var seen = new HashSet<int> { pid };
-                var current = pid;
-                for (var i = 0; i < 8; i++)
-                {
-                    if (!parents.TryGetValue(current, out var parent) || parent <= 0 || parent == current) break;
-                    if (!seen.Add(parent)) break;
-                    result.Add(parent);
-                    current = parent;
-                }
-            }
-            catch { }
-            return result;
-        }
 
         /// <summary>PID 身份校验（防复用误杀）：pid 文件里的 PID 可能被系统复用给无关进程——
         /// 杀进程前必须确认该 PID 确为 dsh 服务（node 进程）。See ADR-011.</summary>
@@ -2135,27 +2216,6 @@ public static class ShellLogic
             return 0;
         }
 
-        /// <summary>构建进程 PID→父 PID 快照（CreateToolhelp32Snapshot 单次枚举，无外部依赖）。</summary>
-        private static Dictionary<int, int> SnapshotParentPids()
-        {
-            var map = new Dictionary<int, int>();
-            var snap = CreateToolhelp32Snapshot(Th32csSnapprocess, 0);
-            if (snap == IntPtr.Zero) return map;
-            try
-            {
-                var entry = new ProcessEntry32 { DwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
-                if (Process32First(snap, ref entry))
-                {
-                    do
-                    {
-                        map[unchecked((int)entry.Th32ProcessID)] = unchecked((int)entry.Th32ParentProcessID);
-                    }
-                    while (Process32Next(snap, ref entry));
-                }
-            }
-            finally { CloseHandle(snap); }
-            return map;
-        }
 
         // ============ 进程终止链路（2026-08 僵尸清扫竞态修复） ============
 
@@ -2501,8 +2561,36 @@ public static class ShellLogic
                 return null;
             return ("E1012",
                 "首次运行自动安装 dsh 组件失败。\n\n" + firstRunInstallError +
-                "\n\n可检查网络/代理后重试，或在命令行手动执行：npm install -g @deepseek-ai/dsh");
+                "\n\n可检查网络/代理后重试，或在命令行手动执行：npm install -g "
+                + DshWeb.Domain.DshDiscovery.PackageName);
         }
+    }
+
+    /// <summary>
+    /// DPI → 缩放系数的**唯一**换算口（臃肿审计 Phase 5 · D8）。
+    ///
+    /// 【为什么需要它】"deviceDpi ≤ 0 当 96"与"系数钳在 [0.5, 8]"这两条安全不变量，此前抄了
+    /// 8 份（NoticeCardLayout / SplashLayout / TrayMenuLayout / IconGeometry / 两处布局 +
+    /// Win32.WindowGeometry 两函数）。B4 修的就是"其中一份漏了钳制 → 坏驱动/RDP 下通知卡片
+    /// 缩成 1px 或跑出屏幕"。同类不变量抄 N 份 = N 个可以各自漏一条的副本，第 9 份还会照抄。
+    /// 现收敛为一处；契约测试 DpiScaleContractTests 钉死边界，G10 闸禁止第二份钳制字面量出现。
+    /// </summary>
+    public static class DpiScale
+    {
+        public const float Min = 0.5f;
+        public const float Max = 8f;
+        public const int BaseDpi = 96;
+
+        /// <summary>未知/非法 DPI（≤0）按 <see cref="BaseDpi"/> 处理——"≤0 当 96"这条规则同样只此一处。</summary>
+        public static int Sanitize(int deviceDpi) => deviceDpi <= 0 ? BaseDpi : deviceDpi;
+
+        /// <summary>缩放系数：一律钳在 [<see cref="Min"/>, <see cref="Max"/>]。</summary>
+        public static float Of(int deviceDpi)
+            => Math.Clamp(Sanitize(deviceDpi) / (float)BaseDpi, Min, Max);
+
+        /// <summary>设计基准逻辑像素 → 物理像素（至少 1px，绝不因缩放算出 0）。</summary>
+        public static int Px(int design, float scale)
+            => Math.Max(1, (int)Math.Round(design * scale));
     }
 
     /// <summary>
@@ -2543,11 +2631,15 @@ public static class ShellLogic
             int CornerRadius, int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize,
             int AccentWidth);
 
-        /// <summary>deviceDpi ≤ 0 视为 96（未知按 1x）。窗口宽 = 文字宽 + 左右内边距 + 色条。</summary>
+        /// <summary>
+        /// deviceDpi ≤ 0 视为 96（未知按 1x）；缩放系数钳在 [0.5, 8]——与 SplashLayout.Compute /
+        /// TrayMenuLayout.ComputeGeometry 同源。坏显卡驱动/RDP 会话会给出离谱 deviceDpi，不钳时
+        /// 通知卡片会算出 1px 一条线或整卡跑出屏幕（另两族有钳所以不发病）。
+        /// 窗口宽 = 文字宽 + 左右内边距 + 色条。
+        /// </summary>
         public static Geometry ComputeGeometry(int deviceDpi)
         {
-            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
-            var s = dpi / 96f;
+            var s = DpiScale.Of(deviceDpi);
             int Px(int design) => Math.Max(1, (int)Math.Round(design * s));
             var padding = Px(DesignPadding);
             var textWidth = Px(DesignTextWidth);
@@ -2702,8 +2794,7 @@ public static class ShellLogic
 
         public static Geometry Compute(int deviceDpi)
         {
-            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
-            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            var s = DpiScale.Of(deviceDpi);
             int px(float design) => (int)Math.Round(design * s);
 
             var clientW = px(DesignClientWidth);
@@ -2792,8 +2883,7 @@ public static class ShellLogic
         /// </summary>
         public static Geometry ComputeGeometry(int deviceDpi)
         {
-            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
-            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            var s = DpiScale.Of(deviceDpi);
             int px(float design) => (int)Math.Round(design * s);
 
             var shadow = px(DesignShadowMargin);
@@ -2826,7 +2916,7 @@ public static class ShellLogic
         /// <summary>电源图标几何：环中线半径与描边宽（设计值 5.2px / 1.8px @96dpi）。</summary>
         public static (float Radius, float Stroke) IconGeometry(int deviceDpi)
         {
-            var s = Math.Clamp((deviceDpi <= 0 ? 96 : deviceDpi) / 96f, 0.5f, 8f);
+            var s = DpiScale.Of(deviceDpi);
             return (5.2f * s, 1.8f * s);
         }
 
@@ -2870,8 +2960,7 @@ public static class ShellLogic
         public static Point PlaceAtCursor(
             int cursorX, int cursorY, Rectangle workArea, int menuWidth, int menuHeight, int deviceDpi)
         {
-            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
-            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            var s = DpiScale.Of(deviceDpi);
             int px(int design) => (int)Math.Round(design * s);
             var x = cursorX - menuWidth + px(DesignAnchorRightInset);
             var y = cursorY - menuHeight - px(DesignAnchorBottomLift);
@@ -2932,8 +3021,7 @@ public static class ShellLogic
         /// <summary>dpi ≤ 0 视为 96；缩放夹 [0.5, 8]（与 TrayMenuLayout 同一纪律）。</summary>
         public static Geometry Compute(int deviceDpi)
         {
-            var dpi = deviceDpi <= 0 ? 96 : deviceDpi;
-            var s = Math.Clamp(dpi / 96f, 0.5f, 8f);
+            var s = DpiScale.Of(deviceDpi);
             int px(double design) => (int)Math.Round(design * s);
 
             var clientW = px(DesignClientWidth);

@@ -20,7 +20,6 @@ namespace DshShell.Tests.Managers;
         Assert.NotNull(app.Service);
         Assert.NotNull(app.WebView);
         Assert.NotNull(app.Window);
-        Assert.NotNull(app.Tray);
     }
 
     [Fact]

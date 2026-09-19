@@ -129,7 +129,7 @@ public static class WindowGeometry
     /// </summary>
     public static Size MinimumWindowSize(int dpi)
     {
-        var s = Math.Clamp((dpi <= 0 ? 96 : dpi) / 96f, 0.5f, 8f);
+        var s = ShellLogic.DpiScale.Of(dpi);
         return new Size((int)Math.Round(800 * s), (int)Math.Round(600 * s));
     }
 
@@ -143,7 +143,7 @@ public static class WindowGeometry
     /// 于是"字号被 DC 折算第二次"与"字号没跟着 DPI 长"两种错法都可能发生。</summary>
     public static int EmPx(double designPoint, int dpi)
     {
-        var s = Math.Clamp((dpi <= 0 ? 96 : dpi) / 96f, 0.5f, 8f);
+        var s = ShellLogic.DpiScale.Of(dpi);
         return Math.Max(1, (int)Math.Round(designPoint * 96.0 / 72.0 * s));
     }
 }

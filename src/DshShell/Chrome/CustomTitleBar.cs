@@ -1,5 +1,6 @@
 using DshWeb;
 using DshWeb.Windows;
+using DshWeb.Win32; // T8：P/Invoke 与 Win32 常量的唯一归属层
 
 namespace DshWeb.Chrome;
 
@@ -7,8 +8,8 @@ namespace DshWeb.Chrome;
 /// 自绘标题栏（无边框窗口用）：背景/文字/按钮颜色完全自绘，主题切换即时生效，
 /// 不依赖 DWM 标题栏重绘（实测本机 DWM 属性切换后标题栏画面不刷新，只有焦点变化才重绘）。
 /// 提供：标题 + 主题鲸鱼图标 + 最小化/最大化/关闭按钮 + 拖拽移动 + 双击最大化 + 右键系统菜单。
-/// 由 Program（组合根/DshShellForm 宿主）经 WindowManager 装配使用；共享图标/主题资源与
-/// user32 P/Invoke 暂由 Program 持有（内部委托），后续随 WindowManager 物理迁入收敛。
+/// 由组合根/DshShellForm 宿主经 WindowManager 装配使用；共享图标/主题资源与
+/// user32 P/Invoke 与 Win32 常量一律取自 DshWeb.Win32（T8：不再回调组合根静态）。
 /// </summary>
 internal sealed class CustomTitleBar : Panel
 {
@@ -95,7 +96,7 @@ internal sealed class CustomTitleBar : Panel
             | ControlStyles.AllPaintingInWmPaint
             | ControlStyles.OptimizedDoubleBuffer, true);
         // DPI 缩放：150% 缩放下 32px 物理高度会显得又矮又挤（按钮/图标/间距全按逻辑缩放）
-        _scale = owner.DeviceDpi / 96f;
+        _scale = DshWeb.ShellLogic.DpiScale.Of(owner.DeviceDpi);
         _btnWidth = (int)Math.Round(46 * _scale);
         _titleFont.Dispose();
         _titleFont = TitleFontAt(owner.DeviceDpi);
@@ -167,12 +168,12 @@ internal sealed class CustomTitleBar : Panel
         if (VersionClick is not null && _dshVersion.Length > 0 && _versionRect.Contains(e.Location))
         {
             try { VersionClick(); }
-            catch (Exception ex) { Program.Trace($"version badge click handler failed: {ex.Message}"); }
+            catch (Exception ex) { Logger.Info($"version badge click handler failed: {ex.Message}"); }
             return;
         }
         // 拖拽移动窗口（系统级 HTCAPTION 拖拽）
-        Program.ReleaseCapture();
-        Program.SendMessage(_owner.Handle, (uint)Program.WM_NCLBUTTONDOWN, (IntPtr)Program.HTCAPTION, IntPtr.Zero);
+        NativeMethods.ReleaseCapture();
+        NativeMethods.SendMessage(_owner.Handle, (uint)Win32Constants.WM_NCLBUTTONDOWN, (IntPtr)Win32Constants.HTCAPTION, IntPtr.Zero);
     }
 
     private void OnMouseUp(object? s, MouseEventArgs e)
@@ -224,9 +225,9 @@ internal sealed class CustomTitleBar : Panel
     {
         try
         {
-            var hMenu = Program.GetSystemMenu(_owner.Handle, false);
+            var hMenu = NativeMethods.GetSystemMenu(_owner.Handle, false);
             if (hMenu == IntPtr.Zero) return;
-            Program.TrackPopupMenu(hMenu, Program.TPM_RETURNCMD | Program.TPM_RIGHTBUTTON,
+            NativeMethods.TrackPopupMenu(hMenu, Win32Constants.TPM_RETURNCMD | Win32Constants.TPM_RIGHTBUTTON,
                 _owner.Left + p.X, _owner.Top + p.Y, 0, _owner.Handle, IntPtr.Zero);
         }
         catch { /* 系统菜单失败忽略 */ }
@@ -239,9 +240,7 @@ internal sealed class CustomTitleBar : Panel
         var textColor = _dark ? DarkText : LightText;
 
         // 标题栏图标（主题对应鲸鱼，按 DPI 缩放）
-        var icon = _dark
-            ? (Program._lightWhaleIcon ??= Program.LoadIconResource("favicon-white.png"))
-            : (Program._darkWhaleIcon ??= Program.LoadIconResource("favicon.png"));
+        var icon = _dark ? Windows.WindowIcons.LightWhaleIcon : Windows.WindowIcons.DarkWhaleIcon;
         var iconSize = (int)Math.Round(16 * _scale);
         if (icon is not null)
         {

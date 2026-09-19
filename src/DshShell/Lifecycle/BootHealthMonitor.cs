@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace DshWeb.Lifecycle;
 
@@ -96,6 +96,7 @@ public sealed class BootHealthMonitor : IDisposable
     private readonly object _sync = new();
     private readonly ShellLogic.BootGuard.BootProfile _profile;
     private readonly string? _logPath;
+    private readonly Func<string, long, (string? Text, long NextOffset)> _logReader;
     private readonly string _httpUrl;
     private readonly Func<string, Task<string?>>? _pageProbe; // 入参=探针脚本，返回原始 JSON
     private readonly Func<int, IBootProcessHandle>? _processHandleFactory;
@@ -156,6 +157,7 @@ public sealed class BootHealthMonitor : IDisposable
         TimeSpan? logPollInterval = null,
         TimeSpan? httpPollInterval = null,
         Action<string>? trace = null,
+        Func<string, long, (string? Text, long NextOffset)>? logReader = null,
         TimeSpan? pageProbeTimeout = null,
         int pageProbeTimeoutFailureThreshold = 10)
     {
@@ -168,6 +170,10 @@ public sealed class BootHealthMonitor : IDisposable
         _logPollInterval = logPollInterval ?? TimeSpan.FromSeconds(2);
         _httpPollInterval = httpPollInterval ?? TimeSpan.FromSeconds(3);
         // [2026-08-29 token 栅栏回归] 探针轮必须有界：ExecuteScriptAsync 在 401 错误页可永久挂起
+        // [臃肿审计 B2] 增量日志读取只允许一份实现：ServiceManager.ReadLogIncrementShared
+        // 在截断/轮转时回绕从头读并回传新偏移。本类此前自带的私有实现遇到截断直接返回空且
+        // 不回绕偏移 → 日志层永久致盲（且它自己的注释承诺的是相反行为）。
+        _logReader = logReader ?? DshWeb.Managers.ServiceManager.ReadLogIncrementShared;
         _pageProbeTimeout = pageProbeTimeout ?? TimeSpan.FromSeconds(5);
         _pageProbeTimeoutFailureThreshold = Math.Max(pageProbeTimeoutFailureThreshold, 1);
         // 非空默认（避免散落的 ?. 调用）：未注入时走统一日志 Info
@@ -279,10 +285,14 @@ public sealed class BootHealthMonitor : IDisposable
                     long scanFrom;
                     lock (_sync) scanFrom = _logScanOffset;
                     // ADR-010：共享读（cmd >> 持有写共享）；从上次偏移增量读，旧日志不参与判定
-                    var text = await ReadLogIncrementAsync(_logPath, scanFrom, ct);
-                    if (text.Length > 0)
+                    var (text, nextOffset) = await Task.Run(
+                        () => _logReader(_logPath, scanFrom), ct);
+                    var body = text ?? string.Empty;
+                    // 偏移由读取器回传值统一推进：截断回绕后必须落到新文件的真实尾部，
+                    // 不能再靠"累加本次字节数"（那条路径正是致盲的成因）。
+                    lock (_sync) _logScanOffset = nextOffset;
+                    if (body.Length > 0)
                     {
-                        lock (_sync) _logScanOffset += System.Text.Encoding.UTF8.GetByteCount(text);
                         foreach (var line in text.Split('\n'))
                         {
                             var trimmed = line.TrimEnd('\r');
@@ -311,16 +321,6 @@ public sealed class BootHealthMonitor : IDisposable
             try { await Task.Delay(_logPollInterval, ct); }
             catch (OperationCanceledException) { return; }
         }
-    }
-
-    /// <summary>从指定偏移增量读取日志（共享读；文件被截断/轮转时回退从头读）。</summary>
-    private static async Task<string> ReadLogIncrementAsync(string path, long fromOffset, CancellationToken ct)
-    {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (fs.Length <= fromOffset) return string.Empty;
-        fs.Seek(Math.Min(fromOffset, fs.Length), SeekOrigin.Begin);
-        using var reader = new StreamReader(fs, System.Text.Encoding.UTF8);
-        return await reader.ReadToEndAsync(ct);
     }
 
     private async Task HttpLoopAsync(CancellationToken ct)
