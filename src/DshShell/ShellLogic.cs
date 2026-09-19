@@ -2608,7 +2608,23 @@ public static class ShellLogic
     /// </summary>
     public static class NoticePolicy
     {
+        /// <summary>自动收起的最短/最长驻留（ms）：太短读不完，太长变成常驻遮挡。</summary>
+        public const int MinExpiryMs = 3_000;
+        public const int MaxExpiryMs = 120_000;
+
         public static bool UseWarningCue(NoticeKind kind) => kind == NoticeKind.Urgent;
+
+        /// <summary>
+        /// 把调用方给的驻留时长折算成毫秒；返回 **0 = 不自动收起**（sticky）。
+        /// 用于"用户必须处理完才能继续"的通知（安全模式降级态）：那种提示自动消失等于
+        /// 把入口收走——issue #25 的教训正是"提示不可用即被困住"。
+        /// 传 <see cref="TimeSpan.Zero"/> 或负值（如 Timeout.InfiniteTimeSpan）即 sticky；
+        /// 其余钳进 [Min, Max]。
+        /// </summary>
+        public static int ResolveExpiryMs(TimeSpan expireAfter)
+            => expireAfter <= TimeSpan.Zero
+                ? 0
+                : Math.Clamp((int)expireAfter.TotalMilliseconds, MinExpiryMs, MaxExpiryMs);
     }
 
     /// <summary>

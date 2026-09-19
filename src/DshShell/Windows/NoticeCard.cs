@@ -35,6 +35,9 @@ internal sealed class NoticeCard : Form
         string Title, string Body, int ExpiresMs, Action? OnAction, string ActionText, string Key,
         ShellLogic.NoticeKind Kind);
 
+    /// <summary>窗口标题（不可见）：外部测试定位卡片的唯一稳定凭据。</summary>
+    public const string WindowTitle = "DshNoticeCard";
+
     /// <summary>最近**受理**的内容键与时刻：同一条内容在冷却窗内只受理一次（正在显示的
     /// 与已排队的都算，见 PresentOnUi）。静态——它是"唯一对象"的去重状态。</summary>
     private static string? _lastKey;
@@ -68,6 +71,9 @@ internal sealed class NoticeCard : Form
         _bodyFont = CardFont(_g.BodyEmPx);
         _actionFont = CardFont(_g.BodyEmPx, bold: true);
         FormBorderStyle = FormBorderStyle.None;
+        // 无边框自绘窗没有可视标题，但窗口标题是外部测试（RealOS/E2E 用 EnumWindows 定位卡片）
+        // 唯一能稳定区分"这张卡片"与桌面上其它同尺寸窗口的凭据——按类名/矩形都认不出来。
+        Text = WindowTitle;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
@@ -109,7 +115,7 @@ internal sealed class NoticeCard : Form
             var body_ = body ?? "";
             var item = new Item(
                 title_, body_,
-                (int)Math.Clamp(expireAfter.TotalMilliseconds, 3_000, 120_000),
+                ShellLogic.NoticePolicy.ResolveExpiryMs(expireAfter),
                 onAction,
                 onAction is null ? "" : (string.IsNullOrWhiteSpace(actionText) ? "点击查看" : actionText!),
                 ShellLogic.NoticeDedupe.Key(title_, body_), kind);
@@ -203,9 +209,13 @@ internal sealed class NoticeCard : Form
         var work = SafeWorkAreaOf(owner);
         var (x, y) = ShellLogic.NoticeCardLayout.PlaceAtBottomRight(work, _g, _p.Width, _p.Height);
         Location = new Point(x, y);
-        _expiresAtUtc = DateTime.UtcNow.AddMilliseconds(item.ExpiresMs);
-        _dismissTimer.Interval = item.ExpiresMs;
-        _dismissTimer.Start();
+        // ExpiresMs == 0 → sticky：不启动倒计时，只能由用户点击动作或 × 关闭。
+        // 安全模式这类"必须处理完才能继续"的提示若自动消失，等于把入口收走。
+        _expiresAtUtc = item.ExpiresMs == 0
+            ? DateTime.MaxValue
+            : DateTime.UtcNow.AddMilliseconds(item.ExpiresMs);
+        if (item.ExpiresMs == 0) _dismissTimer.Stop();
+        else { _dismissTimer.Interval = item.ExpiresMs; _dismissTimer.Start(); }
         Visible = true;
         BringToFront();
         Invalidate();
@@ -337,11 +347,13 @@ internal sealed class NoticeCard : Form
     }
 
     /// <summary>悬停暂停倒计时：鼠标停在卡片上就冻结到期时刻，移开后按剩余时间续；
-    /// 已经读完并移开的场景不受影响。</summary>
+    /// 已经读完并移开的场景不受影响。<b>sticky 卡片没有倒计时，必须整段跳过</b>——
+    /// 否则 _expiresAtUtc 的 DateTime.MaxValue 会被算成"还剩很久"，移开鼠标后反而给它
+    /// 装上倒计时，把"不自动收起"悄悄降级成 120 秒。</summary>
     protected override void OnMouseEnter(EventArgs e)
     {
         base.OnMouseEnter(e);
-        if (_current is null) return;
+        if (_current is not { ExpiresMs: > 0 } || _hovering) return;
         _hovering = true;
         _dismissTimer.Stop();
     }
@@ -349,7 +361,7 @@ internal sealed class NoticeCard : Form
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (!_hovering || _current is null) return;
+        if (!_hovering || _current is not { ExpiresMs: > 0 }) return;
         _hovering = false;
         var remain = _expiresAtUtc - DateTime.UtcNow;
         if (remain.TotalMilliseconds <= 0) { Advance(); return; }

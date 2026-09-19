@@ -1195,11 +1195,10 @@ internal static class Program
                 if (restart) Trace($"[leftover] healthy leftover service pid={owner} is ledger-owned and lifetime mode requires shell ownership");
                 return restart;
             },
-            // [issue #28-4] 初始拉起与所有重启路径共用同一条 profile 判定（SafeModeLaunchPolicy）。
+            // [issue #28-4] 初始拉起与所有重启路径共用同一条 profile 判定（EnsureSafeProfileIdentity）。
             // 修复前 "--profile .dsh-safe" 只在重启路径生效 → 同一份粘滞 safe-mode.json 下
             // "托盘退出重开插件都在，点 DSH 内置重启插件消失"。
-            ServiceIdentityDecorator = id => DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
-                id, SafeMode.IsActive, SafeProfile.SafeProfileDir),
+            ServiceIdentityDecorator = EnsureSafeProfileIdentity,
         };
     }
 
@@ -1322,19 +1321,55 @@ internal static class Program
     }
 
     /// <summary>
+    /// [issue #28-4 同族缺口收口] 拉起前把"粘滞安全模式 → 实际身份"补齐的**唯一**入口：
+    /// 初始启动（<c>LauncherApp.ServiceIdentityDecorator</c>）与所有重启路径
+    /// （<see cref="StartDshServiceViaIdentity"/>）都经这里，杜绝"某条路径忘了 ensure"。
+    ///
+    /// 为什么必须 ensure 而不只是 Decorate：粘滞标志说"在安全模式"，但 <c>.dsh-safe</c> 目录
+    /// 可能已被清理/被用户删除/是升级残留 —— 此时直接带 <c>--profile</c> 拉起，dsh 硬失败
+    /// <c>profile ".dsh-safe" does not exist</c> → exit 1 → 壳 E2002，<b>用户连界面都进不去，
+    /// 也就永远点不到"退出安全模式"</b>（与 issue #25 同一类陷阱：入口不可用即等于被困）。
+    /// 因此：缺目录先重建；重建仍失败则<b>退回正常模式并解粘滞</b>——"插件被禁用但界面可用"
+    /// 远好于"界面起不来且无法退出"。
+    /// </summary>
+    private static DshWeb.Domain.DshRuntimeIdentity EnsureSafeProfileIdentity(
+            DshWeb.Domain.DshRuntimeIdentity identity)
+    {
+        if (DshWeb.Domain.SafeModeLaunchPolicy.NeedsRebuild(
+                SafeMode.IsActive, SafeProfile.SafeProfileExists()))
+        {
+            var rebuilt = false;
+            try { rebuilt = SafeProfile.Build(SafeMode.Tier); }
+            catch (Exception ex)
+            {
+                Logger.Warn("SAFEMODE: sticky profile rebuild threw: " + ex.Message, ErrorCodes.E1010);
+            }
+            if (DshWeb.Domain.SafeModeLaunchPolicy.ShouldFallBackToNormal(rebuilt))
+            {
+                Logger.Warn("SAFEMODE: 粘滞标志在但隔离 profile 缺失且重建失败 → 本次按正常模式启动"
+                    + "（插件仍禁用，但界面与退出入口必须可用）", ErrorCodes.E1010);
+                SafeMode.Deactivate();
+            }
+            else Trace("SAFEMODE: sticky profile missing → rebuilt before launch");
+        }
+        return DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
+            identity, SafeMode.IsActive, SafeProfile.SafeProfileDir);
+    }
+
+    /// <summary>
     /// 按当前身份拉起 dsh 服务（ADR-024：组合根唯一启动入口，委托 IServiceManager.Start）。
     /// 安全模式激活时以隔离 profile 身份（--profile .dsh-safe）重启。
     /// 返回 false = 拉起失败（E2001）。旧 wscript/start-dsh.vbs 中间层已彻底移除——
     /// 启动命令只信 Identity.NodeExePath × Identity.DshEntryJsPath。
-    /// [issue #28-4] profile 判定不再内联在此：统一走 <c>SafeModeLaunchPolicy.Decorate</c>，
-    /// 与 <c>LauncherApp.ServiceIdentityDecorator</c>（初始拉起）同源，杜绝"启动带全套插件、
-    /// 重启掉插件"的不对称。<paramref name="usedSafeProfile"/> = 实际用于拉起的那份身份是否
-    /// 带隔离 profile —— 安全模式可见性横幅的唯一凭据（以真正跑起来的进程为准）。
+    /// [issue #28-4] profile 判定不再内联在此：统一走 <see cref="EnsureSafeProfileIdentity"/>，
+    /// 与初始拉起同源，杜绝"启动带全套插件、重启掉插件"的不对称。<paramref name="usedSafeProfile"/>
+    /// = 实际用于拉起的那份身份是否带隔离 profile —— 安全模式可见性横幅的唯一凭据
+    /// （以真正跑起来的进程为准）。
     /// </summary>
     private static bool StartDshServiceViaIdentity(out bool usedSafeProfile)
     {
-        var identity = DshWeb.Domain.SafeModeLaunchPolicy.Decorate(
-            DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime(), SafeMode.IsActive, SafeProfile.SafeProfileDir);
+        var identity = EnsureSafeProfileIdentity(
+            DshWeb.Domain.DshDiscovery.DiscoverCurrentRuntime());
         usedSafeProfile = identity.IsSafeProfile;
         var ok = ShellService.Start(identity, Target.Port, UnifiedLogPath);
         if (ok) Trace(identity.IsSafeProfile
@@ -1496,7 +1531,9 @@ internal static class Program
         var presented = Windows.NoticeCard.Present(form, "dsh 已以安全模式启动",
             "第三方插件已临时禁用（上次会话进入过安全模式，本次启动沿用了它）。\n"
             + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。",
-            TimeSpan.FromSeconds(25),
+            // sticky：降级态的提示若自动消失，等于把唯一的退出入口收走（issue #25 的同类陷阱）。
+            // 只能由用户点动作退出，或点 × 明确选择"这次先不管"（下次启动仍会再告知）。
+            Timeout.InfiniteTimeSpan,
             onAction: () => ExitSafeModeRequested(form),
             actionText: "点击此处退出安全模式并重启",
             kind: ShellLogic.NoticeKind.Urgent);
@@ -1523,7 +1560,7 @@ internal static class Program
     /// 真正执行"以正常配置重新拉起服务"。独立成方法是为了**退出失败后还能再点一次**：
     /// 粘滞标志在第一次点击时已清除，重试入口若还走 ExitSafeModeRequested，会被
     /// !IsActive 闸门挡回去只清横幅、服务永远停在安全模式。
-    /// 失败提示**只有一条通道**：把"重试"并进同一个对话框（Yes/No），不再另发通知卡片——
+    /// 失败提示**只有一条通道**：把"重试"并进同一个对话框（重试/取消），不再另发通知卡片——
     /// 一次失败弹两条（模态 + 卡片）正是本轮要消灭的"重复提示"。
     /// </summary>
     private static void RestartOutOfSafeMode(DshShellForm form)
@@ -2683,7 +2720,7 @@ internal static class Program
                         Trace($"dsh update {latest} skipped by user (skipped={skipped})");
                         return;
                     }
-                    Trace($"dsh update {latest} available (local={local ?? "<null>"}); prompting tray balloon");
+                    Trace($"dsh update {latest} available (local={local ?? "<null>"}); prompting update notice");
                     form.BeginInvoke(() => NotifyPending(PendingUpdate.Dsh, latest, local));
                 }
             }

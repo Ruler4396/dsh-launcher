@@ -95,6 +95,11 @@ CustomTitleBar.OnMouseDown（版本徽标命中）
 且四条重启路径（运行期自愈/安全模式/回滚/更新应用）就绪后一律 `RecordServicePid()` 刷新账本 +
 内存 `_servicePid`，再 `ResumeAfterRestart(pid)`——账本停留在已死旧 pid 会让下一次退出被误判成
 启动自检失败（见落点 5）。
+**[同族二阶缺口，见落点 5 缺陷 E]** "同源"最初只做到 `Decorate` 一层：`Decorate` 假设隔离
+profile 物理存在，而"缺目录先重建 / 重建失败退回正常模式"这步 ensure 一开始只补在重启路径 →
+初始启动仍会带着不存在的 `--profile` 拉起并硬失败。现启动钩子与重启路径共同引用组合根
+**单一入口** `Program.EnsureSafeProfileIdentity`（`scripts/test.ps1` 静态门锁定
+`SafeModeLaunchPolicy.Decorate` 在 `Program.cs` 只有 1 处调用点）。
 **回归测试**：`Regression_Issue28_RuntimeServiceRestartTests`（Healthy 前后退出语义 + 幂等闸门复位）
 + `Regression_Issue28_RestartPidLedgerRefresh.RealOs`（真实进程句柄下"attach 哪个 pid 决定路由"）。
 
@@ -137,20 +142,31 @@ TrayMenuForm.Draw → 【缺陷节点】TextRenderer 默认内边距（每字两
      → 那棵子树里可能正在跑 npm/pnpm 完成插件安装（全仓唯一能把安装"打断"而非"隐藏"的机制）
   → 【缺陷 D：销毁】正常模式启动无条件 Directory.Delete(.dsh-safe, recursive)
      → 安全模式会话里装的插件被物理销毁
+  → 【缺陷 E：被困（真机端到端实测）】粘滞标志 active，但 profiles/.dsh-safe 实际不在
+     → Decorate 照旧套 --profile .dsh-safe → dsh "profile \".dsh-safe\" does not exist"
+       → exit 1 → 壳 E2002 service-exited → 用户连界面都进不去，"退出安全模式"的入口永远点不到
+       （与 issue #25 同一类陷阱：入口不可用 = 被困）
   → 【修复点】SafeModeLaunchPolicy（启动/重启同源）+ ApplySafeModeVisibility（横幅按真正
-     拉起进程的身份）+ 可点击退出的通知；四条重启路径统一刷新账本；
+     拉起进程的身份）+ 可点击退出的通知（该通知 **sticky 不自动收起**：它是降级态唯一退出入口）；
+     四条重启路径统一刷新账本；
      ServiceRestartPolicy.DecideOccupantReclaim（应答中的新服务→接管，绝不杀）；
      BootRecoveryPolicy.SuppressLauncherInduced（壳自己造成的空窗不计失败，仅 HTTP 证据 + 20s 窗）；
-     SafeProfileCleanupPolicy + InspectForCleanup（有非壳产物就保留）
+     SafeProfileCleanupPolicy + InspectForCleanup（有非壳产物就保留）；
+     Program.EnsureSafeProfileIdentity（缺目录先 Build(SafeMode.Tier)，重建失败则
+     SafeMode.Deactivate() 退回正常模式——界面可用优先于插件可用）
 ```
 **身份传递检查**：`SafeModeLaunchPolicy.Decorate` 只允许改写 `ProfilePath`，其余身份事实
 （Source/NodeExePath/入口/版本）逐位传递——契约测试 `SafeModeLaunchPolicyContractTests` 锁死；
 `SafeModeSymmetryOutcomes` 进一步断言"启动与重启的 `ServiceLaunch.BuildArgs` 输出字节相等"。
+`Decorate` 的**前置条件**（隔离 profile 物理存在）由同一入口内的
+`NeedsRebuild(safeModeActive, profileExists)` / `ShouldFallBackToNormal(rebuilt)` 两个纯函数把关，
+退回正常模式后 `Decorate` 必须不再套 profile（`Decorate_AfterFallback_DoesNotAttachProfile`）。
 **回归测试**：`ShellLogicRestartPolicyContractTests`（决策矩阵）+
 `LauncherAppScenarioTests.*_28`（粘滞态装饰启动身份）+ `Outcomes/SafeModeSymmetryOutcomes` +
 `Lifecycle/Regression_Issue28_RestartPidLedgerRefresh.RealOs`（真 node/真账本/孙进程存活正负对照）。
 **人工验证配方**（须在 `sandbox/<场景名>/` 隔离 DSH_HOME 下跑，核心约束六）：
-① 手工把 `<沙盒 home>/.dsh/dsh-launcher/safe-mode.json` 置 `"active": true` → 启动 →
+① 手工把 `<沙盒 home>/dsh-launcher/safe-mode.json` 置 `{"active":true,"tier":1}`（DSH_HOME
+即沙盒 home，路径为 `<DSH_HOME>\dsh-launcher\safe-mode.json`）→ 启动 →
 标题栏必须出现「（安全模式）」且弹出可点击退出的通知（修复前：静默、无横幅）；
 ② 页面内点 DSH 自带"重启" → 日志仍为 `service start via identity (SAFE profile)`、
 横幅不消失（对称遵守）；点通知退出安全模式 → 重启后命令行回到 `web`；
@@ -158,7 +174,14 @@ TrayMenuForm.Draw → 【缺陷节点】TextRenderer 默认内边距（每字两
 `service exited while healthy ... handing over to runtime restart supervision`、
 **无** E2004/E2007，且 `service-pid-<port>.txt` 每次重启后内容都变（账本跟上新进程）；
 ④ 在安全模式会话里装一个插件后正常启动 → `.dsh-safe` 目录必须存活并留痕
-`[E1010] 隔离 profile 中存在非壳生成的内容…已保留目录不删`。
+`[E1010] 隔离 profile 中存在非壳生成的内容…已保留目录不删`；
+⑤ 缺陷 E（缺目录被困）用 `sandbox/issue25-card/e2e-safemode.ps1` 跑真 dsh 全链路：粘滞标志在、
+`.dsh-safe` 不在 → 日志出现 `SAFEMODE: sticky profile missing → rebuilt before launch`、界面照常
+进入并挂出 **sticky 卡片（35s 后仍在）** → 真实鼠标点击卡片动作 → `SAFEMODE: user exited safe mode
+via notice` → 以 `web` 重新拉起 → `safe-mode.json` 回到 `active:false`、横幅撤下。
+注意：空 DSH_HOME 即可复现（实测 dsh 会自己 bootstrap `profiles/`，唯一永远不会出现的正是
+`.dsh-safe`），无需克隆用户 profiles；沙盒里要钉住 `DSH_TEST_INSTALL_MODE=msi`，否则便携分支的
+更新提示是**模态是/否对话框**，会盖住卡片、把点击吃掉（那是测试形态干扰，不是产品缺陷）。
 
 ### 落点 6：源码构建被误报"需要安全更新"（issue #28 复测第 2 条）
 ```

@@ -72,4 +72,36 @@ public class SafeModeLaunchPolicyContractTests
         Assert.Equal(identity.Version, result.Version);
         Assert.Equal(identity.CanLaunchDirectly, result.CanLaunchDirectly);
     }
+
+    // ==================== 粘滞标志与实际目录不一致（真机实测缺陷） ====================
+
+    /// <summary>
+    /// 实测：粘滞 safe-mode.json 为 active 但 .dsh-safe 不存在时，直接带 --profile 拉起会被
+    /// dsh 硬失败（profile does not exist → exit 1 → 壳 E2002），用户连界面都进不去，
+    /// 也就永远点不到"退出安全模式"。故标志在、目录缺 → 必须先重建。
+    /// </summary>
+    [Theory]
+    [InlineData(true, false, true)]    // 粘滞在生效但目录没了 → 重建
+    [InlineData(true, true, false)]    // 目录在 → 不用重建
+    [InlineData(false, false, false)]  // 本来就不是安全模式 → 无关
+    [InlineData(false, true, false)]
+    public void NeedsRebuild_OnlyWhenStickyFlagHasNoProfile(bool active, bool exists, bool expected)
+        => Assert.Equal(expected, SafeModeLaunchPolicy.NeedsRebuild(active, exists));
+
+    /// <summary>重建失败的兜底必须是"退回正常模式"，而不是"照样带着不存在的 profile 拉起"：
+    /// 界面可用但插件被禁用 ≫ 界面根本起不来且无法退出。</summary>
+    [Theory]
+    [InlineData(false, true)]   // 重建失败 → 退回正常
+    [InlineData(true, false)]   // 重建成功 → 继续走安全模式
+    public void ShouldFallBackToNormal_OnlyWhenRebuildFailed(bool rebuildSucceeded, bool expected)
+        => Assert.Equal(expected, SafeModeLaunchPolicy.ShouldFallBackToNormal(rebuildSucceeded));
+
+    /// <summary>退回正常模式后 Decorate 不得再套 profile（否则兜底形同虚设）。</summary>
+    [Fact]
+    public void Decorate_AfterFallback_DoesNotAttachProfile()
+    {
+        var identity = Global();
+        var afterFallback = SafeModeLaunchPolicy.Decorate(identity, safeModeActive: false, SafeDir);
+        Assert.False(afterFallback.IsSafeProfile);
+    }
 }
