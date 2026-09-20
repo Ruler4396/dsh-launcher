@@ -158,6 +158,10 @@
 - **诚实边界（2026-09-19）**：这条机制虽然本机可复现，但**不能拿来解释 CI 的那两次红**——把子进程
   寿命放宽到 5 秒后同一用例又红一次，而 `realos-test.yml` 的 `-v q` 吞掉了 Error Message，
   当前 token 没有 `workflow` scope 无法修日志 verbosity，原因仍未确证。本机侧 220 次执行全绿。
+  **2026-09-20 更新（只解决工具面，没解决归因）**：verbosity 已修——Real-OS 层并入 `build.yml` 的
+  real-os step，走 `test.ps1 -RealOsOnly`，`-v q` 换成 `-v minimal` 并保留 120 行，凭据也已补上
+  `workflow` scope。**但"那两次红的确切原因"至今未确证**：并入后该层连绿三次（57 例 / 44–46s），
+  样本仍不足以判定抖动已消失，下次它再红就从 `realos.log` 里读真实 Error Message，不再靠猜。
 - 未做的更硬改法（记录理由）：让 `AttachProcess` 在 pid 已消失时直接判 E2007 ——会重新引入
   2026-08 那批误报（壳自己停服的窗口里 pid 必然"已消失"）；把调用方手里的 `Process` 对象传进来
   （生产侧 `ServiceManager` 确实持有）是正解，但那要给 `IBootProcessHandle` 加一条"由持有者提供
