@@ -15,8 +15,14 @@ on:
 permissions:
   contents: read
 
+# 同一 ref 上只留最新一次运行（本 workflow 单次 5-6 分钟，是最不该排队的）。
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e-geo:
+    timeout-minutes: 30
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

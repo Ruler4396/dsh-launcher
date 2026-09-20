@@ -20,8 +20,14 @@ on:
 permissions:
   contents: read
 
+# 同一 ref 上只留最新一次运行。
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   headless-multimon:
+    timeout-minutes: 30
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

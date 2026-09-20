@@ -14,8 +14,14 @@ on:
 env:
   DOTNET_NOLOGO: 'true'
 
+# 同一 ref 上只留最新一次运行（旧 commit 的 VM 直接取消，不排队）。
+concurrency:
+  group: ui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ui-selftest:
+    timeout-minutes: 20
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

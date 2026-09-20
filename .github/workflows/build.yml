@@ -2,23 +2,39 @@ name: build
 
 on:
   push:
-    branches: [master]
+    # v[0-9]*.*[0-9]* 这条分支模式是从 realos-test.yml 搬过来的：realos 并入本文件后，
+    # 若不同步搬触发分支，向 v0.x 维护分支推送就会一个测试门禁都不剩（build 原来只盯 master）。
+    branches: ["master", "v[0-9]*.*[0-9]*"]
     # 仅正式语义版本 tag 触发发布打包（v0.4.0 等）；preview tag（如 v0.4.0-preview）不触发——
     # 预览版由手动 gh release create 发布，且 build-release.ps1 仅接受 x.y.z 格式版本号。
     tags: ["v[0-9]*.[0-9]*.[0-9]*"]
   pull_request:
+  # 手动触发用于验证打包链路（build-release.ps1 的 zip+MSI 步骤已改为只在 tag 上跑，
+  # 想在发布前单独确认打包没坏，就用这个入口）。
+  workflow_dispatch:
 
 # 供应链卫生（S4）：顶层默认最小权限 contents: read；Release 发布在独立 job 中放开 write。
 # 第三方 action 全部 pin commit SHA；tag 名经 env 注入（不经 ${{ }} 内插进脚本）。
 permissions:
   contents: read
 
+# 同一 ref 上只保留最新一次运行：连推 N 个 commit 时，旧 commit 的 Windows VM 立刻取消，
+# 不再让新改动排在自家已过时的排队后面（本文件与另 4 个 workflow 此前都没有 concurrency 键，
+# 实测每次 push 扇出 3 台 VM、连推 3 次就是 9 台）。
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     # 预发布 tag（含 '-'，如 -rc.N/-preview）：只由手动 gh release create --prerelease 发布，
     # 自动流水线整体跳过（避免工作流把预发布又当成正式 Release 抢发/覆盖手动产物）。
     if: ${{ !contains(github.ref_name, '-') }}
+    timeout-minutes: 20
     runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -30,9 +46,12 @@ jobs:
         # P1-5：test.ps1 是唯一测试入口（第 1 节内部已跑 dotnet test，此前独立
         # "Run unit tests" 步骤导致单测在 CI 双跑）；含静态断言 + uninstall/-CleanData
         # 隔离行为测试（防 R05 数据边界 / R06 脚本行为漂移）。纯只读 + %TEMP% 隔离，runner 上安全。
+        # -SkipRealOs：Real-OS 层（Category=RealOS，48 条）不在这里跑，改由下面的 real-os step 跑。
+        # 本地开发者裸跑 ./scripts/test.ps1 仍是全量硬门禁——这个开关只为去掉与 realos workflow
+        # 的重复，不削弱任何一层的断言。
         shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 2>&1 | Tee-Object -FilePath test-scripts.log
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -SkipRealOs 2>&1 | Tee-Object -FilePath test-scripts.log
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             Select-String -Path test-scripts.log -Pattern '\[FAIL\]|项测试失败' | ForEach-Object { Write-Output ("::error file=scripts::" + $_.Line.Trim()) }
@@ -46,7 +65,48 @@ jobs:
           name: test-output
           path: test-scripts.log
 
+      # ---- Real-OS 层（原 realos-test.yml 整体并入本 job，省一整台 VM 的 checkout+setup-dotnet+冷编译）----
+      # Stage 2a：确保真实 Node.js 环境（Real-OS 测试硬前提，绝不 Skip）
+      - name: Ensure Node.js (real environment, never skip)
+        shell: pwsh
+        run: |
+          $node = Get-Command node -ErrorAction SilentlyContinue
+          if (-not $node) {
+            Write-Host "node 未预装，通过 winget 真实安装 Node.js LTS..."
+            winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          }
+          node --version
+
+      # Stage 2b：运行 Real-OS 集成测试（零 Mock 真实 OS 交互）
+      - name: Run Real-OS integration tests
+        # filter 字符串的唯一真相源是 scripts/test.ps1 里的 $realOsLayerFilter，这里不再抄第二份
+        # （workflow 与脚本各存一份 filter = 迟早漂移，漂移的结果是某条真实用例两层都不跑）。
+        # 失败留证(-v minimal + 120 行)与 DSH_FORCE_NPM_SMOKE 也由 test.ps1 负责。
+        # RealNet 类别被排除：它依赖真实镜像下载构建（40 分钟级、境外 runner 不可达境内源），
+        # 属于本地强制硬门禁而非 CI 门禁——CI 环境差异不应劫持发布流水线。
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -RealOsOnly 2>&1 | Tee-Object -FilePath realos.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # 只截 20 条：红灯已经确定，这些注解只回答"点开哪一条"，完整日志在 realos.log 产物里。
+            Select-String -Path realos.log -Pattern 'Failed|\[FAIL\]' | Select-Object -First 20 | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
+            exit $code
+          }
+
+      - name: Upload Real-OS log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: realos-test-output
+          path: realos.log
+
       - name: Build release package (zip + msi + checksums)
+        # 只在正式 tag（和手动 dispatch）上打包：产物唯一的消费方是本文件下方 needs: build 的
+        # release job，而它只在 tag 上运行。此前每个 commit/PR 都花 ~39s 打一份没人要的 zip+MSI。
+        # 打包脚本本身的回归仍由 tag 推送在发布前拦住（release 需要 build 成功）。
+        if: github.ref_type == 'tags' || github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -58,7 +118,9 @@ jobs:
             ./scripts/build-release.ps1 -OutputDir dist
           }
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Upload release artifacts
+        if: github.ref_type == 'tags' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dsh-launcher-windows
           path: |
