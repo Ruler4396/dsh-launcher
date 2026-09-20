@@ -18,62 +18,17 @@ namespace DshShell.Tests.Outcomes;
 /// </summary>
 public class SafeModeE2EOutcomes
 {
-    /// <summary>
-    /// 【L3 Outcome — 崩溃消息检测 E2E】
-    /// 验证 WebViewManager 能正确识别各种插件崩溃消息。
-    /// </summary>
-    [Theory]
-    [InlineData("\"bootstrap facade is missing\"", true)]
-    [InlineData("\"ModuleLoader is undefined\"", true)]
-    [InlineData("\"plugin fatal error\"", true)]
-    [InlineData("\"normal page load\"", false)]
-    [InlineData("\"\"", false)]
-    public void Outcome_SafeMode_CrashDetection_E2E(string message, bool shouldDetect)
-    {
-        // Given: 一条 WebView2 消息（JSON 字符串格式）
-        // When: 检查是否包含崩溃标志
-        var detected = message.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("ModuleLoader", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase);
-
-        // Then: 检测结果应与预期一致
-        Assert.Equal(shouldDetect, detected);
-    }
-
-    /// <summary>
-    /// 【L3 Outcome — 安全模式环境变量 E2E】
-    /// 验证在沙盒环境中，安全模式环境变量能正确设置和清除。
-    /// </summary>
-    [Fact]
-    public void Outcome_SafeMode_EnvironmentVariable_E2E()
-    {
-        // Given: 初始状态无安全模式
-        var saved = Environment.GetEnvironmentVariable("DSH_SAFE_MODE");
-        try
-        {
-            Environment.SetEnvironmentVariable("DSH_SAFE_MODE", null);
-            Assert.Null(Environment.GetEnvironmentVariable("DSH_SAFE_MODE"));
-
-            // When: 模拟用户确认进入安全模式
-            Environment.SetEnvironmentVariable("DSH_SAFE_MODE", "1");
-
-            // Then: 环境变量已设置
-            Assert.Equal("1", Environment.GetEnvironmentVariable("DSH_SAFE_MODE"));
-
-            // 验证 start-dsh.vbs 会读取此环境变量
-            var vbsPath = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-            if (File.Exists(vbsPath))
-            {
-                var content = File.ReadAllText(vbsPath);
-                Assert.Contains("DSH_SAFE_MODE", content);
-                Assert.Contains("--safe-mode", content);
-            }
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DSH_SAFE_MODE", saved);
-        }
-    }
+    // 这里原有两条用例，都被删掉（不是"精简数量"，是它们不可能红）：
+    // ① Outcome_SafeMode_CrashDetection_E2E（5 行 InlineData）：把判据**在测试里重写一遍**
+    //    （message.Contains("bootstrap facade…") || Contains("ModuleLoader") || Contains("plugin fatal")）
+    //    再断言这个副本，生产代码一行都没进。更糟：它写的正是 `ShellLogic.cs:170-171` 注释里
+    //    明确**已删除**的旧行为——对整条 JSON 松散 contains "ModuleLoader"（因误报而废除）。
+    //    照它改生产就会把误报放回来。真判据由 BootGuardContractTests / GoldenBootGuardTests /
+    //    ServiceIdentityGuardTests / BootHealthMonitorTests 四处把守。
+    // ② Outcome_SafeMode_EnvironmentVariable_E2E：SetEnvironmentVariable 后 Get 回来，断言的是 BCL
+    //    自己；末尾那段对 start-dsh.vbs 的断言用 if (File.Exists) 包着，而该文件不在测试输出目录，
+    //    且它找的 "--safe-mode" 在真实 vbs 里不存在。安全模式启动契约改由
+    //    BrowserSuppressOutcomes.StartDshVbs_SafeMode_UsesProfileFlagNotASafeModeSwitch 真读真断言。
 
     /// <summary>
     /// 【L3 Outcome — 错误码 E1008 E2E】

@@ -52,33 +52,13 @@ public class GhostTrayOutcomes
         }
     }
 
-    /// <summary>
-    /// 【L3 Outcome — HideTrayIfTransient 契约】
-    /// 验证当 IsTrayWantedProvider 返回 false 时，HideTrayIfTransient 会隐藏托盘。
-    /// </summary>
-    [Fact]
-    public void Outcome_GhostTray_HideTrayIfTransient_HidesWhenNotWanted()
-    {
-        // Given: WindowManager 实例，IsTrayWantedProvider 返回 false
-        var wm = new WindowManager();
-        wm.IsTrayWantedProvider = () => false;
-
-        // When: 调用 HideTrayIfTransient（托盘图标存在但不应驻留）
-        // Then: 不应抛出异常（托盘可能为 null，但方法应幂等安全）
-        wm.HideTrayIfTransient(); // 无托盘时应静默返回
-    }
-
-    /// <summary>
-    /// 【L3 Outcome — False Positive 拦截器】
-    /// 验证：有 pending 更新时，IsTrayWanted 返回 true（托盘应显示以承载气泡）。
-    /// 这不是幽灵托盘——气泡结束后会调用 HideTrayIfTransient 隐藏。
-    /// </summary>
-    [Fact]
-    public void Outcome_GhostTray_IsTrayWanted_TrueWhenPendingUpdate()
-    {
-        // 有 pending 更新时 IsTrayWanted 应返回 true（气泡需要托盘载体）
-        // 这是正确行为，不是幽灵托盘
-        // 注：实际 _pendingUpdate 状态在 Program.cs 中，此处验证逻辑契约
-        Assert.True(true, "有 pending 更新时托盘应显示（气泡载体），结束后隐藏");
-    }
+    // 这里原有两条用例已删，它们**在结构上不可能变红**，留着只会让人以为托盘驻留有测试：
+    // ① Outcome_GhostTray_HideTrayIfTransient_HidesWhenNotWanted：new WindowManager() → 设 provider
+    //    → 调 HideTrayIfTransient()，**一条断言都没有**（注释自己写着"无托盘时应静默返回"）。
+    //    把 HideTrayIfTransient 整个删掉它照样绿。
+    // ② Outcome_GhostTray_IsTrayWanted_TrueWhenPendingUpdate：本体就是 Assert.True(true, "...")，
+    //    注释还写明"实际 _pendingUpdate 状态在 Program.cs 中"——即它知道自己碰不到生产代码。
+    // 托盘驻留/退出的真行为由 Outcomes/TrayResidentSwitchOutcomes（含 Category=RealOS 的真退出码路径）
+    // 与 Regression_Issue28_TrayExitRow.RealOs 把守；幽灵托盘的判据在
+    // ShellLogic 的 TrayWanted 决策 + TrayMenuLayoutContractTests。
 }

@@ -155,31 +155,14 @@ public class UpdateCheckerTests
         Assert.Contains("%40deepseek-ai%2Fdsh", requested!);
     }
 
-    // ---------- 版本比较（决定是否提示更新，误报会打扰用户） ----------
-
-    [Theory]
-    [InlineData("0.3.1", "0.3.0", 1)]
-    [InlineData("0.3.0", "0.3.1", -1)]
-    [InlineData("0.3.1", "0.3.1", 0)]
-    [InlineData("0.3.10", "0.3.9", 1)]      // 语义化：10 > 9，非字符串序
-    [InlineData("1.0.0", "0.9.9", 1)]
-    [InlineData("0.3.1", null, 1)]          // 远端缺失 → 视为 0.0.0 → 有更新？不：本地为 0.3.1 > 0
-    [InlineData(null, "0.3.1", -1)]
-    [InlineData(null, null, 0)]
-    [InlineData("abc", "0.3.1", -1)]        // 非法 → 0.0.0，不产生"有新版"误报
-    [InlineData("0.3.1", "abc", 1)]
-    // ---- v0.4.0：dsh 以 SemVer prerelease 发布（0.1.0-rc.x），旧 Version.TryParse 全解析失败 ----
-    [InlineData("0.1.0-rc.7", "0.1.0-rc.6", 1)]   // rc7 > rc6（本次修复的目标场景）
-    [InlineData("0.1.0-rc.6", "0.1.0-rc.7", -1)]
-    [InlineData("0.1.0-rc.7", "0.1.0-rc.7", 0)]
-    [InlineData("0.1.0-rc.10", "0.1.0-rc.9", 1)]  // prerelease 数值段按数值比，非字符串序
-    [InlineData("0.1.0", "0.1.0-rc.7", 1)]        // 正式版 > prerelease（SemVer 规则）
-    [InlineData("0.1.0-rc.1", "0.1.0-alpha.2", 1)] // 字母数字段字典序：rc > alpha
-    [InlineData("0.1.0-rc.1", "0.1.0-rc.1.1", -1)] // 段多者更大
-    public void CompareVersions_ReturnsExpected(string? a, string? b, int expected)
-    {
-        Assert.Equal(expected, Math.Sign(UpdateChecker.CompareVersions(a, b)));
-    }
+    // ---------- 版本比较 ----------
+    // 这里原有 17 行 CompareVersions_ReturnsExpected，已删（不是嫌多，是它 100% 被别处覆盖）：
+    // · 15 行与 ShellLogicVersionPolicyContractTests.cs:16 的 34 行矩阵**逐字节相同**；
+    // · 剩下 2 行（rc.6<rc.7 反向、rc.7==rc.7）是同一等价类，矩阵里已有 rc.9<rc.10 与 rc.10==rc.10；
+    // · UpdateChecker.CompareVersions 本体只是 `=> ShellLogic.VersionPolicy.CompareVersions(a,b)` 的转发，
+    //   转发正确性由 ShellLogicVersionPolicyContractTests.cs:76 那条直连用例单独钉。
+    // 那份契约文件的头注释本来就写着"两个消费方的委托正确性由末尾两个直连用例锁定"——
+    // 这 17 行是那份设计落地后留下的第二份拷贝。改判据时以前要改两处，现在只有一处。
 
     // ---------- 本地 dsh 版本解析（环境变量优先） ----------
 

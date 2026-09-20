@@ -107,30 +107,11 @@ public class SafeModeSandboxOutcomes
         Environment.SetEnvironmentVariable("DSH_SAFE_MODE", null);
     }
 
-    /// <summary>
-    /// 【L3 Outcome — start-dsh.vbs 安全模式支持】
-    /// 验证 start-dsh.vbs 脚本支持 --safe-mode 参数。
-    /// </summary>
-    [Fact]
-    public void Outcome_SafeMode_StartDshVbs_SupportsSafeModeFlag()
-    {
-        // Given: start-dsh.vbs 文件路径
-        var vbsPath = Path.Combine(AppContext.BaseDirectory, "start-dsh.vbs");
-        if (!File.Exists(vbsPath))
-        {
-            // CI 环境中 vbs 可能不在 bin 目录，跳过
-            return;
-        }
-
-        // When: 读取 vbs 文件内容
-        var content = File.ReadAllText(vbsPath);
-
-        // Then: 验证安全模式逻辑存在
-        Assert.Contains("DSH_SAFE_MODE", content);
-        Assert.Contains("--safe-mode", content);
-        // 验证环境变量检查逻辑
-        Assert.Contains("env(\"DSH_SAFE_MODE\")", content);
-    }
+    // 原本这里有一条 Outcome_SafeMode_StartDshVbs_SupportsSafeModeFlag：它读
+    // AppContext.BaseDirectory\start-dsh.vbs 并 if (!File.Exists) return; —— 该文件不在测试输出目录，
+    // 断言从未执行；而它断言的 "DSH_SAFE_MODE"/"--safe-mode" 在真实 vbs 里根本不存在（安全模式的真
+    // 形态是 DSH_PROFILE → --profile）。假绿且假判据，已删；契约改由
+    // Outcomes/BrowserSuppressOutcomes.StartDshVbs_SafeMode_UsesProfileFlagNotASafeModeSwitch 真跑真断言。
 
     /// <summary>
     /// 【L3 Outcome — 沙盒环境隔离】

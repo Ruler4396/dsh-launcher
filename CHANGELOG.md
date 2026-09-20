@@ -402,7 +402,28 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
   `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 保持单参 `(kind)` 契约并新增
   `WebNotificationPermission_StaysGranted_Issue25`（防止再拿拒权限当崩溃防护）。
 
-### 维护 — CI 分层与编排骨架（2026-09-20）
+### 维护 — 测试内容审计（2026-09-20，同日第二问）
+
+追问"1389 条不看条数看内容，冗不冗杂"。答：**条数不胖，胖的是假的那一撮**。删 27 条、新写 2 条真断言，
+快线 1332 → **1305**（Debug 全绿 32s）。三类，各一实例：
+- **永远不会红**：3 条读 `AppContext.BaseDirectory\start-dsh.vbs` 再 `if (!File.Exists) return;`，而该
+  文件从不在测试输出目录（实测 tests/**/bin 下 0 个、csproj 无 CopyToOutput）⇒ 断言从未执行；且它们找的
+  `"--safe-mode"`/`"DSH_SAFE_MODE"` 在真实 vbs 里**根本不存在**（安全模式真形态是 `DSH_PROFILE` → 根级
+  `--profile`），一旦真跑必红——那个 `return` 就是维持假绿的开关。现按真形态重写为 2 条，走新 `RepoFile`
+  （**找不到就抛**）。脏副本验牙齿：一次性 worktree 里抹掉一条分支的 `--no-open` → 两条红；删掉 vbs →
+  `FileNotFoundException` 两条红。
+- **断言自己**：`SafeModeE2EOutcomes.CrashDetection_E2E`（5 行）在测试里重写一遍判据再断言副本，而它写的
+  正是 `ShellLogic.cs:170-171` 注释里**已删除**的松散 contains `"ModuleLoader"`（因误报废除）——这条"回归钉"
+  会把误报钉回来；真判据由 BootGuard/GoldenBootGuard/ServiceIdentityGuard/BootHealthMonitor 四处把守。同段
+  另一条只是 Set/Get 环境变量；`UpdateFlowContractTests.RunNpmCommand_CmdLine_*` 锁的又是 ADR-021 禁止的
+  `cmd.exe /c "…npm.cmd"` 包装，留着就是教下一个 agent 走回头路。
+- **字节级重复**：`UpdateCheckerTests` 17 行版本比较矩阵，15 行与 `ShellLogicVersionPolicyContractTests:16`
+  的 34 行逐字节相同、另 2 行同等价类，而 `CompareVersions` 只是转发、转发由该文件 :76 单独钉。删。
+
+**审计建议砍而我判定承重的**：`SecurityBoundaryTests` 25 行可执行扩展名、`PathPolicyContractTests` 27 行
+注入字符——按代码分支它们多走同一条 `_`，按"白名单被单独放宽"每行只挡一次针对性改动，证不出可安全删除。
+同日把两条**休眠一个月**的真机线接回 master 推送（`e2e-geo` 真 GUI 几何探针、`e2e-multimon` 里全仓唯一跑
+10 条真实 GUI E2E 的那一步），接上后首跑即绿。
 
 起因：怀疑"1300 个测试把 CI 拖慢"。实测相反——`dotnet test` 那 1309 条里 1263 条单测只占 ~14s，
 46 条 RealOS 占 54s；而 build job 3m22s 的构成是 setup-dotnet 39s + 测试步 1m46s + 打 zip+MSI 39s，
@@ -431,8 +452,9 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
   据此写下"根因＝技术债扫描器没排除 `obj/`、本机多扫 140 个生成物"——复测把它否掉了：`DoEvents` 那类逐文件
   断言 **CI 56 条、本地 0 条，方向相反**，故该归因撤回、只登记观察不下结论（未查明）。顺带一条工具坑：
   `cut -c1-70` 在 C locale 下按**字节**切，会把中文前缀之后的不同断言折叠成同一行，`uniq -c` 于是报出假的倍数。
-- 本轮 `[Unreleased]` 段长 400 → 432，G7 上限同步钉到 432（余量 +0）：**用户 2026-09-20 明确授权放宽**，
-  口径同上次 315→400（授权一次、这个数值；段长仍只降不升，低于上限时应收紧到当下实测值）。
+- 本轮 `[Unreleased]` 段 400 → 432 → 453，G7 上限随当下实测值钉死（余量 +0）：432 那次是用户
+  2026-09-20 明确授权；同日第二问的内容审计要记录，压缩已压到不损事实的下限，故沿用同一条口令
+  （授权一次、就这个数值，段长仍只降不升）。
 
 ## [0.4.5] - 2026-09-04
 

@@ -280,23 +280,14 @@ namespace DshShell.Tests.Managers;
         Assert.Null(ShellLogic.NpmHelpers.ResolveNpmCmdPath(null, null));
     }
 
-    [Fact]
-    public void RunNpmCommand_CmdLine_UsesDoubleQuotedWrapper_NotBareQuotedPath()
-    {
-        // 根因契约（用户 22:2x E4001"文件名、目录名或卷标语法不正确"）：
-        // 带引号 npm 路径直接拼进 cmd /c（`/c "D:\node\npm.cmd" args`）时，cmd 剥离首尾引号
-        // 后引号计数错乱 → ERROR_INVALID_NAME。锁定正确形式是整行双层引号包裹：
-        //   /c ""D:\node\npm.cmd" pack ..."
-        // 该断言守护"不得回归为裸引号拼接"（test.ps1 静态断言 + 本测试双保险）。
-        var npmPath = "D:\\node\\npm.cmd";
-        var args = "pack @deepseek-ai/dsh@1.2.3 --pack-destination \"C:\\staging\\prefetch_temp\"";
-        var cmdLine = "/c \"\"" + npmPath + "\" " + args + "\"";
-        Assert.Equal("/c \"\"D:\\node\\npm.cmd\" pack @deepseek-ai/dsh@1.2.3 --pack-destination \"C:\\staging\\prefetch_temp\"\"", cmdLine);
-        // 关键断言：整体以双层引号闭合，且 npm 路径自身不带裸引号（防止回归到错误形式）
-        Assert.StartsWith("/c \"\"", cmdLine);
-        Assert.EndsWith("\"\"", cmdLine);
-        Assert.Contains("\"\"D:\\node\\npm.cmd\" ", cmdLine);
-    }
+    // 原有 RunNpmCommand_CmdLine_UsesDoubleQuotedWrapper_NotBareQuotedPath 已删，两条理由叠加：
+    // ① 它在测试里自己 `var cmdLine = "/c \"\"" + npmPath + ...` 拼接，再 Assert.Equal 拼出来的串——
+    //    一行生产代码都没调用，把 ProcessRunner.RunNpmCommand 整个删掉它照样绿。
+    // ② 它锁的形态是 **cmd.exe /c "…npm.cmd"**，而 ADR-021 明令禁止 cmd.exe / .cmd shim 中间层
+    //    （引号剥离只是它要防的三类陷阱之一），现在真链路是 node.exe 直启 npm-cli.js。
+    //    也就是说这条"回归钉"钉的是仓库已经废弃、且被硬约束禁止的那条路——留着只会教错。
+    // 该钉的不变式在别处：scripts/test.ps1 的 ADR-021 闸（扫 src 实际代码行里的 cmd.exe 调用）
+    // + RealWorldNpmExecutionTests（真起 node.exe 跑 npm-cli.js，Real-OS 层，绝不 Skip）。
 
     [Theory]
     // NpmCmd_NotFound_FailsGracefully 语义：cmd /c npm 找不到时输出被识别为 npm 环境缺失，
