@@ -24,6 +24,12 @@
   本机三例实测——持久 PATH 世界下 `found=1 node=…\fnm\aliases\default\node.exe v24.21.0` 放行；
   把版本管理器落点全指向空目录 + PATH 清空 → `found=0` 仍然拦得住（不是"改成永远放行"）；
   旧算法对照实测 `hasNode=False`，证明这条修复针对的是真实假阴性。
+- **同一盲区也在便携 ZIP 的 `scripts/check-prereq.cmd` 里**（它只提示、不拦安装，但会给出同样的
+  错误结论）：该脚本用 `node --version` 走 PATH，双击运行时拿到的是 Explorer 的持久 PATH，
+  fnm 用户照样看到 `[MISSING] Node.js 18+`。实测改前 `exit=1 / MISSING`，改后
+  `[OK] Node.js 18+ - found via %APPDATA%\fnm\aliases\default\node.exe / exit=0`；反例（把
+  `FNM_DIR`/`APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`NVM_SYMLINK`/`VOLTA_HOME` 全指向空目录 +
+  PATH 清空）仍是 `MISSING / exit=1`，不是改成永远放行。
 
 
 ## [0.5.0] - 2026-09-20

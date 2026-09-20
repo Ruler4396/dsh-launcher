@@ -36,12 +36,37 @@ if errorlevel 1 (
   echo [OK]   WebView2 Runtime
 )
 
-rem 3) Node.js 18+ - executable on PATH
+rem 3) Node.js 18+ - on PATH first, then version managers' on-disk layouts.
+rem    fnm / nvm / volta inject node into EACH shell's PATH (`fnm env`), so a double-clicked
+rem    .cmd - which gets Explorer's persisted PATH - sees none of them and used to report
+rem    MISSING on a machine that really has node. Same blind spot as the MSI prereq check.
 set "NODE_OK="
+set "NODE_WHY="
 for /f "tokens=1 delims=." %%M in ('node --version 2^>nul') do (
   set "VER=%%M"
   set "VER=!VER:v=!"
-  if !VER! GEQ 18 set "NODE_OK=1"
+  if !VER! GEQ 18 ( set "NODE_OK=1" & set "NODE_WHY=PATH" )
+)
+if not defined NODE_OK (
+  for %%C in (
+    "%FNM_DIR%\aliases\default\node.exe"
+    "%FNM_DIR%\aliases\lts-latest\node.exe"
+    "%APPDATA%\fnm\aliases\default\node.exe"
+    "%APPDATA%\fnm\aliases\lts-latest\node.exe"
+    "%LOCALAPPDATA%\fnm\aliases\default\node.exe"
+    "%NVM_SYMLINK%\node.exe"
+    "%LOCALAPPDATA%\Volta\bin\node.exe"
+    "%USERPROFILE%\scoop\apps\nodejs\current\node.exe"
+    "%ProgramData%\chocolatey\lib\nodejs\tools\node.exe"
+  ) do (
+    if not defined NODE_OK if exist %%C (
+      for /f "tokens=1 delims=." %%M in ('call %%C --version 2^>nul') do (
+        set "VER=%%M"
+        set "VER=!VER:v=!"
+        if !VER! GEQ 18 ( set "NODE_OK=1" & set "NODE_WHY=%%~C" )
+      )
+    )
+  )
 )
 if not defined NODE_OK (
   echo [MISSING] Node.js 18+
@@ -49,7 +74,7 @@ if not defined NODE_OK (
   echo           Manual: https://nodejs.org/
   set "FAILED=1"
 ) else (
-  echo [OK]   Node.js 18+
+  echo [OK]   Node.js 18+ - found via !NODE_WHY!
 )
 
 echo.
