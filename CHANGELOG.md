@@ -4,7 +4,25 @@
 
 ## [Unreleased]
 
-（暂无）
+### 修复
+
+- **推 tag 时打包与上传产物两步被整体跳过（`build.yml` 的 `ref_type` 写成复数）**：GitHub 的
+  `github.ref_type` 只有 `branch` / `tag` 两个取值，而两处条件写成 `== 'tags'`，于是 tag 推送
+  永远进不了"Build release package"/"Upload release artifacts"，下游 release job 下载时报
+  `Artifact not found for name: dsh-launcher-windows`。**v0.5.0 的 tag run 就是这样红的**，
+  当时只能靠 `gh workflow run build.yml --ref v0.5.0` 走 dispatch 分支绕行发布（v0.5.1 同）。
+  改成单数 `'tag'`，两处一起改——只改一处会变成"打了包没人上传"，同样是红。
+- **Release 公告被硬折行切成碎片**：CHANGELOG 是每行约 100 列硬折行写的，而 GitHub 的 Release
+  正文把**单个换行渲染成硬换行**（v0.5.1 正文实测 26 个 `<br>`），于是公告看起来被强行截断、
+  右边大片留白。新增 `scripts/release-notes.ps1` 作为发布正文的**唯一实现**（抽版本小节 →
+  段内续行接回一行 → 拼校验和与安装说明），`build.yml` 改为调用它；归一规则：接缝两侧都是 ASCII
+  词字符才补空格，否则直接相接（中文相接不带空格，英文单词之间必须带），空行/标题/列表项/表格/
+  引用块/代码围栏一律原样。重发两份公告后实测：v0.5.1 正文 `<br>` 从 26 降到 1（那一个是双语
+  安装说明里显式写的），v0.5.0 降到 7；正文按"忽略空白后逐字符相等"校验过，一字未丢
+  （0.5.0 段 523 行 → 131 行，26701 字符不变）。
+  推送判据也复核过：v0.5.0 正文仍含 3 处 `SECURITY`（继续作为安全更新提示），v0.5.1 仍 0 处
+  （正常更新，不发推送）。
+
 
 ## [0.5.1] - 2026-09-20
 
