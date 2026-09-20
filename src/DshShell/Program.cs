@@ -2016,8 +2016,8 @@ internal static class Program
         _pendingLatest = latest;
         _pendingLocal = local;
         var (title, body) = type == PendingUpdate.LauncherSecurity
-            ? ("dsh-launcher 安全更新", $"检测到重要安全更新 {latest}（当前 {local}）。点击查看下载。\n如有严重漏洞请尽快更新。")
-            : ("dsh 有新版本", $"检测到 dsh {latest}（当前 {local}）。点击此处在后台下载更新。");
+            ? (ShellLogic.UpdateNotice.LauncherSecurityTitle, ShellLogic.UpdateNotice.LauncherSecurityBody(latest, local))
+            : (ShellLogic.UpdateNotice.DshTitle, ShellLogic.UpdateNotice.DshBody(latest, local));
         // 便携 ZIP：这里是**决策**对话框（要用户点是/否：下不下载、跳不跳过该版本），
         // 不是通知——卡片不承载决策语义，故保留模态形态（v0.4.1 便携版分流不变）。
         if (ShellLogic.RuntimeConfig.IsPortableInstallWithTestOverride())

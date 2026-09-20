@@ -1036,6 +1036,38 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 更新提示的用户可见文案（纯函数 + UpdateNoticeCopyContractTests 锁定）。
+    ///
+    /// 【为什么在 v0.5.0 把文案从组合根搬下来】这一版要随安全更新通知说一句维护公告：
+    /// "这可能是本项目的最后一个版本"。这句话得同时出现在自绘卡片和便携版的决策对话框上——
+    /// 两者过去各写一份字符串，写第二份就是漂移的开始，所以整段下沉到这里，只留一个来源。
+    /// 公告只挂在**启动器安全更新**这一条上：dsh 自身的版本更新是另一个包的产物，与本项目
+    /// 是否停止维护无关。若将来真的出了后续版本，删掉 <see cref="EndOfMaintenanceLine"/> 即可，
+    /// 契约测试会红着提醒。
+    /// </summary>
+    public static class UpdateNotice
+    {
+        public const string LauncherSecurityTitle = "dsh-launcher 安全更新";
+        public const string DshTitle = "dsh 有新版本";
+
+        /// <summary>v0.5.0 起附在启动器安全更新提示末尾的维护公告（可能这是最后一个版本）。</summary>
+        public const string EndOfMaintenanceLine =
+            "另注：这可能是本项目的最后一个版本——此后不再保证有任何更新（包括安全更新）。";
+
+        public static string LauncherSecurityBody(string latest, string? local)
+            => $"检测到重要安全更新 {latest}（{CurrentLabel(local)}）。点击查看下载。\n"
+               + "如有严重漏洞请尽快更新。\n"
+               + EndOfMaintenanceLine;
+
+        public static string DshBody(string latest, string? local)
+            => $"检测到 dsh {latest}（{CurrentLabel(local)}）。点击此处在后台下载更新。";
+
+        // 本地版本未知时不写"（当前 ）"这种半截话：文案必须给出明确结论。
+        private static string CurrentLabel(string? local)
+            => VersionPolicy.IsResolvable(local) ? $"当前 {local}" : "当前版本未知";
+    }
+
+    /// <summary>
     /// 版本信息展示策略（纯函数，ContractTests.VersionInfoPolicyContractTests 锁定；
     /// 2026-09 新增功能：TitleBar dsh 版本徽标 + 版本信息弹窗共用）。
     /// 界面文案（"v 前缀"、"已是最新/有新版本"）统一在此合成——UI 层零拼字符串，
