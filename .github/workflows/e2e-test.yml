@@ -9,7 +9,10 @@ on:
   pull_request:
     paths: ['src/**', 'scripts/e2e-test.ps1', '.github/workflows/e2e-test.yml']
   push:
-    branches: [v0.4.0]
+    # 2026-09-20：原来只盯 v0.4.0 分支，而这个仓库从不发 PR（gh pr list --state all 实测为空）、
+    # 日常全在 master 上推 —— 于是这道真 GUI 探针自 2026-08-23 起再没跑过一次。
+    # 触发分支改成与 build.yml 同一套口径（master + v0.x 维护分支），别再出现"挂着但从不触发"。
+    branches: ["master", "v[0-9]*.*[0-9]*"]
     paths: ['src/**', 'scripts/e2e-test.ps1', '.github/workflows/e2e-test.yml']
 
 permissions:

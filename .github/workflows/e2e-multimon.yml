@@ -14,7 +14,9 @@ on:
   pull_request:
     paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
   push:
-    branches: [v0.4.0]
+    # 2026-09-20：触发分支与 build.yml / e2e-geo 统一。原来只盯 v0.4.0，而本仓库从不发 PR、
+    # 日常全推 master ⇒ 这里那 10 条真实 GUI E2E（全仓唯一跑它们的地方）自 2026-08-23 起没跑过。
+    branches: ["master", "v[0-9]*.*[0-9]*"]
     paths: ['src/**', 'tests/DshShell.Tests/**', 'tests/DshShell.E2E/**', '.github/workflows/e2e-multimon.yml']
 
 permissions:
@@ -36,11 +38,18 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      # 1) Headless 多屏纯函数/Mock 矩阵（含全部单测，CI 不再装虚拟显示驱动）
+      # 1) 本 workflow 的目标只有多屏那两条回归线（见文件头点名的两个类）——实测命中 13 条。
+      #    旧写法是不带 filter 跑整个 DshShell.Tests（现在那是 1389 条），而 build job 刚在
+      #    Release 下把同一套跑过两遍（快线 1332 + Real-OS 57），这里 Debug 再跑第三遍。
+      #    Debug 与 Release 在本仓库的**全部**真实差异 = 3 处 Debug.Assert（WindowManager 托盘注入
+      #    前置，实测 grep 排除 obj/bin 后 src 里只剩这几条，tests 里 0 条，csproj 无自定义
+      #    DefineConstants），而那三条所在路径另有 Regression_Issue28_TrayExitRow.RealOs 守着。
+      #    filter 若哪天选不到用例，dotnet test 会直接红（不是静默通过）——这道闸因此不会变空门。
       - name: Headless multi-monitor contract + integration tests
         shell: pwsh
         run: |
-          dotnet test tests/DshShell.Tests/DshShell.Tests.csproj -c Debug --nologo
+          dotnet test tests/DshShell.Tests/DshShell.Tests.csproj -c Debug --nologo `
+            --filter "FullyQualifiedName~MultiMonitor|FullyQualifiedName~ScreenProvider"
 
       # 2) E2E：排除 RequiresVirtualDisplay（本地虚拟屏专用），其余 headless 全跑
       - name: Headless E2E (exclude virtual-display-only)
