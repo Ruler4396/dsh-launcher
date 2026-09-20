@@ -30,6 +30,9 @@
 | 修改生命周期流转 | 在 `LauncherAppScenarioTests` 补 Headless 测试 |
 | 修改窗口布局/DPI/无边框 | 用 `--ui-selftest` 或 `UiTestHookE2ETests` 验证 0px 间隙，禁肉眼 |
 | 动 `test.ps1` 静态断言 | 严禁注释或削弱（God Object 最后防线） |
+| 给用例分一层（`[Trait("Category", "RealOS")]`） | **逐字**拼写、键名必须叫 `Category`（xUnit 区分大小写，拼错就静默躲过分层）；一条用例只在一层跑；两个 filter 只在 `scripts/test.ps1` 存一份；1b 闸会红 |
+| 断言"仓库里某个真实文件长什么样" | 走 `tests/DshShell.Tests/RepoFile.cs`（**找不到就抛**）；**禁止** `if (!File.Exists) return;`——那句 return 就是把断言蒸发掉（2026-09-20 实测 3 条因此从未执行） |
+| 加/改 workflow | 必须带 `concurrency` + `cancel-in-progress`；声称"我们有 E2E/真机回归"之前，先答出它**上一次真实运行的日期**（`gh run list --workflow <名> --limit 1`） |
 | 建本地沙盒/测试安装环境 | 只用仓库根 `sandbox/` 下子目录（单一沙盒铁律，见 `docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md` 核心约束六）；**禁止仓库外另建沙盒**；`%TEMP%` 瞬态隔离用例（neg/drill/CleanData）保持不动 |
 
 ## 🧭 项目地图（定位代码）
@@ -49,6 +52,9 @@
 - [ ] 是否吞掉异常？用户能否看到真实失败原因？→ 必须透明
 - [ ] 是否破坏 Manager 依赖方向？→ 必须经 `LauncherApp` 注入
 - [ ] 是否补了契约测试 / Headless 测试？→ 必须
+- [ ] 新增/改动的断言或闸：**造脏副本能让它红吗**？真源码=期望、造脏=反期望，两向不对就不许写"已加闸/已覆盖"
+- [ ] 这条断言在什么输入下会变红？→ 答不出来它就是零断言（`Assert.True(true)` / 零 `Assert` / `if (!File.Exists) return;` 三类在本仓都实测存在过并已清除）
+- [ ] 写进文档的**归因**（不只是数字）有没有实测支撑？→ 没有就写"未归因"，不要填一个看起来合理的解释（本轮实测撤回过一次假根因）
 
 ---
 
