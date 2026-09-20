@@ -402,6 +402,38 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
   `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 保持单参 `(kind)` 契约并新增
   `WebNotificationPermission_StaysGranted_Issue25`（防止再拿拒权限当崩溃防护）。
 
+### 维护 — CI 分层与编排骨架（2026-09-20）
+
+起因：怀疑"1300 个测试把 CI 拖慢"。实测相反——`dotnet test` 那 1309 条里 1263 条单测只占 ~14s，
+46 条 RealOS 占 54s；而 build job 3m22s 的构成是 setup-dotnet 39s + 测试步 1m46s + 打 zip+MSI 39s，
+**环境开销比测试本身还贵**。慢的不是数量，是编排：`test.ps1` 的 `dotnet test` 完全没带 filter，
+把 RealOS 整层跑了一遍，`realos-test.yml` 又按 `Category=RealOS` 跑第二遍。**一条测试都没砍。**
+
+- **归属漏洞三个，同一族**（trait 是字符串匹配，拼错/漏写就静默躲过分层）：
+  `Regression_DiagnoseExportPipeDrain` 写成 `[Trait("category","real-os")]`，xUnit 区分大小写 →
+  `Category=RealOS` 筛不到、`Category!=RealOS` 也排除不掉，两条真起 powershell 的用例只躲在
+  "无 filter 全跑"里混；`Regression_BootMonitorLogRotation` / `Regression_SafeProfileAtomicWrite`
+  各 3 条，文件自称"RealOS 零 Mock 复现"却根本没带 trait，从没进过 realos 那条"绝不 Skip"的层。
+  新增 `test.ps1` 的 1b 静态闸钉死这一族（分层文件的每个 `[Fact]/[Theory]` 必须显式归属、trait
+  必须逐字拼对）。反向验证过它会红：拿 HEAD 那份小写拼写做夹具，红灯直接指名"第 26 行起 2 处
+  Trait 不是逐字"；修好后转绿。
+- **两层集合是代数证明，不是实跑**：`--list-tests` 的展开态计数与 CI 的 `Total:` 完全对齐，
+  于是新基线 1389 = 快线 1332 + Real-OS 层 57，重叠 0、缺口 0——零执行即不碰 npm/进程/真实 `~/.dsh`。
+- **workflow 骨架**：5 个 workflow 全加 `concurrency` + `cancel-in-progress` + `timeout-minutes`
+  （此前一个都没有，连推 N 个 commit 就是 3N 台 Windows VM 排队，新改动排在自家过时运行后面——
+  这才是"每次等很久"的主因）；`realos-test.yml` 整体并入 `build.yml` 成为 real-os step，省掉一整套
+  checkout + setup-dotnet + 冷编译，它原来独享的 `v[0-9]*.*[0-9]*` 分支触发条件一并搬进 build.yml
+  （否则往 v0.x 维护分支推送会一个测试门禁都不剩）；zip+MSI 打包（39s）改为只在正式 tag / 手动
+  dispatch 上跑，并补 `workflow_dispatch` 入口以便发布前单独验打包链路。real-os step 的 `-v q`
+  换成 `-v minimal` + 保留 120 行，还掉台账第 14 条那笔"CI 红了只能读代码猜原因"的债。
+  filter 字符串收进 `test.ps1` 单一真相源（`-SkipRealOs` / `-RealOsOnly`），workflow 不再抄第二份。
+- **测量教训**：本地 `test.ps1` 打 580 条 `[ OK ]` 而 CI 只打 281 条，对账定位到技术债扫描器
+  `Get-ChildItem src -Recurse -Filter *.cs` **没排除 `obj/`**，本机多扫 140 个生成物
+  （`AssemblyInfo.cs` / `GlobalUsings.g.cs`）每个刷 6 条。不是假绿、也不是 CI 问题，但扫描面应当收紧
+  （**已登记为待办**，本轮未动——那是别人写的闸，改它属于削弱风险面）。
+- 本轮 `[Unreleased]` 段长 400 → 432，G7 上限同步钉到 432（余量 +0）：**用户 2026-09-20 明确授权放宽**，
+  口径同上次 315→400（授权一次、这个数值；段长仍只降不升，低于上限时应收紧到当下实测值）。
+
 ## [0.4.5] - 2026-09-04
 
 > **重要更新（含安全加固，SECURITY UPDATE）**：自上版 v0.4.3 以来的全部修复与功能**一次交付**，建议所有旧版本用户更新——

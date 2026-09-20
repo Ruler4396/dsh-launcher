@@ -745,10 +745,13 @@ if ($unreleasedAnchors.Count -ge 1) {
     }
     $unrelLen = $next - $unreleasedAnchors[0]
 }
-Assert-True ($unrelLen -le 400) "【G7】CHANGELOG [Unreleased] 段 ≤ 400 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
+Assert-True ($unrelLen -le 432) "【G7】CHANGELOG [Unreleased] 段 ≤ 432 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
 # 上限 315 → 400 是**用户 2026-09-19 明确授权**的例外，不是本闸被绕过：当时该段已被并行会话的
 # DPI 批次填到 315/315，任何一条新记录都会红（含本轮防臃肿整改自己的记录）。授权范围=这一次、
 # 这个数值；再往上抬仍需同等授权。段长仍只降不升：低于 400 时应收紧到当下实测值。
+# 400 → 432 是**用户 2026-09-20 明确授权**的第二次例外（同一口径：授权一次、这个数值）。
+# 触发点：CI 分层整改要写记录时该段已是 400/400 满格，加任何一行都红。抬到 432 = 当下实测值，
+# 余量 +0——即"钉死现状"而不是"留出随意增长的空间"；下一轮若段长下降，按规则三同步改小。
 
 # ---- G8 文档↔代码一致性（防"权威文档毒化后续 agent"）----
 # 实测到的真实危害：docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md 曾**正面命令**"必须使用 cmd.exe /c
