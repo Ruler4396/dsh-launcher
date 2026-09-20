@@ -351,6 +351,28 @@ public static class ShellLogic
             ServiceExitedVerdict => ErrorCodes.E2010,
             _ => ErrorCodes.E9001,
         };
+
+        /// <summary>
+        /// 启动失败弹窗正文（2026-09-20 从组合根搬进来：它本来就是"按裁决拼文案"的纯映射，
+        /// 留在 Program.cs 只会让组合根的行数闸和这份文案互相拉扯）。
+        /// 三条不变量：① 用户取消按事实说"已取消"，不写成故障；② logerror / service-exited
+        /// 必须带**首条真实线索**与日志路径（issue #24/#26 的教训：只说"下载慢/网络问题"是误导）；
+        /// ③ 就绪前退出必须把**退出码**如实展示。日志为空时给"（日志为空或不可读）"而不是留白。
+        /// </summary>
+        internal static string StartupFailureBody(string waitResult, string tailText,
+            string? errorHint, int serviceExitCode, string logPath) => waitResult switch
+            {
+                "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
+                "logerror" => "启动过程报错（dsh 服务未能就绪，多为依赖/下载/权限问题）。\n\n"
+                    + (errorHint is null ? "" : "报错线索：\n  " + errorHint + "\n\n")
+                    + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
+                ServiceExitedVerdict =>
+                    $"dsh 服务进程在就绪前已退出（退出码 {serviceExitCode}），启动失败。\n\n"
+                    + (errorHint is null ? "" : "进程输出首条异常线索：\n  " + errorHint + "\n\n")
+                    + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
+                _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n"
+                    + tailText + "\n\n完整日志：" + logPath,
+            };
     }
 
     /// <summary>
@@ -656,12 +678,16 @@ public static class ShellLogic
         }
 
         /// <summary>插件归因子集（2026-08-25 事故回归）：BootErrorMarkers 中指向"模块/插件加载失败"
-        /// 的标记。命中这些的服务端崩溃应归因为插件嫌疑（路由安全模式），而非通用环境错误。</summary>
+        /// 的标记。命中这些的服务端崩溃应归因为插件嫌疑（路由安全模式），而非通用环境错误。
+        /// 后两条来自 2026-09-20 真机现场：dsh 在 prepareProfile 阶段就拒绝坏 bundle，
+        /// 抛的是 `profile bundle "x" declares no dsh.bundle in its package.json`——
+        /// 只有 MODULE_NOT_FOUND 一族会漏掉它（我先前就是照猜写的夹具，被真机当场纠正）。</summary>
         internal static readonly string[] PluginInvolvedMarkers =
         {
             "plugin load failed", "plugin fatal",
             "ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND",
             "Cannot find module",
+            "profile bundle", "declares no dsh.bundle",
         };
 
         /// <summary>
@@ -1570,13 +1596,23 @@ public static class ShellLogic
 
         /// <summary>
         /// 关窗/托盘退出时**是否停止 dsh 服务**决策（矩阵 M1）：
-        /// - FollowWindow 且服务由本壳管理（本次拉起**或**接管了上次残留）且非外部托管 → true；
-        /// - AlwaysOn → false；Tray → false；external 托管 → 恒 false。
+        /// - 前提恒为"服务归本壳管且非外部托管"：shellManaged && !externallyManaged；
+        /// - FollowWindow：关窗即停；
+        /// - Tray：**只有托盘菜单"退出"才停**（trayExitRequested）——关窗只是隐藏到托盘，
+        ///   服务必须继续活着，否则该模式毫无意义；托盘"退出"承诺的是"停服务并退出"
+        ///   （见 <see cref="ServiceLifetime.Tray"/> 的注释；真机 T9 实测曾经违背这条承诺）；
+        /// - AlwaysOn：恒不停（"常驻"就是该模式的全部语义）；external 托管 → 恒不停。
         /// 关键语义："接管即负责"——TryAdoptOrphanService 成功接管后 shellManaged=true，
         /// 关窗必须停掉被接管的服务，否则 node 常驻。
         /// </summary>
-        internal static bool ShouldStopServiceOnClose(ServiceLifetime mode, bool externallyManaged, bool shellManaged)
-            => mode == ServiceLifetime.FollowWindow && shellManaged && !externallyManaged;
+        internal static bool ShouldStopServiceOnClose(ServiceLifetime mode, bool externallyManaged,
+            bool shellManaged, bool trayExitRequested)
+            => shellManaged && !externallyManaged && mode switch
+            {
+                ServiceLifetime.FollowWindow => true,
+                ServiceLifetime.Tray => trayExitRequested,
+                _ => false,
+            };
 
         /// <summary>
         /// [issue #28-3 伪重启修复] 启动时端口已被**本壳上次会话残留的服务**占用时的决策：
@@ -1790,16 +1826,20 @@ public static class ShellLogic
         /// <param name="launcherShouldNotify">launcher 安全更新是否该提示（由
         ///   <see cref="LauncherUpdateNoticePolicy.ShouldNotifyLauncherSecurity"/> 判定，
         ///   含"本地版本未知则静默"这条）。</param>
-        /// <param name="versionNewer">latest 与 local 的比较结果（&gt;0 表示有更新）；
-        ///   local 缺失时调用方传 &gt;0 表示"未知也提示"。
-        /// <param name="latestVsSkipped">latest 与用户已跳过版本的比较结果；无跳过记录传负数。</param>
-        /// <param name="pendingVsLatest">pending 与 latest 的比较结果，用于"已暂存同版本不再弹"。</param>
+        /// <param name="skippedVersion">用户此前拒绝过的 dsh 版本；null/空 = **从未跳过任何版本**。
+        ///
+        /// 【为什么入参是版本串，不再是三个比较结果 int】Phase 4 抽函数时把比较挪到调用方、
+        /// 用 int 传结论，并把"无跳过记录"编码成 -1——而本函数的判据是 `latestVsSkipped &lt;= 0`
+        /// 即静默。哨兵与判据撞车的后果：**从没拒绝过更新的普通用户，从此再也收不到 dsh 更新
+        /// 提示**（原内联实现是 `skipped is not null &amp;&amp; cmp(latest, skipped) &lt;= 0`，空值
+        /// 有独立守卫）。2026-09-20 真机修"假信号绕过本函数"时暴露：沙盒里根本没有
+        /// skipped-update.json，日志却写着 `update notice suppressed: skipped-by-user`。
+        /// 现在比较在本函数内做，"没有记录"这件事无法被误编码成一个判决。
         /// </param>
         public static Outcome Decide(
             string? pendingVersion,
             bool launcherShouldNotify, string? launcherVersion, string? launcherLocalVersion,
-            string? latest, string? local, int versionNewer,
-            bool alreadyStagedThisSession, int latestVsSkipped, int pendingVsLatest)
+            string? latest, string? local, bool alreadyStagedThisSession, string? skippedVersion)
         {
             // 1) 已下载待应用：先记一笔（原实现是立刻 BeginInvoke 提示，然后继续往下查）
             var pending = string.IsNullOrWhiteSpace(pendingVersion) ? null : pendingVersion;
@@ -1810,14 +1850,18 @@ public static class ShellLogic
 
             // 3) dsh 有没有新版
             if (string.IsNullOrWhiteSpace(latest)) return new Outcome(pending, null, null, null, null, "no-latest");
-            if (versionNewer <= 0) return new Outcome(pending, null, null, null, local, "up-to-date");
+            // 本地版本不可判时按"有更新"处理（原实现即如此：宁可提示一次，不可永远沉默）
+            var newer = string.IsNullOrWhiteSpace(local) ? 1 : VersionPolicy.CompareVersions(latest, local);
+            if (newer <= 0) return new Outcome(pending, null, null, null, local, "up-to-date");
 
             // 4) 三条去重跳过（顺序与原实现一致：pending 覆盖 → 本会话已下载 → 用户跳过该版本）
-            if (pending is not null && pendingVsLatest >= 0)
+            if (pending is not null && VersionPolicy.CompareVersions(pending, latest) >= 0)
                 return new Outcome(pending, null, null, null, local, "already-pending");
             if (alreadyStagedThisSession)
                 return new Outcome(pending, null, null, null, local, "already-staged-session");
-            if (latestVsSkipped <= 0)
+            // 只有**确实存在**跳过记录、且该记录 >= latest 时才静默；无记录一律提示
+            if (!string.IsNullOrWhiteSpace(skippedVersion)
+                && VersionPolicy.CompareVersions(latest, skippedVersion) <= 0)
                 return new Outcome(pending, null, null, null, local, "skipped-by-user");
 
             return new Outcome(pending, null, null, latest, local, null);
@@ -2567,6 +2611,131 @@ public static class ShellLogic
     }
 
     /// <summary>
+    /// 启动失败后的"要不要建议安全模式"判定（真机 T14 补的缺口）。
+    ///
+    /// 【为什么需要】安全模式此前只有两条入口：运行期进程退出 (E2007) 与页面插件致命消息
+    /// (E1008)。而坏插件最常见的形态是**在就绪前**就把 node 打死（profile 解析不了某个
+    /// bundle → prepareProfile 抛 → exit 1），这条路径落到 E2010 文案后就没有下一步了——
+    /// 明明日志里有模块解析失败、profile 里也确实有第三方 bundle，用户却拿不到"禁用插件试试"
+    /// 这个选项。
+    ///
+    /// 【为什么必须三条同时成立】安全模式的唯一手段是禁用第三方插件，所以：
+    /// ① 只认"进程自己死了"这两种裁决（service-exited / logerror）。timeout 与 canceled
+    ///    不是崩溃，把用户支去动插件是误导；
+    /// ② 日志尾部必须命中模块/插件加载签名（复用 <see cref="BootGuard.LogEvidenceIndicatesPlugin"/>，
+    ///    与运行期归因**同一个标记表**，不另起一套）；
+    /// ③ profile 必须真的声明了第三方 bundle——没东西可禁用时问也是噪音。
+    /// 任一不成立就维持原 E2010 文案。日志窗口截到只剩堆栈帧、报错首行丢失时**不猜**（返回 false）。
+    /// </summary>
+    public static class StartupFailureRecoveryPolicy
+    {
+        /// <summary>只在**服务自己吐的行**上找插件签名（统一日志里混排的壳 JSON 行、诊断文案
+        /// 一律不参与）——与运行期归因同一条纪律，否则壳把错误文本回写进日志时会自证触发。</summary>
+        public static string ServiceLinesOnly(string? logTail)
+        {
+            if (string.IsNullOrWhiteSpace(logTail)) return "";
+            return string.Join("\n", logTail.Split('\n')
+                .Where(BootGuard.IsServicePipedLogLine));
+        }
+
+        public static bool ShouldOfferSafeMode(string waitResult, string? logTail,
+            bool thirdPartyBundleDeclared)
+            => thirdPartyBundleDeclared
+               && (waitResult == ServiceReadiness.ServiceExitedVerdict || waitResult == "logerror")
+               && BootGuard.LogEvidenceIndicatesPlugin(ServiceLinesOnly(logTail));
+
+        /// <summary>询问正文（组合根只负责弹窗，文案归这里：改措辞=改判据同源的一处，不必碰组合根）。
+        /// 【2026-09-20 真机纠正】原文写着"选择是后**关闭本提示，重新打开 dsh-launcher**"——把重开
+        /// 这一步丢给用户手动做，实测就是"点了是、又弹一个回执、然后界面再也不起来"。现在承诺的是
+        /// "立即以安全模式重新启动"，组合根照这句话做（答是 → 就地重跑启动流水线）。</summary>
+        public const string AskBody =
+            "是否立即以安全模式重新启动（禁用第三方插件，仅保留 dsh 核心功能）？\n"
+            + "选\"是\"会马上重启一次启动流程，不会修改你的任何配置文件；"
+            + "重启后屏幕上会有一张不自动收起的通知卡，点它随时退出安全模式。";
+    }
+
+    /// <summary>
+    /// 标题栏文字的分段（纯函数）。
+    ///
+    /// 【为什么要分段】状态标记"（安全模式）/（正在进入安全模式…）/（正在退出安全模式…）"要
+    /// 单独着色（红）并单独接受点击：用户把右下角通知卡用 × 关掉之后，标题栏这个标记是**唯一**
+    /// 剩下的退出入口——没有它，就只能手动重启再进一次安全模式再关一次卡。
+    /// 【规则】第一个 '（' 之前是主体；其后每个配对的 '（…）' 各成一段；括号不配对时剩余文字
+    /// 整体作为一段（绝不吞字）。只有含"安全模式"的段落算标记——"（有更新）"一类不参与，
+    /// 免得把"整条标题都可点"这种含糊承诺做进 UI。
+    /// </summary>
+    public static class TitleBarText
+    {
+        public readonly record struct Segment(string Text, bool SafeModeMarker);
+
+        public static bool IsSafeModeMarker(string text)
+            => text.Contains("安全模式", StringComparison.Ordinal);
+
+        public static IReadOnlyList<Segment> Segments(string? title)
+        {
+            var list = new List<Segment>();
+            var s = title ?? "";
+            var first = s.IndexOf('（');
+            if (first < 0)
+            {
+                if (s.Length > 0) list.Add(new Segment(s, false));
+                return list;
+            }
+            if (first > 0) list.Add(new Segment(s[..first], false));
+            var i = first;
+            while (i < s.Length)
+            {
+                var close = s.IndexOf('）', i);
+                if (close < 0)
+                {
+                    var rest = s[i..];
+                    list.Add(new Segment(rest, IsSafeModeMarker(rest)));
+                    break;
+                }
+                var seg = s[i..(close + 1)];
+                list.Add(new Segment(seg, IsSafeModeMarker(seg)));
+                i = close + 1;
+            }
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// 壳自绘的**等待态页面**（WebView2 <c>NavigateToString</c> 的入参）。
+    ///
+    /// 【为什么需要它】真机 2026-09-20 实测：点"退出安全模式"到服务以正常配置重新可用之间约
+    /// 25 秒（停服 3s + 拉起 + 插件装载 9s + 等新 token + 导航 + 页面自检），这期间主窗一直挂着
+    /// **已经断连的旧页面**，用户两次把它读成"点了没反应"。窗口不能关（驻留模式下关窗会连带停掉
+    /// 刚重启好的服务，等于把"再点一次启动器"丢回给用户），所以把这段时间变成可见的等待态。
+    ///
+    /// 【安全边界】两串文字都会进 HTML，一律转义；页面不引任何外部资源、不含脚本、不含 token，
+    /// 只说"正在发生什么"。纯函数 → 转义规则可契约测试（转义漏了就是 XSS）。
+    /// </summary>
+    public static class WaitingPage
+    {
+        /// <summary>HTML 文本节点转义：&lt; &gt; &amp; " ' 全部处理（正文里出现引号是常态）。</summary>
+        public static string Escape(string? text) => string.IsNullOrEmpty(text)
+            ? ""
+            : text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+                  .Replace("\"", "&quot;").Replace("'", "&#39;");
+
+        public static string Html(string headline, string detail)
+            => "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" + Escape(headline) + "</title>"
+               + "<style>html,body{height:100%;margin:0}"
+               + "body{display:flex;align-items:center;justify-content:center;background:#FCFCFD;"
+               + "font-family:'Noto Sans SC',DengXian,'Microsoft YaHei UI',sans-serif;color:#374151}"
+               + ".box{max-width:34em;text-align:center}"
+               + "h1{font-size:1.15em;font-weight:700;margin:0 0 .6em;color:#111827}"
+               + "p{font-size:.95em;margin:0;line-height:1.6}"
+               + ".bar{width:6em;height:3px;margin:1.4em auto 0;background:#E5E7EB;overflow:hidden;position:relative}"
+               + ".bar::after{content:'';position:absolute;width:40%;height:100%;background:#2563EB;"
+               + "animation:dshslide 1.2s linear infinite}"
+               + "@keyframes dshslide{from{left:-40%}to{left:100%}}</style></head>"
+               + "<body><div class=\"box\"><h1>" + Escape(headline) + "</h1><p>" + Escape(detail) + "</p>"
+               + "<div class=\"bar\"></div></div></body></html>";
+    }
+
+    /// <summary>
     /// DPI → 缩放系数的**唯一**换算口（臃肿审计 Phase 5 · D8）。
     ///
     /// 【为什么需要它】"deviceDpi ≤ 0 当 96"与"系数钳在 [0.5, 8]"这两条安全不变量，此前抄了
@@ -2617,18 +2786,24 @@ public static class ShellLogic
         public const int DesignPadding = 16;
         public const int DesignGap = 8;
         public const int DesignActionHeight = 30;
-        public const int DesignCornerRadius = 8;
         public const int DesignScreenMargin = 12;
         public const int DesignTitleEmPx = 16;
         public const int DesignBodyEmPx = 14;
         public const int DesignCloseSize = 24;
         /// <summary>左侧强调色条宽度：卡片此前只有 1.24:1 的边框，与浅色页面/桌面几乎无图地
-        /// 分离（实测 #E5E7EB/白 = 1.24:1），"不显眼"的主因在此。色条同时承载严重级别。</summary>
+        /// 分离（实测 #E5E7EB/白 = 1.24:1），"不显眼"的主因在此。色条同时承载严重级别。
+        /// 它**撑满全高并贴着窗口左边缘**（见 <see cref="Place"/>）：圆角时代它上下两头被
+        /// Region 切掉，视觉上就是"色条没对齐"。</summary>
         public const int DesignAccentWidth = 5;
 
+        /// <summary>几何输入。<b>没有 CornerRadius 字段是刻意的</b>：卡片是直角矩形（用户
+        /// 2026-09-20 反馈圆角难看），而圆角要靠 <c>Region = new Region(GraphicsPath)</c> 裁窗口，
+        /// 一并带来两个当时没人归因到的毛病——① 左侧色条的上下角被裁掉（"色条没对齐"），
+        /// ② 抗锯齿边缘压在 1px 边框上，左缘出现一条灰白线。直角窗口不需要 Region，
+        /// 所以这里不留"以后可以调圆角"的旋钮：要圆角就重新设计这两处，别顺手把 Region 加回来。</summary>
         public readonly record struct Geometry(
             int TextWidth, int Width, int Padding, int Gap, int ActionHeight,
-            int CornerRadius, int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize,
+            int ScreenMargin, int TitleEmPx, int BodyEmPx, int CloseSize,
             int AccentWidth);
 
         /// <summary>
@@ -2650,7 +2825,6 @@ public static class ShellLogic
                 Padding: padding,
                 Gap: Px(DesignGap),
                 ActionHeight: Px(DesignActionHeight),
-                CornerRadius: Px(DesignCornerRadius),
                 ScreenMargin: Px(DesignScreenMargin),
                 TitleEmPx: Px(DesignTitleEmPx),
                 BodyEmPx: Px(DesignBodyEmPx),
@@ -2698,6 +2872,26 @@ public static class ShellLogic
             => (
                 Math.Max(workArea.Left + g.ScreenMargin, workArea.Right - width - g.ScreenMargin),
                 Math.Max(workArea.Top + g.ScreenMargin, workArea.Bottom - height - g.ScreenMargin));
+
+        /// <summary>卡片上一次鼠标按下的三种去向。</summary>
+        public enum HitTarget { None, Close, Action }
+
+        /// <summary>
+        /// 命中判定：<b>只有 × 和"点击此处"那一行可点</b>，其余区域一律不响应。
+        ///
+        /// 【真机 2026-09-20 用户反馈】旧实现把整张卡当动作热区（"老通知点整卡"的语义），
+        /// 于是想复制正文、想关掉、想点别处，都会触发"退出安全模式并重启 / 重启应用"这种
+        /// 带进程副作用的动作；反过来点到 × 时只有关闭、动作不执行，日志里一个字都不留，
+        /// 用户的体感就是"我点了卡片但什么都没发生"。现在：动作只在动作行内生效，
+        /// 空白处的点击由调用方留一条 Info（可归因），× 仍然只关闭。
+        /// × 先判：两者按 <see cref="Place"/> 的排布不重叠，重叠时也必须以"关闭"为准。
+        /// </summary>
+        public static HitTarget HitTest(Placement p, int x, int y)
+        {
+            if (p.CloseRect.Contains(x, y)) return HitTarget.Close;
+            if (!p.ActionRect.IsEmpty && p.ActionRect.Contains(x, y)) return HitTarget.Action;
+            return HitTarget.None;
+        }
     }
 
     /// <summary>通知级别：卡片靠它选强调色条与提示音（不显眼的主因之一是"和普通文本一样"）。</summary>

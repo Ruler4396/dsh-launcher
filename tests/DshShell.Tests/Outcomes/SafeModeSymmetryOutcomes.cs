@@ -138,4 +138,35 @@ public class SafeModeSymmetryOutcomes : IDisposable
         Assert.False(ShellLogic.SafeProfileCleanupPolicy.ShouldDelete(false, onlyArtifacts, manifestUnchanged));
         Assert.True(File.Exists(builder.SafeProfilePackageJson));
     }
+
+    /// <summary>
+    /// [真机 T14 缺口修复配套] 启动失败时用户答"是"之后，磁盘上必须同时出现两样东西：
+    /// 隔离 profile 与粘滞标志。这条事务此前长在组合根里（一个 22 行的 static 方法），
+    /// 顺序对不对、失败时留没留半吊子状态都测不到；搬到 Domain 后第一次可测。
+    /// </summary>
+    [Fact]
+    public void Outcome_ArmNextLaunch_BuildSucceeds_ProfileAndStickyFlagBothOnDisk()
+    {
+        var builder = new SafeProfileBuilder(_dshHome);
+        Assert.True(SafeModeLaunchPolicy.ArmNextLaunch(builder, StateOnDisk()));
+        Assert.True(File.Exists(builder.SafeProfilePackageJson));
+        var reloaded = StateOnDisk();   // 重新读盘：粘滞态是物理事实，不是测试构造
+        Assert.True(reloaded.IsActive);
+        Assert.Equal(SafeProfileTier.Tier1KeepDeepSeekCore, reloaded.Tier);
+    }
+
+    /// <summary>
+    /// 建不出 profile 时**绝不**置标志——否则用户重开只会再撞一次失败（标志把自己锁死）。
+    /// 故障注入用真实文件系统：profile 目录位被一个同名文件占住，CreateDirectory 直接抛。
+    /// </summary>
+    [Fact]
+    public void Outcome_ArmNextLaunch_BuildFails_StickyFlagStaysInactive()
+    {
+        var builder = new SafeProfileBuilder(_dshHome);
+        Directory.CreateDirectory(Path.GetDirectoryName(builder.SafeProfileDir)!);
+        File.WriteAllText(builder.SafeProfileDir, "这个位置被占了");
+
+        Assert.False(SafeModeLaunchPolicy.ArmNextLaunch(builder, StateOnDisk()));
+        Assert.False(StateOnDisk().IsActive);
+    }
 }

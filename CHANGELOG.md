@@ -10,8 +10,8 @@
 约 87% 又被吸了回去。审计结论：根因不是有人削弱门禁，而是"组合根只做装配"这条铁律**只有散文、
 没有机器检查**（`test.ps1` 历史上从来没有过任何文件行数断言）。纯决策早就沉到 `ShellLogic`，
 **漏下去的是事务**。本轮四件事：
-
 1. **闸门**：`scripts/test.ps1` 新增 13 条只降不升的棘轮与硬闸（G1–G13：组合根代码行数、单方法
+
    长度、下层不得回调组合根、Manager 互不引用、静态流程字段冻结、空 catch 上限、CHANGELOG 结构、
    文档↔代码一致性、已搬迁事务符号不得回流、DPI 换算唯一实现、taskkill 启动点唯一、进程采集唯一、
    npm 包名唯一真相源）。每条都做过反向验证——注入违规必须变红；测量器自带自检断言，防止"坏掉的
@@ -69,6 +69,28 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
 
 ### 修复
 
+- **托盘驻留模式下"退出"不停服务，node 常驻占端口（真机 T9 实测）**：真点托盘"退出"后
+  `host exited = True; service port 9362 closed = False`。根因：`ShouldStopServiceOnClose` 把 `Tray`
+  一律判 `false`，而 `ServiceLifetime.Tray` 的注释写的恰是"托盘'退出'才停服务"——**散文与实现相反**，
+  且 `trayExitRequested` 根本没进决策签名。修复：决策改为 `shellManaged && !externallyManaged &&
+  (FollowWindow || (Tray && trayExitRequested))`，组合根实传该实参并加闸锁定，契约矩阵补 9 例。
+- **双击标题栏从不最大化（真机 T12 实测，单屏 96 DPI 同样复现）**：最大化键正常（gaps 0/0/0/0），
+  标题栏双击 3 次全无效。根因：`CustomTitleBar.OnMouseDown` 无条件 `SendMessage(WM_NCLBUTTONDOWN,
+  HTCAPTION)` 进系统拖拽模态循环，吞掉第二次点击 → `OnDoubleClick` 是**死代码**。修复：改拖拽阈值语义
+  （离开半幅 `SystemInformation.DragSize/2` 才交给系统），判定下沉 `ShouldStartCaptionDrag` 并加闸。
+- **跨屏/改倍率后窗口物理尺寸不跟随（真机 T11 实测）**：主窗从 96 DPI 拖到 168 DPI(175%) 副屏后仍是
+  1280x840，而标题栏已长到 56px——可用区被静默压掉 43%。根因：`1280 * scale` 只在启动时算过一次，
+  运行中 `DpiChanged` 只重排客户区，且这段几何在组合根被主窗/弹窗各抄一份。修复：新增
+  `WindowGeometry.RescaleWindowForDpi`（等比缩放 + 夹回目标屏 rcWork；退化输入原样返回，绝不搬窗），
+  几何重算收进 `DshShellForm.OnDpiChanged` 单一所有者；顺序必须**先取旧矩形、再赋 MinimumSize**
+  （反序会把新下限当成放大输入），组合根两处删除并加闸。
+- **更新提示链两处缺陷（2026-09-20 用户截图指出"检测到 dsh 0.1.5-rc.2（当前 0.1.5-rc.2）"）**：
+  ① `DSH_TEST_UPDATE_SIGNAL` 的 dsh 分支**直接 return 通知结论**，绕过"已最新不提示"这道门——注释里
+  "下游结论与真实信号同源"当时是假的；现在假信号只替换"远端版本"这一个输入，裁决统一走 `Decide`。
+  ② 修①时暴露更严重的一处：Phase 4 抽函数把"用户**从没跳过**更新"编码成比较结果 `-1`，而判据是
+  `<= 0` 即静默 → **所有没手动跳过过的用户从此收不到任何 dsh 更新提示**（沙盒里没有
+  skipped-update.json，日志却写着 `skipped-by-user`；原内联的 `skipped is not null` 守卫抽函数时丢了）。
+  现在裁决收版本串、自己比较，签名闸禁 int 结论入参（回归测试按旧哨兵语义红 5 例后转绿）。
 - **点击标题栏版本徽标导致启动器闪退（issue #28-2，0xc0000005）**：用户报告"点击左上角版本号
   会卡死无法关闭然后闪退"。事件日志实证（Application Error 1000 + .NET Runtime 1026，异常码
   `0xc0000005`、故障模块 `coreclr.dll`）两条托管栈均以 `ImmSetOpenStatus` 结尾，且都经过
@@ -111,7 +133,6 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
   本壳 PID 账本内 × 驻留模式要求服务跟随壳），命中即就地清理并按正常链路重新拉起；
   账本外（用户自己在终端 `dsh web` 起的）与 AlwaysOn（"秒进"是设计意图）一律维持既有
   "健康服务不杀也不动"语义；清理失败则保底沿用旧服务，绝不把可用界面变成启不来。
-
 - **装完插件点 DSH 内置"重启"→ 插件直接消失（issue #28 复测第 5 条，重大）**：报告人复测
   确认伪重启已修，但改用 DSH 页面自带的重启后**新装插件凭空消失**，且界面上没有任何解释。
   三处根因一并修复：
@@ -178,26 +199,21 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
   测试：契约（线性缩放 + 控件互不越界 + 边距一致）+ `--ui-selftest` 第二遍实测"文字墨迹 ≤ 控件框"
   （高分屏真机变红）+ E2E 把 `>=60x20` 这条抄自缺陷常量的同义反复断言改成**派生不变量**
   （按钮尺寸/位置与窗口矩形成比例）。
-
 - **按点取显示器 DPI 的采样器取的是"物理角 DPI"，不是有效 DPI（`Win32/MonitorDpi`，影响所有自绘窗口）**：
-  排查"通知卡片还是不够显眼"时实测发现——本机 1920×1080 @100%（有效 DPI 96）上
-  `MonitorDpi.ForPoint` 恒返回 **89**，卡片按 s=0.93 整体缩一档（设计宽 445px → 实际 413px）。
-  根因是 shcore `MONITOR_DPI_TYPE` 里 **`MDT_EFFECTIVE_DPI = 0`**，而代码传的 **`1` 是
-  `MDT_ANGULAR_DPI`**——面板的物理角 DPI。偏差取决于屏幕尺寸（24" 1080p ≈ 89、27" ≈ 81），
-  换一台机器就换一档，100% 缩放下肉眼完全看不出，所以它躲过了 #28-3 那轮高 DPI 修复和全部截图对照。
-  受影响面 = 所有经 `ForPoint` 取样的窗口：通知卡片 + 托盘右键菜单（#28-3 的"按光标所在屏缩放"
-  修复被这一档悄悄吃掉了一半）。修复：常量改 0 并在注释里写清三个枚举值；
-  回归 `Regression_MonitorDpiAngular.RealOs` 两路——① 反射钉死常量必须等于 0（任意机器/CI 都有效，
-  因为这是与 SDK 字面值对齐的问题）；② 真机交叉核对 `ForPoint(显示器中心)` 必须等于同一块屏的
-  `GetDpiForMonitor(MDT_EFFECTIVE)`，并在"物理 DPI 恰等于有效 DPI"的机器上如实记 NOTE 说明该断言
-  在此无区分度（不给假绿）。另：`CustomTitleBar` 启动脉冲分支每帧 `new Font(...)` 不释放
-  （~30fps → 每秒约 30 个 GDI 句柄），改 `using`。
-  同轮顺带把通知卡片的**定位来源**也换成物理像素：原先用 `Screen.FromControl(owner).WorkingArea`
-  喂 `PlaceAtBottomRight`，而 `Form.Location` 是物理像素——本仓库既有不变式（见
-  `Win32/DisplayMetricsProvider` 注释）明确二者不可混用，125%/150% 屏上卡片会贴不到右下角或
-  算错让开任务栏的高度（100% 下两者相等，所以看不出）。现改经
-  `Win32DisplayMetricsProvider.GetMonitorMetrics(owner.Handle)` 一次取齐"该监视器的物理工作区 +
-  该窗口 DPI"，尺寸与定位**同源**；取不到时回退逻辑工作区 + `DeviceDpi` 并 Warn。
+  排查"通知卡片还是不够显眼"时实测：本机 1920×1080 @100%（有效 DPI 96）上 `MonitorDpi.ForPoint` 恒返回
+  **89**，卡片按 s=0.93 缩一档（设计宽 445px → 实际 413px）。根因是 shcore `MONITOR_DPI_TYPE` 里
+  **`MDT_EFFECTIVE_DPI = 0`** 而代码传的 **`1` 是 `MDT_ANGULAR_DPI`**（面板物理角 DPI）；偏差随屏幕尺寸变
+  （24" 1080p ≈ 89、27" ≈ 81），换机器就换档，100% 下肉眼看不出，所以它躲过了 #28-3 那轮修复和全部截图
+  对照。受影响面 = 所有经 `ForPoint` 取样的窗口：卡片 + 托盘右键菜单（#28-3 的"按光标所在屏缩放"被这一
+  档悄悄吃掉一半）。修复：常量改 0 并在注释里写清三个枚举值；回归 `Regression_MonitorDpiAngular.RealOs`
+  两路——① 反射钉死常量等于 0（任意机器/CI 都有效，这是与 SDK 字面值对齐的问题）；② 真机交叉核对
+  `ForPoint(显示器中心)` 等于同屏 `GetDpiForMonitor(MDT_EFFECTIVE)`，并在"物理 DPI 恰等于有效 DPI"的机器上
+  如实记 NOTE 说明该断言在此无区分度（不给假绿）。另：`CustomTitleBar` 启动脉冲分支每帧 `new Font(...)`
+  不释放（~30fps → 约 30 个 GDI 句柄/秒），改 `using`。同轮把卡片的**定位来源**也换成物理像素：原先喂
+  `PlaceAtBottomRight` 的是 `Screen.FromControl(owner).WorkingArea`（逻辑）而 `Form.Location` 是物理像素——
+  仓库既有不变式（见 `Win32/DisplayMetricsProvider`）禁止混用，125%/150% 屏上卡片贴不到右下角或算错让开
+  任务栏的高度（100% 下两者相等所以看不出）；现经 `Win32DisplayMetricsProvider.GetMonitorMetrics(handle)`
+  一次取齐"该监视器物理工作区 + 该窗口 DPI"，尺寸与定位**同源**，取不到时回退逻辑工作区 + `DeviceDpi` 并 Warn。
 - **统一自绘窗口的 DPI 几何来源（高分屏 / 倍率变动排查收口）**：上面那起 DPI 取错把注意力引到
   "还有哪些地方不同源"，逐窗口排查后按同一纪律收口（几何只来自纯函数、坐标一律物理像素）：
   - **版本信息窗**（`Windows/VersionInfoDialog.cs`）：全仓最后一个"手工绝对定位 + 硬编码 96dpi
@@ -275,31 +291,26 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
     ④ **鼠标悬停暂停倒计时**、移开按剩余时间续（自动收起与"来不及读/来不及点"的矛盾）；
     级别判定沉淀为纯函数 `ShellLogic.NoticePolicy.UseWarningCue`，几何新增
     `NoticeCardLayout.MeasureWidths`（测量与排版同源，避免"按 A 宽换行、按 B 宽绘制"裁字）。
-  - **第四轮：字号与整卡尺寸放大**（用户仍反馈"不够显眼"）。前三轮改的是对比度/字重/声音，
-    **尺寸**一直没动——13px 标题在 1080p @100% 上和正文同权重。设计基准改为标题 16px / 正文 14px，
-    并同步放大承载它的外框（文字宽 360→400、内边距 14→16、间距 6→8、动作行 26→30、
-    × 命中区 20→24、色条 4→5），避免"只把字撑大、留白不变"挤成高塔。同一台 1080p @100%
-    机器实测：改基准后、修 DPI 前 413×77（被 89 DPI 缩了一档），修完 DPI 后 **445×84**；
-    标题有效字号从 13px 到 16px（相对用户此前看到的约 12px 是 +33%）。
-    新增契约 `Geometry_ProminenceFloorAt96dpi`（字号/× 尺寸/动作行高/文字宽的**下限**，
-    防止后人再缩回去）+ `EmSizes_ScaleOnceWithDpi`（字号也只许乘一次 s，#28-3 的 s² 教训）。
-    `notice displayed` 日志一并带上 `w/h/dpi/textW/pad/gap/accent/em`——高 DPI 的问题只看代码
-    推不出来，本轮就是靠这组一手数据当场抓到 `MonitorDpi` 取错 DPI 的。
-  - **退出安全模式必须真能退出**：`ExitSafeModeRequested` 拆出 `RestartOutOfSafeMode`——
-    粘滞标志在首次点击即清除，重试若仍走原方法会被 `!IsActive` 闸门挡回去只清横幅、
-    服务永远停在安全模式。失败提示**只留一条通道**：把「重试」并进同一个对话框
-    （`RetryCancel`，正文含 E2001/E2004 与"标志已清除，重新打开即恢复"），
-    不再"模态 + 卡片"双弹；E2E/探针模式不弹模态只记日志。
-    另在卡片实际显示处补 `notice displayed: {title}` 留痕（受理 ≠ 显示，排队的要等前一条收起）。
-  - 六个通知点全部改接卡片：安全更新/新版本、下载完成（S2 危险扩展名提示，此前
-    丢弃返回值且无回退、Toast 关闭后就看不见了）、更新待应用、更新已就绪、更新构建失败、
-    安全模式启动提示。其中安全模式那条**自带"点击退出安全模式并重启"动作**——
-    `ExitSafeModeRequested` 原本只挂在 toast 的 `onClick` 上，而标题栏"（安全模式）"
-    只是文字，若通知没有可点动作，用户就没有任何 UI 途径离开降级态。
-  - **安全模式那条通知改为不自动收起（sticky）**：降级态提示是用户**唯一**的退出入口，
-    自动消失等于把入口收走（issue #25 同一类陷阱）。`ShellLogic.NoticePolicy.ResolveExpiryMs`
-    新增 `0 = sticky` 语义（`Timeout.InfiniteTimeSpan` → 不起倒计时），悬停处理整段跳过
-    sticky（否则 `DateTime.MaxValue` 会被算成"还剩很久"，移开鼠标反而装上 120s 倒计时）；
+  - **第四轮：字号与整卡尺寸放大**（用户仍反馈"不够显眼"）。前三轮改的是对比度/字重/声音，**尺寸**一直没
+    动——13px 标题在 1080p @100% 上和正文同权重。基准改为标题 16px / 正文 14px，并同步放大承载它的外框
+    （文字宽 360→400、内边距 14→16、间距 6→8、动作行 26→30、× 命中区 20→24、色条 4→5），避免"只把字
+    撑大、留白不变"挤成高塔。同一台 1080p @100% 实测：改基准后、修 DPI 前 413×77（被 89 DPI 缩一档），
+    修完 DPI 后 **445×84**；标题有效字号 13px→16px（相对用户此前看到的约 12px 是 +33%）。新增契约
+    `Geometry_ProminenceFloorAt96dpi`（字号/× 尺寸/动作行高/文字宽的下限，防后人缩回去）+
+    `EmSizes_ScaleOnceWithDpi`（字号也只许乘一次 s，#28-3 的 s² 教训）；`notice displayed` 一并带上
+    w/h/dpi/textW/pad/gap/accent/em——高 DPI 的问题只看代码推不出来，本轮就靠这组数据抓到 DPI 取错。
+  - **退出安全模式必须真能退出**：`ExitSafeModeRequested` 拆出 `RestartOutOfSafeMode`——粘滞标志在首次
+    点击即清除，重试若仍走原方法会被 `!IsActive` 闸门挡回去只清横幅、服务永远停在安全模式。失败提示
+    **只留一条通道**：把「重试」并进同一个对话框（`RetryCancel`，正文含 E2001/E2004 与"标志已清除，
+    重新打开即恢复"），不再"模态 + 卡片"双弹；E2E/探针模式不弹模态只记日志。另在卡片实际显示处补
+    `notice displayed: {title}` 留痕（受理 ≠ 显示，排队的要等前一条收起）。
+  - 六个通知点全部改接卡片：安全更新/新版本、下载完成（S2 危险扩展名提示，此前丢弃返回值且无回退、
+    Toast 关闭后就看不见了）、更新待应用、更新已就绪、更新构建失败、安全模式启动提示。其中安全模式那条
+    **自带"点击退出安全模式并重启"动作**——`ExitSafeModeRequested` 原本只挂在 toast 的 `onClick` 上，
+    而标题栏"（安全模式）"只是文字，若通知没有可点动作，用户就没有任何 UI 途径离开降级态。
+  - **安全模式那条通知改为不自动收起（sticky）**：降级态提示是用户**唯一**的退出入口，自动消失等于把入口
+    收走（issue #25 同一类陷阱）。`NoticePolicy.ResolveExpiryMs` 新增 `0 = sticky` 语义（不起倒计时），
+    悬停处理整段跳过 sticky（否则 `DateTime.MaxValue` 会被算成"还剩很久"，移开鼠标反而装上 120s 倒计时）；
     用户点 × 视为"这次先不管"，下次启动仍会再告知。
   - **粘滞安全模式启动时界面根本进不去（真机端到端实测发现，同 #28-4 家族）**：
     `safe-mode.json` 说"在安全模式"而 `profiles/.dsh-safe` 实际不在（被清理/被删/升级残留）时，
@@ -310,34 +321,52 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
     ——同一份不对称换了个方向复发。现收口为组合根**单一入口** `Program.EnsureSafeProfileIdentity`
     （启动钩子与重启路径同引用），并加静态门：`SafeModeLaunchPolicy.Decorate` 在 `Program.cs`
     只允许 1 处调用点。取舍写进契约：插件被禁用但界面可用 ≫ 界面起不来且无法退出。
-  - 网页通知（HTML `Notification` API）**不由壳代管**：实测 dsh 本体前端零使用
-    Notification API（`new Notification`/`showNotification`/`requestPermission` 在
-    `@deepseek-ai/dsh/lib` 全 0 命中），第三方插件是否使用无法穷证——不为一条不确定的
-    通路维护第二套呈现。`WebViewPolicy` 的 **Notifications 权限恢复一律放行**：拒权限
-    从来不是这个崩溃的防护手段（崩溃在宿主自己的手写 WinRT 路径上，WebView2 的网页通知
-    由 Chromium 在 `msedgewebview2.exe` 内渲染，与 Edge 同源而 Edge 在崩过的机器上正常），
-    拿它当防护等于白砍插件功能。
+  - 网页通知（HTML `Notification` API）**不由壳代管**：实测 dsh 本体前端零使用 Notification API
+    （`new Notification`/`showNotification`/`requestPermission` 在 `@deepseek-ai/dsh/lib` 全 0 命中），
+    第三方插件是否使用无法穷证——不为一条不确定的通路维护第二套呈现。`WebViewPolicy` 的 Notifications
+    权限**恢复一律放行**：拒权限从来不是这个崩溃的防护手段（崩溃在宿主自己的手写 WinRT 路径上，网页通知
+    由 Chromium 在 `msedgewebview2.exe` 内渲染、与 Edge 同源而 Edge 在崩过的机器上正常），拿它当防护
+    等于白砍插件功能。
   - 新增自检通道 `DSH_TEST_NOTICE_CARD=1`（替代 `DSH_TEST_TOAST`）：启动时真实呈现一张
     卡片并留痕 `notice card self-test: presented=…`，供回归测试锚定"通知确实走通了"。
   - 测试：`Regression_Issue25_WpnToastGuard.RealOs` 的断言从"护栏有没有生效"升级为
-    "**WPN 有没有被触碰**"——真实拉起 DshWeb.exe，先断言 `presented=True`（否则"没加载
-    WPN"会因为什么都没干而空过），再枚举该进程已加载模块断言**其中没有 wpnapps.dll**，
-    并要求宿主存活；另两条无头可跑：扫 `DshWeb.dll` 元数据不含
-    `Windows.UI.Notifications`/`wpnapps`/`CreateToastNotifier`/`ToastNotificationManager`，
-    以及扫源码不含 WPN 成员引用。`scripts/test.ps1` 同步加了这组静态门（含
-    "托盘气泡不得回潮"）。新增 `NoticeCardLayoutContractTests` 钉死 DPI 折算、
-    段间恰好一个 Gap（0 重叠 0 空隙）、× 不被裁掉、越界钳制。
-    `ContractTests` 的 4 个 Toast XML/AUMID 契约随实现删除。
-- **就绪前服务进程退出的盲等（issue #26）**：壳拉起 dsh 服务后若进程在 HTTP 就绪前退出
-  （EADDRINUSE / 引擎内部崩溃 / 入口错误等），此前 PollReadiness 只观测 TCP/HTTP 与启动错误
-  标志词表——退出输出不含词表（如 `EADDRINUSE`）时日志判定盲，只能**盲等完整轮询预算**
-  （180s/360s），用户全程只见"正在等待 dsh 服务就绪…"，最终被误报为"启动超时：首次下载较慢/
-  网络问题"（E2002）而真实原因（`service process exited (code=N)` + 首行输出）就在日志里。
-  修复：`ServiceManager` 静态进程追踪器扩展"已退出"观测（`TrackedServiceExitCodeOrMinusOne`），
-  `PollReadiness` 就绪前观测到进程退出即返回第五态 `"service-exited"` 快速失败；组合根映射
-  新错误码 **E2010**（`MapVerdictErrorCode` 纯函数 + 契约测试），弹窗真实展示退出码、进程输出
-  首条异常线索与日志尾部，清理分支与 timeout/logerror 一致。就绪（TCP+HTTP）优先于退出观测，
-  服务健康时不受影响；追踪器随新进程替换复位，旧会话退出不污染新会话判定。
+    "**WPN 有没有被触碰**"——真实拉起 DshWeb.exe（隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，
+    绝不触碰宿主），先断言 `presented=True`（否则"没加载 WPN"会因为什么都没干而空过），再枚举该进程
+    已加载模块断言**其中没有 wpnapps.dll**，并要求宿主存活满观察窗；
+    另两条无头可跑：扫 `DshWeb.dll` 元数据与源码均不含 WPN 成员/类型引用
+    （`Windows.UI.Notifications`/`wpnapps`/`CreateToastNotifier`/`ToastNotificationManager`）。
+    `scripts/test.ps1` 同步加了这组静态门（含"托盘气泡不得回潮"）；新增
+    `NoticeCardLayoutContractTests` 钉死 DPI 折算、段间恰好一个 Gap（0 重叠 0 空隙）、
+    × 不被裁掉、越界钳制；`ContractTests` 的 4 个 Toast XML/AUMID 契约随实现删除。
+- **坏插件崩在就绪前：入口、后续、错误码三处缺口（真机 T15 + 用户真实 `~/.dsh` 实测）**：profile 里一个
+  resolve 不了的 bundle 让 dsh 在 `prepareProfile` 抛 `declares no dsh.bundle` → exit 1 → 用户只剩一句
+  E2010（安全模式询问只挂在运行期 E2007 / 页面 E1008）。① 三条判据齐备才问一句
+  （`StartupFailureRecoveryPolicy` 11 例契约；标记表补上这条真实消息，我照猜的 `ERR_MODULE_NOT_FOUND`
+  被真机纠正），"建 `.dsh-safe` → 置标志"落 `Domain.SafeModeLaunchPolicy.ArmNextLaunch`（颠倒顺序即红）；
+  ② 答"是"后旧实现只弹一句"重新打开 dsh-launcher"的回执就结束进程——修完没留下走得通的路，现在就地
+  重跑流水线（`StartupStep.RetryInSafeMode`，一次会话只问一次；回执弹窗由静态门禁止）；③ readiness 失败
+  的日志码被写死 E2002 而弹窗按裁决给 E2010，现统一走 `MapVerdictErrorCode`，失败正文下沉为
+  `StartupFailureBody`（7 例契约，含"崩溃裁决不得说'下载慢/网络问题'"）。组合根为①自加的 24 行被棘轮
+  G1 拦红——出路是搬走不是抬基线（2007→2003）。全链细节与三条测量教训见 `SYSTEM_CAUSAL_MAP.md` 落点 10。
+- **通知卡片三处：圆角、强调条没对齐、整卡都是热区（用户实拍 + "我点了但什么都没发生"）**：去掉
+  `Region`/`GraphicsPath` 裁角（它同时切掉左侧强调条的上下两头）；`OnPaint` 原先先画色条**后**画 1px 边框，
+  边框正压在色条那一列——就是"左缘一条白线"，改为先边框后色条；命中判定下沉 `HitTest`，只有 × 与"点击
+  此处"那一行可点、空白处点击留 Info 可归因（旧实现想复制正文就会误触发"退出安全模式并重启"）。真机像素
+  复核（实拍左缘 84 行全为强调色、0 行例外）+ 4 例契约 + 4 条静态闸，三处变异各自验过红。
+- **安全模式进/出的 20 秒空窗没有反馈（用户两次读成"点了没反应"）**：动作触发后主窗仍挂着已断连的
+  旧页面；"点完关窗"在本机走不通——驻留模式下关窗会连带停掉刚重启好的服务（两次实测关窗后 3080
+  归零），等于把"再点一次图标"丢回给用户。现在动作那一刻把标题换成"（正在退出安全模式…）"、主窗
+  导航到壳自绘等待态（HTML 由纯函数 `ShellLogic.WaitingPage` 转义产出），重启完成再导航回真实页；
+  进入侧同样给，拉起失败的出口必须撤回标题。导航原语交回 `WebViewManager`（`NavigateToString` 全仓
+  唯一），组合根反而净降 2 行。全链与测量教训见 `SYSTEM_CAUSAL_MAP.md` 落点 12。
+- **就绪前服务进程退出的盲等（issue #26）**：进程在 HTTP 就绪前退出（EADDRINUSE / 引擎内部崩溃 /
+  入口错误）时，`PollReadiness` 只观测 TCP/HTTP 与启动错误标志词表，输出不含词表即判盲，只能
+  **盲等完整轮询预算**（180s/360s）；用户全程只见"正在等待 dsh 服务就绪…"，最后被误报成"启动超时：
+  首次下载较慢/网络问题"（E2002），而真实原因（`service process exited (code=N)` + 首行输出）就在日志里。
+  修复：追踪器扩展"已退出"观测（`TrackedServiceExitCodeOrMinusOne`），`PollReadiness` 就绪前观测到退出即
+  返回第五态 `"service-exited"` 快速失败（就绪优先、健康服务不受影响；追踪器随新进程复位；清理分支与
+  timeout/logerror 一致）；组合根映射新错误码 **E2010**（`MapVerdictErrorCode` 纯函数 + 契约测试），
+  弹窗真实展示退出码与日志线索。
 
 ### 测试
 
@@ -368,17 +397,10 @@ CI 抖动（同日，推送后）：`realos-test` 在 master 上红一条
 - 新增 `Regression_Issue26_ServiceExitBeforeReady.RealOs`（零 Mock）：真实 node 子进程经
   `ServiceManager.Start` 全链路拉起，输出不含启动错误标志后秒退（code=7），断言 PollReadiness
   经**生产默认退出探针**返回 `service-exited`（修复前返回 timeout 必红）。
-- 新增 `Regression_Issue25_WpnToastGuard.RealOs`（零 Mock）：真实拉起 DshWeb.exe
-  （隔离 DSH_HOME / WebView2 数据 / 外部托管假服务，绝不触碰宿主），断言维度是
-  "**WPN 有没有被触碰**"而非"护栏有没有生效"——先要求 `notice card self-test: presented=True`
-  （通知真的走通，否则"没加载 WPN"会因为什么都没干而空过），再枚举该进程已加载模块断言
-  **没有 wpnapps.dll**，并要求宿主存活满观察窗。
-- 通知通道收口后的新契约面：`NoticeCardLayoutContractTests`（DPI 线性折算 / 未知 DPI 回落 1x /
-  段间恰好一个 Gap / × 不被裁掉 / 右下角定位与非零原点工作区 / 放不下时钳制进工作区）；
+- 通知通道收口后的新契约面：`NoticeCardLayoutContractTests`（DPI 线性折算 / 未知 DPI 回落 1x / 段间恰好
+  一个 Gap / × 不被裁掉 / 右下角定位与非零原点工作区 / 放不下时钳制进工作区）；
   `ShellLogicTests.IsAutoGrantedPermission_MatchesPolicy` 保持单参 `(kind)` 契约并新增
-  `WebNotificationPermission_StaysGranted_Issue25`（防止再拿拒权限当崩溃防护）；
-  `scripts/test.ps1` 增加"WPN 通路不得回潮 + 托盘气泡不得回潮 + NoticeCard 只消费纯函数几何"
-  静态门。原 `ToastPolicy_ShouldUseSystemToast` 与 4 个 Toast XML/AUMID 契约随实现一起删除。
+  `WebNotificationPermission_StaysGranted_Issue25`（防止再拿拒权限当崩溃防护）。
 
 ## [0.4.5] - 2026-09-04
 

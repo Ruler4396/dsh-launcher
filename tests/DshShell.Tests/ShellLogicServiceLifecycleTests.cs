@@ -14,23 +14,41 @@ public class ShellLogicServiceLifecycleTests
     // ---------------- T1: ShouldStopServiceOnClose（矩阵 M1，≥6 例） ----------------
 
     [Theory]
-    [InlineData(2, false, true, true)]   // FollowWindow + 壳管理 + 非外部托管 → 停
-    [InlineData(2, true, true, false)]   // 外部托管 → 恒不停（服务归外部管）
-    [InlineData(2, false, false, false)] // 非壳管理（外部手动起）→ 不停
-    [InlineData(0, false, true, false)]  // AlwaysOn → 不停
-    [InlineData(1, false, true, false)]  // Tray（关窗隐藏）→ 不停
-    [InlineData(0, true, true, false)]   // AlwaysOn + 外部托管 → 不停
-    public void ShouldStopServiceOnClose_Matrix(int modeInt, bool external, bool shellManaged, bool expected)
+    [InlineData(2, false, true, false, true)]   // FollowWindow + 壳管理 + 非外部托管 → 停
+    [InlineData(2, true, true, true, false)]    // 外部托管 → 恒不停（服务归外部管）
+    [InlineData(2, false, false, true, false)]  // 非壳管理（外部手动起）→ 不停
+    [InlineData(0, false, true, false, false)]  // AlwaysOn → 不停
+    [InlineData(0, false, true, true, false)]   // AlwaysOn + 托盘退出 → 仍不停（"常驻"就是该模式的全部语义）
+    [InlineData(1, false, true, false, false)]  // Tray + 只是关窗隐藏 → 不停（服务要继续活着）
+    [InlineData(1, false, true, true, true)]    // Tray + 托盘"退出" → **必须停**（真机实测曾漏掉：node 常驻占端口）
+    [InlineData(1, true, true, true, false)]    // Tray + 托盘退出 + 外部托管 → 不停别人的服务
+    [InlineData(1, false, false, true, false)]  // Tray + 托盘退出 + 非壳管理 → 不停
+    public void ShouldStopServiceOnClose_Matrix(int modeInt, bool external, bool shellManaged,
+        bool trayExitRequested, bool expected)
     {
         var mode = (ShellLogic.ServiceLifetime)modeInt; // ServiceLifetime 为 internal，参数用 int 规避 CS0051
-        Assert.Equal(expected, ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(mode, external, shellManaged));
+        Assert.Equal(expected, ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
+            mode, external, shellManaged, trayExitRequested));
     }
+
+    /// <summary>
+    /// [Regression_TrayExitLeavesServiceRunning] 真机实测（sandbox/issue-verify T9）：
+    /// 托盘驻留模式下真点托盘菜单"退出"后 `host exited = True; service port 9362 closed = False`
+    /// ——壳走了，node 还占着端口，下次启动被判僵尸/误杀。`ServiceLifetime.Tray` 的注释写的
+    /// 就是"托盘'退出'才停服务并退出"，决策函数却把 Tray 一律判 false，语义与实现对不上。
+    /// </summary>
+    [Fact]
+    public void Regression_TrayExitLeavesServiceRunning()
+        => Assert.True(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
+            ShellLogic.ServiceLifetime.Tray, externallyManaged: false,
+            shellManaged: true, trayExitRequested: true));
 
     // 语义回归：接管即负责——TryAdoptOrphanService 成功后 shellManaged=true，跟随窗口关窗必须停
     [Fact]
     public void AdoptedOrphan_FollowWindow_StopsService()
         => Assert.True(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
-            ShellLogic.ServiceLifetime.FollowWindow, externallyManaged: false, shellManaged: true));
+            ShellLogic.ServiceLifetime.FollowWindow, externallyManaged: false,
+            shellManaged: true, trayExitRequested: false));
 
     // ---------------- [issue #28-3] ShouldRestartLeftoverService（伪重启矩阵） ----------------
     // 语义：端口上已是健康服务 + 本壳账本记录过（上次会话异常终止的残留）+ 驻留模式要求服务跟随壳

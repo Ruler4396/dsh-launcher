@@ -16,7 +16,8 @@ namespace DshShell.Tests.Lifecycle;
 public class SafeModeLifecycleTests
 {
     private readonly List<string> _fired = new();
-    private int _deactivations, _stops, _activations;
+    private readonly List<string> _ui = new();
+    private int _deactivations, _stops, _activations, _posts;
     private bool _shuttingDown;
     private bool _ready = true;
     private bool _buildOk = true;
@@ -27,7 +28,8 @@ public class SafeModeLifecycleTests
 
     private SafeModeLifecycle Make()
     {
-        _fired.Clear(); _deactivations = _stops = _activations = 0;
+        _fired.Clear(); _ui.Clear(); _posts = 0;
+        _deactivations = _stops = _activations = 0;
         return new SafeModeLifecycle(new SafeModeLifecycle.Dependencies(
             Trace: _ => { },
             SessionShuttingDown: () => _shuttingDown,
@@ -38,7 +40,7 @@ public class SafeModeLifecycleTests
             SuspendMonitor: () => { },
             StopMonitor: () => _stops++,
             ResumeMonitor: _ => { },
-            StopService: () => { },
+            StopService: () => _ui.Add("stop-service"),
             StartViaIdentity: () => _startOk,
             WaitForFreshToken: () => { },
             IsReady: () => _ready,
@@ -48,10 +50,33 @@ public class SafeModeLifecycleTests
                 _crashAdvancesAfterFirstRead && ++_crashReads > 1
                     ? _crashUtc.AddMinutes(1) : _crashUtc,
             NoteShellRestart: () => { },
-            PostToMainForm: _ => { },
+            PostToMainForm: _ => _posts++,
             NavigateToServiceUrl: () => { },
+            // 等待态由组合根投递到 UI 线程；这里只记录"有没有给、什么时候给"
+            ShowWaitingPage: (headline, _) => _ui.Add("waiting:" + headline),
             Port: 3080,
             TryFireLifecycle: t => { _fired.Add(t.ToString()); return true; }));
+    }
+
+    /// <summary>
+    /// 真机 2026-09-20 用户反馈：停服→重拉这 20 秒里界面挂着已断连的旧页面，被读成"点了没反应"。
+    /// 所以等待态必须**在停服之前**给出（停服之后才有空窗），而不是等重启完成才动。
+    /// </summary>
+    [Fact]
+    public void TryEnter_ShowsWaitingState_BeforeTheServiceIsStopped()
+    {
+        Assert.True(Make().TryEnter(null!, SafeProfileTier.Tier1KeepDeepSeekCore));
+        Assert.Equal(new[] { "waiting:正在进入安全模式…", "stop-service" }, _ui);
+    }
+
+    /// <summary>拉不起服务时，等待态/横幅必须被撤回——绝不能把"正在进入安全模式…"留在一个
+    /// 其实没进安全模式的窗口上（谎报状态是本项目反复踩的那一类缺陷）。</summary>
+    [Fact]
+    public void TryEnter_StartFailure_RestoresVisibility_InsteadOfLeavingTheWaitingBanner()
+    {
+        _startOk = false;
+        Assert.False(Make().TryEnter(null!, SafeProfileTier.Tier1KeepDeepSeekCore));
+        Assert.True(_posts >= 1, $"失败出口未重画可见性（PostToMainForm 调用 {_posts} 次）");
     }
 
     /// <summary>成功进入：登记 Requested → Entered，且绝不 Deactivate（状态必须留在激活）。</summary>

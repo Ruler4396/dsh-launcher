@@ -324,25 +324,40 @@ internal static class Program
         return true;
     }
 
-    /// <summary>Stage 5: SplashForm pipeline + service readiness check + NoUiMode. Returns false on failure/cancel.</summary>
+    /// <summary>Stage 5: SplashForm pipeline + service readiness check + NoUiMode. Returns false if failure/canceled.</summary>
     private static bool EnsureServiceAndRuntime()
+    {
+        // [真机 2026-09-20 用户实环境] 坏插件崩在就绪前时，旧实现答完"是"只弹一句回执就结束进程，
+        // 把"重开启动器"这一步丢给用户手动做——修完没留下走得通的路。现在答"是"就地重跑一次启动
+        // 流水线（粘滞标志已置 → 这次拉起带 .dsh-safe），成功即进主窗并弹可退出的安全模式卡。
+        // 重试只有一次：第二次不再给安全模式询问（allowSafeModeAsk=false），落到原失败文案，
+        // 所以这个循环不可能来回弹。
+        for (var attempt = 0; ; attempt++)
+        {
+            var step = RunStartupPipelineOnce(allowSafeModeAsk: attempt == 0);
+            if (step != StartupStep.RetryInSafeMode) return step == StartupStep.Continue;
+        }
+    }
+
+    /// <summary>启动流水线的三种去向：继续开主窗 / 结束进程 / 已置安全模式需要重跑一次。</summary>
+    private enum StartupStep { Continue, Fail, RetryInSafeMode }
+
+    private static StartupStep RunStartupPipelineOnce(bool allowSafeModeAsk)
     {
         using (var splash = new SplashForm(RunLauncherAppPipelineAsync, visible: !NoUiMode && !ServerManagedExternally))
         {
             Application.Run(splash);
 
             var outcome = splash.Result;
-            if (outcome is null) return false;
+            if (outcome is null) return StartupStep.Fail;
             if (splash.CancelledByUser)
             {
                 Trace("startup canceled by user");
-                return false;
+                return StartupStep.Fail;
             }
             if (!outcome.Ready)
-            {
-                HandleStartupFailure(outcome);
-                return false;
-            }
+                return HandleStartupFailure(outcome, allowSafeModeAsk)
+                    ? StartupStep.RetryInSafeMode : StartupStep.Fail;
             if (outcome.ServiceStartedByShell)
                 RecordServicePid();
         }
@@ -362,10 +377,10 @@ internal static class Program
         if (NoUiMode)
         {
             Trace("no-ui mode: service ready; exiting without window");
-            return false;
+            return StartupStep.Fail;
         }
 
-        return true;
+        return StartupStep.Continue;
     }
 
     /// <summary>
@@ -508,6 +523,9 @@ internal static class Program
         // 点击弹出原生版本信息窗（dsh/启动器当前+最新版本 + 启动器下载地址）。
         form.TitleBar._dshVersion = UpdateChecker.ResolveLocalDshVersion() ?? "";
         form.TitleBar.VersionClick = () => ShowVersionInfoDialog(form);
+        // [2026-09-20 用户要求] 点标题栏红色的"（安全模式）"→ 重新调出右下角退出卡片。
+        // 卡片可以被 × 关掉，关掉之后若没有这个入口，用户只能手动重启一次、等它再弹一次卡才能退出。
+        form.TitleBar.SafeModeMarkerClick = () => AnnounceSafeModeActive(form, explicitRequest: true);
 
         var web = new WebView2
         {
@@ -521,15 +539,9 @@ internal static class Program
         WebViewManager.MainWeb = web;
 
         form.HandleCreated += (_, _) => ApplyWindowShadow(form.Handle);
-        form.DpiChanged += (_, _) =>
-        {
-            var scale = ShellLogic.DpiScale.Of(form.DeviceDpi);
-            form.TitleBar.Rescale(scale);
-            form.LayoutChrome();
-            // 跨到不同倍率的屏（或系统倍率被改）后，最小尺寸必须跟着重算，
-            // 否则窗口会被旧的物理下限卡住（200%→100% 时留下过大的下限）或反过来失守。
-            form.MinimumSize = DshWeb.Win32.WindowGeometry.MinimumWindowSize(form.DeviceDpi);
-        };
+        // DPI 变化的几何重算（字号/最小尺寸/窗口尺寸/客户区布局）整体归 DshShellForm
+        // .OnDpiChanged 一处负责——组合根不再抄第二份，也补上了"跨屏后窗口尺寸要跟着倍率走"
+        // （真机 T11 实测缺口）。
 
         // 托盘图标：由 dsh-launcher-lifetime 插件控制（通过 settings.json 的 serviceLifetime）
         // 壳只读取配置，不硬编码托盘逻辑；通知走壳自绘卡片，不依赖托盘（issue #25 收口）。
@@ -924,6 +936,8 @@ internal static class Program
                 NoteShellRestart: () => RestartCore?.NoteShellRestart(),
                 PostToMainForm: k => { var f = GetMainFormForDialog(); TryPostToMainForm(f, () => k(f)); },
                 NavigateToServiceUrl: PostNavigateToServiceUrl,
+                // 等待态：本类可能在后台线程（安全模式阶梯）请求，ShowWaitingPage 自己投递回 UI 线程
+                ShowWaitingPage: ShowWaitingPage,
                 Port: Target.Port,
                 TryFireLifecycle: t => SessionApp?.TryFire(t) == true));
 
@@ -1208,24 +1222,22 @@ internal static class Program
     /// 把主窗 WebView 导航到当前服务 URL（UI 线程调用）。服务重启/安全模式切换后
     /// 以导航替代 Reload：新进程新 token，Reload 停留的旧地址会 401。web 未建/已关时静默跳过。
     /// </summary>
+    /// <summary>
+    /// 把主窗换成壳自绘的等待态：HTML 由纯函数 <c>ShellLogic.WaitingPage</c> 产出并转义，
+    /// 导航原语在 <c>WebViewManager.ShowWaitingPage</c>（唯一 NavigateToString 点），本方法只做
+    /// "投递到 UI 线程"这一件组合根的事。调用点之后一定有"导航回真实页面"的一步（重启核心负责）。
+    /// </summary>
+    private static void ShowWaitingPage(string headline, string detail)
+    {
+        var html = ShellLogic.WaitingPage.Html(headline, detail);
+        TryPostToMainForm(GetMainFormForDialog(), () => WebViewManager.ShowWaitingPage(html));
+        Trace($"waiting state shown: {headline}");
+    }
     private static void NavigateMainWebToCurrentServiceUrl()
     {
-        var web = WebViewManager.MainWeb;
-        if (web?.CoreWebView2 is null)
-        {
+        Trace($"token follow: navigating main web to {CurrentWebUrl}");
+        if (!WebViewManager.NavigateMainWeb(CurrentWebUrl))
             Trace("token follow: main web unavailable; skip navigation");
-            return;
-        }
-        try
-        {
-            Trace($"token follow: navigating main web to {CurrentWebUrl}");
-            web.CoreWebView2.Navigate(CurrentWebUrl);
-        }
-        catch (Exception ex)
-        {
-            // 预期内竞态（窗体正在关闭）：留痕不阻断
-            Logger.Warn($"navigate to service url failed: {ex.Message}");
-        }
     }
 
     /// <summary>
@@ -1285,13 +1297,12 @@ internal static class Program
     /// 遵守粘滞的 safe-mode.json，因此必须同时告诉用户"插件不在"是安全模式所致、以及怎么退出；
     /// 没有退出通道，对称遵守等于把用户永久困在降级态。
     /// </summary>
-    private static void AnnounceSafeModeActive(DshShellForm form)
+    private static void AnnounceSafeModeActive(DshShellForm form, bool explicitRequest = false)
     {
         SafeModeFlow!.ApplyVisibility(true);
-        // [issue #25 收口] 唯一通知通道，且这条通知**自带退出动作**：标题栏的"（安全模式）"
-        // 只是文字、不可点，若通知没有可点动作，用户就没有任何 UI 途径离开降级态（#28-4 原话：
-        // "没有退出通道，对称遵守等于把用户永久困在降级态"）。安全模式是粘滞的，每次启动都会
-        // 重新告知一次，所以错过一张卡片不等于永久失去入口——不需要再留模态弹窗作为第二条通道。
+        // [issue #25 收口] 唯一通知通道，且这条通知**自带退出动作**。#28-4 的原话是"没有退出通道，
+        // 对称遵守等于把用户永久困在降级态"。2026-09-20 补上第二条：标题栏的红色"（安全模式）"标记
+        // 现在可点，点它重新调出这张卡——用户用 × 关掉卡片之后不再是死路（以前只能重启一次）。
         var presented = Windows.NoticeCard.Present(form, "dsh 已以安全模式启动",
             "第三方插件已临时禁用（上次会话进入过安全模式，本次启动沿用了它）。\n"
             + "提示：在安全模式下安装的插件，退出安全模式后需要重新安装。",
@@ -1300,10 +1311,11 @@ internal static class Program
             Timeout.InfiniteTimeSpan,
             onAction: () => ExitSafeModeRequested(form),
             actionText: "点击此处退出安全模式并重启",
-            kind: ShellLogic.NoticeKind.Urgent);
-        Logger.Info(presented
-            ? "safe-mode notice presented: 第三方插件已临时禁用（点击可退出）"
-            : "safe-mode notice not presented; title bar 安全模式 marker is the only cue");
+            kind: ShellLogic.NoticeKind.Urgent,
+            // 用户主动点标记要来的：不受 60 秒冷却窗限制（屏幕上已有同一条时仍不叠加）
+            explicitRequest: explicitRequest);
+        Logger.Info(presented ? "safe-mode notice presented: 第三方插件已临时禁用（点击可退出）"
+            : "safe-mode notice not presented; the clickable 标题栏（安全模式）标记是备用入口");
     }
 
     /// <summary>[issue #28-4] 用户从通知点击退出安全模式：解粘滞 → 以正常 profile 重启服务 → 撤横幅。
@@ -1329,6 +1341,12 @@ internal static class Program
     /// </summary>
     private static void RestartOutOfSafeMode(DshShellForm form)
     {
+        // 真机 2026-09-20：这段重启实测 20+ 秒，而主窗一直挂着**已经断连的旧页面**，用户两次
+        // 把它读成"点了没反应"（原话："没反应，窗口消失了，没有重启启动器"）。窗口不能关——
+        // 驻留模式下关窗会连带停掉刚重启好的服务，等于把"再点一次启动器"丢回给用户。
+        // 所以点下动作的那一刻就换标题 + 换等待态页面，重启完成后由重启核心导航回真实页面。
+        SafeModeFlow?.ApplyTitle(Lifecycle.SafeModeLifecycle.ExitingSafeModeTitle);
+        ShowWaitingPage("正在退出安全模式…", "正在停用当前服务，并以你的正常配置（含第三方插件）重新拉起 dsh。请稍候，无需重复点击。");
         _ = Task.Run(async () =>
         {
             var outcome = await RestartCore!.RestartAsync("exit-safe-mode");
@@ -1818,8 +1836,10 @@ internal static class Program
         });
     }
 
-    /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。</summary>
-    private static void HandleStartupFailure(SplashForm.Outcome outcome)
+    /// <summary>启动失败/取消的统一处理（v0.4.1 从 Main 内联块提取，逻辑与原 v0.3.x 一致）。
+    /// 返回 true = 已就地武装安全模式（隔离 profile 建好、粘滞标志已置），调用方应当**重跑一次
+    /// 启动流水线**；返回 false = 已把失败如实展示给用户，流程收尾。</summary>
+    private static bool HandleStartupFailure(SplashForm.Outcome outcome, bool allowSafeModeAsk)
     {
         var logPath = outcome.LogPath;
         // v0.3.0：启动失败时清理"本次拉起但未就绪"的半启动服务（避免残留占端口）
@@ -1860,45 +1880,53 @@ internal static class Program
             if (mapped is not null)
             {
                 ShowError(mapped.Value.Code, mapped.Value.Detail, level: Logger.Level.Error);
-                return;
+                return false;
             }
             ShowError(outcome.ErrorCode, outcome.ErrorDetail ?? "启动失败。",
                 level: outcome.ErrorCode == ErrorCodes.E1002 ? Logger.Level.Info : Logger.Level.Error);
-            return;
+            return false;
         }
 
         var waitResult = outcome.WaitResult ?? "timeout";
         var tail = ShellLogic.ReadLogTail(logPath, 12);
         var tailText = tail.Count == 0 ? "（日志为空或不可读）" : string.Join("\n", tail.Select(l => "  " + l));
+        // 归因用的宽窗口（120 行）：node 的报错首行常在 12 行窗口之外，只剩堆栈帧就没法判插件签名
+        var wideTail = string.Join("\n", ShellLogic.ReadLogTail(logPath, 120));
         // 【issue #24 配套】logerror 根因常在崩溃栈头部（Node uncaught 转储），尾部 12 行只见其尾：
         // 弹窗补"首条报错线索"（首个命中启动错误标志的行），并给出完整日志路径（对齐 timeout 分支）。
         // 【issue #26】service-exited 同理：进程输出（可能不含错误标志）首行即是根因线索。
         var errorHint = waitResult is "logerror" or ShellLogic.ServiceReadiness.ServiceExitedVerdict
-            ? ShellLogic.ServiceReadiness.FirstStartupErrorLine(
-                string.Join("\n", ShellLogic.ReadLogTail(logPath, 120)))
+            ? ShellLogic.ServiceReadiness.FirstStartupErrorLine(wideTail)
             : null;
         // 【issue #26】就绪前退出：把退出码与进程首行输出真实展示，取代误导性的"下载慢/网络问题"。
         var serviceExitCode = waitResult == ShellLogic.ServiceReadiness.ServiceExitedVerdict
             ? Managers.ServiceManager.TrackedServiceExitCodeOrMinusOne()
             : -1;
-        var body = waitResult switch
-        {
-            "canceled" => "已取消启动。若服务仍在后台下载/启动，可稍后重新打开 dsh-launcher。",
-            "logerror" => "启动过程报错（dsh 服务未能就绪，多为依赖/下载/权限问题）。\n\n"
-                + (errorHint is null ? "" : "报错线索：\n  " + errorHint + "\n\n")
-                + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
-            ShellLogic.ServiceReadiness.ServiceExitedVerdict =>
-                $"dsh 服务进程在就绪前已退出（退出码 {serviceExitCode}），启动失败。\n\n"
-                + (errorHint is null ? "" : "进程输出首条异常线索：\n  " + errorHint + "\n\n")
-                + "日志尾部：\n" + tailText + "\n\n完整日志：" + logPath,
-            _ => "启动超时：可能是首次下载 dsh 组件较慢（可稍后重试），也可能是网络/代理问题。\n\n日志尾部：\n" + tailText
-                + "\n\n完整日志：" + logPath,
-        };
         // 裁决 → 错误码映射沉在 ShellLogic（契约测试锁定），组合根不再重复 switch。
         var code = ShellLogic.ServiceReadiness.MapVerdictErrorCode(waitResult);
-        // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总
-        ShowError(code, "dsh 服务未能就绪。\n\n" + body,
+        // [真机 T14 缺口修复] 坏插件在**就绪前**把服务打死时，过去只有 E2010 一条死路：安全模式
+        // 询问只挂在运行期 E2007 与页面 E1008 上。日志里有模块解析失败 + profile 确实声明了第三方
+        // bundle 时，把"禁用插件试试"这个选项给用户；答"是"且隔离 profile 建成 → 返回 true，由调用方
+        // **就地重跑一次启动流水线**（真机复测纠正：旧实现只弹一句"请你自己重开"的回执就结束进程，
+        // 修完没有留下走得通的路）。三条判据与文案在纯函数层（契约测试锁定），"建 profile → 置标志"
+        // 这条事务在 Domain（SafeModeLaunchPolicy）。allowSafeModeAsk 保证一次会话只问一次。
+        if (allowSafeModeAsk
+            && ShellLogic.StartupFailureRecoveryPolicy.ShouldOfferSafeMode(waitResult, wideTail,
+                ShellLogic.PluginConfig.ProfileHasThirdPartyBundles(WebProfilePackageJsonPath))
+            && AskEnterSafeModeOnce(null,
+                $"dsh 启动失败（[{code}]）：日志显示插件/模块加载报错。",
+                ShellLogic.StartupFailureRecoveryPolicy.AskBody)
+            && DshWeb.Domain.SafeModeLaunchPolicy.ArmNextLaunch(SafeProfile, SafeMode))
+        {
+            Logger.Info("SAFEMODE: armed at startup; re-running the startup pipeline with the isolated profile");
+            return true;
+        }
+        // 质量治理 P1-7：用户主动取消不是错误——按 Info 记录，避免污染错误码汇总。
+        // 正文（按裁决拼线索/日志尾/退出码）是纯映射，沉在 ShellLogic 并有契约测试。
+        ShowError(code, "dsh 服务未能就绪。\n\n" + ShellLogic.ServiceReadiness.StartupFailureBody(
+                waitResult, tailText, errorHint, serviceExitCode, logPath),
             level: waitResult == "canceled" ? Logger.Level.Info : Logger.Level.Error);
+        return false;
     }
 
     /// <summary>v0.3.0 主窗口位置/大小持久化（多显示器记忆）：位置与尺寸存 96dpi 逻辑值（跨 DPI 恢复时按当前 DPI 缩放）。
@@ -2566,7 +2594,8 @@ internal static class Program
             try { CancelBuildStatusDwell(); } catch { }
             BootMonitor?.Stop(); // ADR-023：壳主动收尾，监控停止（此后进程退出不再判 failed）
             var shouldStopService = ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
-                ReadLifetimeMode(), ServerManagedExternally, SessionApp?.ServiceStartedByShell == true);
+                ReadLifetimeMode(), ServerManagedExternally, SessionApp?.ServiceStartedByShell == true,
+                WindowManager.Instance.TrayExitRequested);
             // 看门狗：消息泵仍在跑（窗口只是隐藏），Timer 到点强制结束进程
             var watchdog = new System.Windows.Forms.Timer { Interval = 3000 };
             watchdog.Tick += (_, _) =>
@@ -2682,11 +2711,8 @@ internal static class Program
         form.MainWebView2 = popupWeb;
         popupWeb.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         form.LayoutChrome();
-        form.DpiChanged += (_, _) =>
-        {
-            form.TitleBar.Rescale(ShellLogic.DpiScale.Of(form.DeviceDpi));
-            form.LayoutChrome();
-        };
+        // 弹窗与主窗同为 DshShellForm：DPI 变化的几何重算由它的 OnDpiChanged 统一负责
+        // （此前这里又抄了一份 Rescale+LayoutChrome，且缺窗口尺寸跟随）。
         form.Controls.Add(popupWeb);
         form.FormClosing += (_, _) =>
         {

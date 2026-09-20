@@ -28,7 +28,8 @@ public class ServiceOwnershipSingleSourceTests
         // 退出决策：跟随窗口模式 + 非外部托管 + 壳持有 → 必须停服务
         Assert.True(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
             ShellLogic.ServiceLifetime.FollowWindow,
-            externallyManaged: false, shellManaged: app.ServiceStartedByShell));
+            externallyManaged: false, shellManaged: app.ServiceStartedByShell,
+            trayExitRequested: false));
     }
 
     /// <summary>外部托管（DSH_WEB_URL 由别人起服务）时，即使壳持有过也不得停别人的服务。</summary>
@@ -38,7 +39,7 @@ public class ServiceOwnershipSingleSourceTests
     public void ExternalHosting_NeverStopsSomeoneElsesService(bool startedByShell)
         => Assert.False(ShellLogic.LifecycleDecisions.ShouldStopServiceOnClose(
             ShellLogic.ServiceLifetime.FollowWindow,
-            externallyManaged: true, shellManaged: startedByShell));
+            externallyManaged: true, shellManaged: startedByShell, trayExitRequested: true));
 
     /// <summary>
     /// 组合根不得再自带第二份该事实：Program.cs 里出现 <c>_serviceStartedByShell</c>

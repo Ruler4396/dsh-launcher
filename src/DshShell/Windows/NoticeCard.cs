@@ -103,11 +103,14 @@ internal sealed class NoticeCard : Form
 
     // ---- 公共入口 -----------------------------------------------------------
 
-    /// <summary>尽力呈现一条通知卡片；返回是否已受理（呈现或排队）。绝不抛出。</summary>
+    /// <summary>尽力呈现一条通知卡片；返回是否已受理（呈现或排队）。绝不抛出。
+    /// <paramref name="explicitRequest"/> = 这条通知是**用户主动要**的（点标题栏的"（安全模式）"
+    /// 标记重新调出退出卡片），此时跳过 60 秒冷却窗——冷却窗防的是轮询重入，不是用户的点击；
+    /// 但同一条内容已经在屏幕上/队列里时仍然不叠加（点一次多排一张卡同样是刷屏）。</summary>
     public static bool Present(
         Form? owner, string title, string body, TimeSpan expireAfter,
         Action? onAction = null, string? actionText = null,
-        ShellLogic.NoticeKind kind = ShellLogic.NoticeKind.Info)
+        ShellLogic.NoticeKind kind = ShellLogic.NoticeKind.Info, bool explicitRequest = false)
     {
         try
         {
@@ -127,10 +130,10 @@ internal sealed class NoticeCard : Form
             }
             if (owner.InvokeRequired)
             {
-                owner.BeginInvoke(new Action(() => PresentOnUi(owner, item)));
+                owner.BeginInvoke(new Action(() => PresentOnUi(owner, item, explicitRequest)));
                 return true;
             }
-            PresentOnUi(owner, item);
+            PresentOnUi(owner, item, explicitRequest);
             return true;
         }
         catch (Exception ex)
@@ -140,13 +143,24 @@ internal sealed class NoticeCard : Form
         }
     }
 
-    private static void PresentOnUi(Form owner, Item item)
+    private static void PresentOnUi(Form owner, Item item, bool explicitRequest = false)
     {
+        var now = DateTimeOffset.UtcNow;
+        // 只有"用户主动要"的那条路会绕过下面的冷却窗，所以"屏幕上已有就不叠加"这道闸只对
+        // 它生效。普通路径交给冷却窗（它本来就覆盖"正在显示/已排队"两种情况）——把这道闸放在
+        // 冷却窗之前会悄悄替换掉 issue #25 锁定的那条 `notice suppressed as duplicate` 留痕，
+        // 全量跑第一次就把它抓出来了。
+        if (explicitRequest
+            && ((_shared is { IsDisposed: false } shown && shown._current?.Key == item.Key)
+                || _pending.Any(p => p.Key == item.Key)))
+        {
+            Logger.Info("notice already on screen; explicit request is a no-op", ctx: new { item.Title });
+            return;
+        }
         // 去重闸门：同一条内容在冷却窗内只受理一次。正在显示的与已排队的都受这一条约束
         // （受理时刻在下方统一登记），所以调用方重复轮询/重复信号不会刷屏。
         // 抑制必须留痕——静默丢通知比重复通知更难排查。
-        var now = DateTimeOffset.UtcNow;
-        if (ShellLogic.NoticeDedupe.ShouldSuppress(
+        if (!explicitRequest && ShellLogic.NoticeDedupe.ShouldSuppress(
                 item.Key, _lastKey, _lastAcceptedUtc, now))
         {
             Logger.Info("notice suppressed as duplicate (within cooldown)", ctx: new
@@ -296,8 +310,8 @@ internal sealed class NoticeCard : Form
         // NoPadding 让矩形边界 = 字形边界（issue #28-1 的排版根因），不再额外加任何内边距。
         _p = ShellLogic.NoticeCardLayout.Place(_g, titleH, bodyH, item.OnAction is not null);
         Size = new Size(_p.Width, _p.Height);
-        using var path = RoundedRect(new Rectangle(0, 0, _p.Width, _p.Height), _g.CornerRadius);
-        Region = new Region(path);
+        // 直角矩形窗口不需要 Region：以前这里用 GraphicsPath 裁圆角，代价是左侧强调条的
+        // 上下两头被裁掉 + 抗锯齿边缘压在 1px 边框上（左缘一条灰白线）。
     }
 
     /// <summary>跨显示器时按新 DPI 重算几何（PMv2 下 WinForms 不会自动缩放手工布局的自绘窗口）。</summary>
@@ -356,11 +370,13 @@ internal sealed class NoticeCard : Form
         g.Clear(CardBack);
         var item = _current ?? default;
         var urgent = ShellLogic.NoticePolicy.UseWarningCue(item.Kind);
+        // 先画边框、再画强调条：边框压在色条之上时，左缘会留一条 1px 灰白线（用户实拍反馈）。
+        // 色条贴着窗口左边缘撑满全高，覆盖掉它那一段边框，四条边看起来才连续。
+        using (var border = new Pen(BorderColor))
+            g.DrawRectangle(border, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
         // 左侧强调色条：撑满全高，是卡片与背景分离的主线索（边框只有 1.24→2.x:1，不够）
         using (var accentBrush = new SolidBrush(urgent ? AccentUrgent : AccentInfo))
             g.FillRectangle(accentBrush, _p.AccentRect);
-        using (var border = new Pen(BorderColor))
-            g.DrawRectangle(border, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
 
         TextRenderer.DrawText(g, item.Title, _titleFont, _p.TitleRect, TextBlack,
             TextFormatFlags.NoPadding | TextFormatFlags.WordBreak);
@@ -401,8 +417,26 @@ internal sealed class NoticeCard : Form
     {
         base.OnMouseDown(e);
         if (_current is not { } item) return;
-        if (_p.CloseRect.Contains(e.Location)) { Advance(); return; }
-        // 卡片整体即动作热区：老通知的"点击此处"语义（OnPendingBalloonClicked / 退出安全模式）。
+        // 命中判定是纯函数（契约测试锁定）：只有 × 与"点击此处"那一行可点。
+        var hit = ShellLogic.NoticeCardLayout.HitTest(_p, e.X, e.Y);
+        if (hit == ShellLogic.NoticeCardLayout.HitTarget.Close)
+        {
+            Logger.Info("notice dismissed via close button", ctx: new { title = item.Title });
+            Advance();
+            return;
+        }
+        if (hit != ShellLogic.NoticeCardLayout.HitTarget.Action)
+        {
+            // 用户报"点了没反应"时，日志必须说清点在哪、动作行在哪——不留沉默路径。
+            Logger.Info("notice click ignored: outside the action row", ctx: new
+            {
+                title = item.Title,
+                at = e.X + "," + e.Y,
+                action = _p.ActionRect.ToString(),
+                hasAction = item.OnAction is not null,
+            });
+            return;
+        }
         Advance();
         try { item.OnAction?.Invoke(); }
         catch (Exception ex) { Logger.Warn("notice card action failed: " + ex.Message); }
@@ -411,7 +445,9 @@ internal sealed class NoticeCard : Form
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        var over = _p.CloseRect.Contains(e.Location);
+        // 手型光标只标在真正可点的两处（× 与动作行）：整卡手型等于在承诺"哪里都能点"。
+        var hit = ShellLogic.NoticeCardLayout.HitTest(_p, e.X, e.Y);
+        var over = hit != ShellLogic.NoticeCardLayout.HitTarget.None;
         if (over == _hoverClose) return;
         _hoverClose = over;
         Cursor = over ? Cursors.Hand : Cursors.Default;
@@ -424,20 +460,6 @@ internal sealed class NoticeCard : Form
         _titleFont.Dispose();
         _bodyFont.Dispose();
         _actionFont.Dispose();
-        Region?.Dispose();
         if (ReferenceEquals(_shared, this)) _shared = null;
-    }
-
-    private static GraphicsPath RoundedRect(Rectangle r, int radius)
-    {
-        var d = Math.Max(1, radius * 2);
-        var path = new GraphicsPath();
-        if (r.Width <= 0 || r.Height <= 0) { path.AddRectangle(r); return path; }
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 }

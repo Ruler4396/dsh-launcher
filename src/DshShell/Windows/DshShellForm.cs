@@ -87,6 +87,52 @@ internal sealed class DshShellForm : Form
         MainWebView2.Bounds = web;
     }
 
+    /// <summary>
+    /// DPI 变化（拖到另一倍率的屏，或用户改显示倍率）时，本窗体自己重算全部几何：
+    /// 字号/按钮 → 最小尺寸 → 窗口物理尺寸 → 客户区布局。
+    /// 顺序不能换：<c>MinimumSize</c> 必须先按**新** DPI 降下来，否则随后的 Bounds 赋值会被
+    /// 旧 DPI 的下限静默夹住（168→96 方向就缩不回去）。
+    /// 这三段原先散在组合根 Program.cs 的 form.DpiChanged 里，主窗与弹窗各抄一份——
+    /// 同一条规则两份实现，且**都没有**做窗口尺寸跟随（真机 T11 实测缺口，见
+    /// <see cref="DshWeb.Win32.WindowGeometry.RescaleWindowForDpi"/>）。
+    /// </summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        TitleBar?.Rescale(ShellLogic.DpiScale.Of(DeviceDpi));
+        // **先取当前矩形**：赋值 MinimumSize 会立刻把过小的窗口顶到新下限，之后再读 Bounds
+        // 就把"下限"当成了"等比放大的输入"（真机 T11 首测：1280x840 → 2450x1530 而非
+        // 2240x1470，且每跨一次屏多长 ~9%——棘轮式膨胀）。
+        var before = Bounds;
+        // 只重算**声明过**最小尺寸的窗体（主窗在 Program.cs 装配时声明 800×600 设计值）。
+        // 插件弹窗没有下限，若在这里也套一遍设计值，175% 屏上会被强行撑到 1400x1050。
+        if (!MinimumSize.IsEmpty) MinimumSize = WindowGeometry.MinimumWindowSize(DeviceDpi);
+        // 每次倍率变化都留一行现场（尺寸/DPI/窗口态/目标屏工作区）：这类缺陷只能靠"跨屏前后
+        // 各一行"复原是谁改的矩形——WinForms 自己也会应用 WM_DPICHANGED 的建议矩形。
+        Logger.Info($"dpi {e.DeviceDpiOld}->{e.DeviceDpiNew}: state={WindowState} "
+            + $"bounds={before.Width}x{before.Height}@({before.X},{before.Y}) "
+            + $"min={MinimumSize.Width}x{MinimumSize.Height}");
+        // 最大化/还原态由系统按 WM_GETMINMAXINFO 重铺，这里插手会和它打架 → 只管 Normal
+        if (e.DeviceDpiOld != e.DeviceDpiNew && WindowState == FormWindowState.Normal)
+        {
+            try
+            {
+                var work = _display.GetMonitorMetrics(Handle).WorkArea;
+                var next = WindowGeometry.RescaleWindowForDpi(before, e.DeviceDpiOld, e.DeviceDpiNew, work);
+                Logger.Info($"  target work=({work.X},{work.Y}) {work.Width}x{work.Height}"
+                    + $" rescaled -> {next.Width}x{next.Height}@({next.X},{next.Y}) applied={next != Bounds}");
+                if (next != Bounds) Bounds = next;
+            }
+            catch (InvalidOperationException ex)
+            {
+                // 指标取不到（句柄已销毁/系统异常）：保持原尺寸，绝不搬窗——宁可尺寸略偏，
+                // 不可把窗口丢到用户找不到的坐标（异常透明：留 Warn 而非静默）。
+                Logger.Warn("dpi rescale skipped (monitor metrics unavailable)", ctx: new { error = ex.Message });
+            }
+        }
+        LayoutChrome();
+    }
+
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);

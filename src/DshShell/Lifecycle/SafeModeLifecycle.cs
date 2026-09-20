@@ -28,6 +28,12 @@ internal sealed class SafeModeLifecycle
     public const int CrashSignatureObservationSeconds = 5;
     public const string NormalTitle = "DeepSeek Harness";
     public const string SafeModeTitle = "DeepSeek Harness（安全模式）";
+    /// <summary>退出安全模式 = 停服 + 以正常配置重新拉起 + 重新导航，真机实测 20+ 秒。
+    /// 这期间标题栏挂哪段文字由这里定，别在调用方另写一份。</summary>
+    public const string ExitingSafeModeTitle = "DeepSeek Harness（正在退出安全模式…）";
+    /// <summary>进入安全模式同样是"停服 + 换 profile 重拉"，同样有 20 秒级的空窗（运行期崩溃
+    /// 那条路径答完"是"之后就是这段），所以两侧都给等待态，不只退出侧。</summary>
+    public const string EnteringSafeModeTitle = "DeepSeek Harness（正在进入安全模式…）";
 
     /// <summary>组合根注入的协作面（本类不引用 Program、不引用兄弟 Manager）。</summary>
     internal sealed record Dependencies(
@@ -50,6 +56,8 @@ internal sealed class SafeModeLifecycle
         Action NoteShellRestart,
         Action<Action<DshShellForm?>> PostToMainForm,
         Action NavigateToServiceUrl,
+        // 把主窗换成壳自绘的等待态（组合根负责投递到 UI 线程；本类可能在后台线程被调用）
+        Action<string, string> ShowWaitingPage,
         int Port,
         // 把这次流转投递给生命周期状态机（非法/不适用时返回 false，不抛）
         Func<LifecycleTrigger, bool> TryFireLifecycle);
@@ -96,16 +104,20 @@ internal sealed class SafeModeLifecycle
     /// .dsh-safe 的重启路径全部漏网，用户实测到的现象就是"插件凭空消失，界面上没有任何解释"。
     /// </summary>
     public void ApplyVisibility(bool safeProfileActive)
+        => ApplyTitle(safeProfileActive ? SafeModeTitle : NormalTitle);
+
+    /// <summary>
+    /// 标题栏文字的唯一所有者。<see cref="ApplyVisibility"/> 只是它对"安全模式/正常"两种
+    /// 状态的封装；重启进行中的第三种文案（<see cref="ExitingSafeModeTitle"/>）也走这里，
+    /// 避免第二处直接改 <c>form.Text</c>。
+    /// </summary>
+    public void ApplyTitle(string title) => _d.PostToMainForm(form =>
     {
-        _d.PostToMainForm(form =>
-        {
-            if (form is null) return;
-            var title = safeProfileActive ? SafeModeTitle : NormalTitle;
-            if (form.TitleBar is not null) form.TitleBar._titleText = title;
-            form.Text = title;
-            form.TitleBar?.Invalidate();
-        });
-    }
+        if (form is null) return;
+        if (form.TitleBar is not null) form.TitleBar._titleText = title;
+        form.Text = title;
+        form.TitleBar?.Invalidate();
+    });
 
     /// <summary>
     /// 尝试进入指定梯级的安全模式。返回 false 表示未生效（已就地完成补偿：退回非激活态、
@@ -137,6 +149,11 @@ internal sealed class SafeModeLifecycle
 
             // 安全模式用隔离 profile 启动：SafeMode.IsActive → Identity.WithProfile(.dsh-safe)，
             // 启动命令由 ServiceLaunch.BuildArgs 注入根级 --profile（ADR-022/024）。
+            // 从这一步起服务会被停掉、页面必然断连——先把"正在发生什么"显示出来，再动手
+            // （真机 2026-09-20 用户反馈：这段空窗里界面挂着旧页面，被读成"点了没反应"）。
+            ApplyTitle(EnteringSafeModeTitle);
+            _d.ShowWaitingPage("正在进入安全模式…",
+                "正在停用当前服务，并改用只保留 dsh 核心功能的隔离 profile 重新拉起。你的任何配置文件都不会被修改。");
             _d.SuspendMonitor(); // ADR-023：壳主动重启服务 = 判定挂起窗口
             _d.Trace("SAFEMODE(bg): stopping service");
             _d.StopService();
@@ -155,8 +172,11 @@ internal sealed class SafeModeLifecycle
             {
                 _d.StopMonitor(); // 重启失败且不再有服务可监视
                 _d.Deactivate();
+                // 等待态是我们在停服前挂上去的：拉不起来就必须把标题与横幅一并撤回，
+                // 绝不能把"正在进入安全模式…"留在一个并没有在安全模式的窗口上。
+                ApplyVisibility(false);
                 _d.TryFireLifecycle(LifecycleTrigger.SafeModeEntryFailed);
-                return false;   // 此处横幅从未被置起（成功分支才会置），与原实现一致
+                return false;
             }
             // [2026-08-29 token 栅栏] 等新进程横幅到位再刷新，消灭"重启空窗期导航 → 错误页驻留"竞态
             _d.WaitForFreshToken();

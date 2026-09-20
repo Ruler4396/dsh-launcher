@@ -72,62 +72,62 @@ public sealed class DshUpdateManager : IDshUpdateManager
     public async Task<ShellLogic.UpdateNoticeFlowPolicy.Outcome> CheckForUpdatesAsync(
         Action<string> trace, CancellationToken ct = default)
     {
-        // [DSH_TEST_UPDATE_SIGNAL] 假信号：替代真实网络检查，但下游结论与真实信号同源。
+        // [DSH_TEST_UPDATE_SIGNAL] 假信号**只替换"远端版本"这一个输入**，裁决仍然走
+        // UpdateNoticeFlowPolicy.Decide。旧实现在这里直接 return 一个 Outcome，于是绕过
+        // "本地已是最新就不提示"这道门——真机留下过一张自相矛盾的卡片：
+        // "检测到 dsh 0.1.5-rc.2（当前 0.1.5-rc.2）"（2026-09-20 用户指出，日志实证
+        // "dsh update 0.1.5-rc.2 available (local=0.1.5-rc.2); prompting update notice"）。
+        // 注释里那句"下游结论与真实信号同源"当时是假的；现在才是真的。
+        string? hookDshLatest = null, hookLauncherSecurity = null;
         var signal = Environment.GetEnvironmentVariable("DSH_TEST_UPDATE_SIGNAL");
         if (!string.IsNullOrWhiteSpace(signal))
         {
             trace($"update signal (test hook): {signal}");
             if (signal.StartsWith("launcher:", StringComparison.OrdinalIgnoreCase))
+                hookLauncherSecurity = signal["launcher:".Length..].Trim().TrimStart('v');
+            else if (signal.StartsWith("dsh:", StringComparison.OrdinalIgnoreCase))
+                hookDshLatest = signal["dsh:".Length..].Trim().TrimStart('v');
+            else if (!signal.StartsWith("pending", StringComparison.OrdinalIgnoreCase))
                 return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(
-                    PendingApplyVersion: null,
-                    LauncherSecurityVersion: signal["launcher:".Length..].Trim().TrimStart('v'),
-                    LauncherLocalVersion: UpdateChecker.CurrentLauncherVersion ?? "?",
-                    DshAvailableVersion: null, DshLocalVersion: null, SkipReason: "test-hook");
-            if (signal.StartsWith("dsh:", StringComparison.OrdinalIgnoreCase))
-                return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(
-                    null, null, null,
-                    signal["dsh:".Length..].Trim().TrimStart('v'),
-                    UpdateChecker.ResolveLocalDshVersion(), "test-hook");
-            if (!signal.StartsWith("pending", StringComparison.OrdinalIgnoreCase))
-                return new ShellLogic.UpdateNoticeFlowPolicy.Outcome(null, null, null, null, null, "test-hook-ignored");
+                    null, null, null, null, null, "test-hook-ignored");
         }
 
         var pendingVersion = StagedUpdate.ReadPendingVersion();
 
         // launcher 安全更新：独立 try/catch——此步任何意外都不得吞掉后面的 dsh 检查
         // （此前整段只有一个静默总 catch，一处抛出 → dsh 检查无声消失，日志零痕迹）。
-        string? launcherVersion = null, launcherLocal = UpdateChecker.CurrentLauncherVersion;
-        var launcherShouldNotify = false;
-        try
+        string? launcherVersion = hookLauncherSecurity, launcherLocal = UpdateChecker.CurrentLauncherVersion;
+        var launcherShouldNotify = hookLauncherSecurity is not null;
+        if (hookLauncherSecurity is null)
         {
-            var lr = await UpdateChecker.FetchLatestLauncherReleaseFallbackAsync();
-            launcherVersion = lr?.Version;
-            launcherShouldNotify = lr is not null && ShellLogic.LauncherUpdateNoticePolicy
-                .ShouldNotifyLauncherSecurity(launcherLocal, lr.Version, lr.IsSecurity);
-            if (lr is { IsSecurity: true } && launcherLocal is null)
-                trace("launcher security notice suppressed: local version unknown (source build / probe failed)");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn("launcher security update check failed; continuing with dsh check",
-                ctx: new { error = ex.Message });
+            try
+            {
+                var lr = await UpdateChecker.FetchLatestLauncherReleaseFallbackAsync();
+                launcherVersion = lr?.Version;
+                launcherShouldNotify = lr is not null && ShellLogic.LauncherUpdateNoticePolicy
+                    .ShouldNotifyLauncherSecurity(launcherLocal, lr.Version, lr.IsSecurity);
+                if (lr is { IsSecurity: true } && launcherLocal is null)
+                    trace("launcher security notice suppressed: local version unknown (source build / probe failed)");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("launcher security update check failed; continuing with dsh check",
+                    ctx: new { error = ex.Message });
+            }
         }
 
-        var latest = await UpdateChecker.FetchLatestDshVersionFallbackAsync();
+        var latest = hookDshLatest ?? await UpdateChecker.FetchLatestDshVersionFallbackAsync();
         var local = UpdateChecker.ResolveLocalDshVersion();
-        trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"}");
+        trace($"dsh update check: latest={latest ?? "<null>"} local={local ?? "<null>"}"
+            + (hookDshLatest is null ? "" : " (remote from test hook)"));
 
-        int Cmp(string? a, string? b) => (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b))
-            ? -1 : UpdateChecker.CompareVersions(a, b);
-
+        // 比较全部交给裁决函数本身（含"无跳过记录"这一态）——调用方只递版本串，不再递结论 int。
         return ShellLogic.UpdateNoticeFlowPolicy.Decide(
             pendingVersion,
             launcherShouldNotify, launcherVersion, launcherLocal,
             latest, local,
-            versionNewer: string.IsNullOrWhiteSpace(local) ? 1 : UpdateChecker.CompareVersions(latest, local),
             alreadyStagedThisSession: latest is not null && _sessionStagedVersions.Contains(latest),
-            latestVsSkipped: Cmp(latest, StagedUpdate.ReadSkippedDshVersion()),
-            pendingVsLatest: Cmp(pendingVersion, latest));
+            skippedVersion: StagedUpdate.ReadSkippedDshVersion());
     }
 
     public bool NeedsUpdate(DshWeb.Domain.DshRuntimeIdentity local, string? remoteVersion)

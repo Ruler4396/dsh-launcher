@@ -369,7 +369,10 @@ public sealed class LauncherApp
         if (waitResult != "ready")
         {
             _lifecycle.Fire(LifecycleTrigger.ReadinessTimedOut); // → ShuttingDown
-            Logger.Error($"service readiness failed: {waitResult}", ErrorCodes.E2002);
+            // 错误码必须与用户弹窗同源（2026-09-20 真机：这里硬编码 E2002，弹窗按裁决给 E2010，
+            // 同一事实两个码——按码归因的人只会看到"启动超时"，而真实形态是"进程就绪前退出"）。
+            Logger.Error($"service readiness failed: {waitResult}",
+                ShellLogic.ServiceReadiness.MapVerdictErrorCode(waitResult));
             _staleCleanup?.Invoke(Port); // 超时清理：Kill 孤儿进程（E2005 语义）
             return false;
         }

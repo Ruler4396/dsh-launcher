@@ -240,6 +240,178 @@ Splash 窗：全仓唯一零 DPI 处理窗口——380×180 / 60×22 硬编码�
 `Regression_Issue28_TrayMenuHighDpi.RealOs` + `UiResponsivenessTests`（派生不变量，
 替代抄自缺陷常量的 `>=60x20` 同义反复断言）。
 
+### 落点 8：真机端到端复测批注（2026-09-20，issue #25 之后 T1–T12）
+```
+本轮把 T1..T12 全部在真机上点过一遍（sandbox/issue-verify/，隔离 DSH_HOME + 随机端口 +
+按 PID 收尾），三处缺陷各在不同节点，共同点是**散文承诺与机器决策不同源**：
+
+托盘"退出" → Program.TrayExitAction → MarkTrayExitRequested → BeginShutdownAsync
+  → ShouldStopServiceOnClose(mode, external, shellManaged)   ← 断在这里：签名里没有
+    trayExitRequested，Tray 恒判 false → StopShellService 根本不被调用
+  → 壳进程消失、node 仍监听端口（实测 9362 未关）→ 下次启动被判僵尸/误杀
+  → 【修复点】事实进签名 + 组合根实传 + test.ps1 锁"实参必须出现在调用点"
+
+标题栏双击 → CustomTitleBar.OnMouseDown → SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)
+  → 系统拖拽模态循环吞掉第二次点击 → WM_LBUTTONDBLCLK 不产生 → OnDoubleClick 死代码
+  → 用户侧现象"双击标题栏没反应"（单屏 96 DPI 同样复现，与 DPI 无关）
+  → 【修复点】拖拽阈值（ShouldStartCaptionDrag），接管点唯一化
+
+主窗跨屏 → WM_DPICHANGED → DshShellForm.OnDpiChanged（旧：只 Rescale+LayoutChrome）
+  → 窗口物理尺寸不变（1280x840@96 → 1280x840@168），标题栏却已长到 56px
+  → 页面可用 CSS 像素 1280→731（-43%）
+  → 【修复点】RescaleWindowForDpi（等比 + 夹回 rcWork），几何收进窗体单一所有者
+
+测量器自身的两个坑（同属本地图的"观察证据"节点，必须先排除再谈缺陷）：
+  ① harness 宿主 pwsh 默认 DPI-unaware → 175% 副屏被虚拟化成 1463x914，GetWindowRect
+     读数与壳（PerMonitorV2，物理像素）不同源，据此得出的"卡片不重算 DPI"是**假缺陷**；
+     现 harness 自升 PMv2 并统一用 EnumDisplayMonitors 的 rcWork 做判据。
+  ② 场景 PASS 判据漏项 → T9 曾报绿，而同一行输出就写着 port closed=False。判据必须覆盖
+     "用户承诺的那件物理事实"（端口关闭），不能只看代理指标（进程退出）。
+```
+**回归测试**：`ShellLogicServiceLifecycleTests.ShouldStopServiceOnClose_Matrix`（9 例）+
+`Regression_TrayExitLeavesServiceRunning` + `WindowGeometryTests.CaptionDrag_*`（6 例）+
+`WindowGeometryTests.Rescale*`（7 例，含负坐标副屏与退化输入）；真机侧 `T9`（端口必须关）、
+`T11`（副屏最大化 0 缝隙）、`T12`（双击路径必须 `zoomed=True`）。
+
+### 落点 9：更新提示链（2026-09-20 用户截图"检测到 dsh 0.1.5-rc.2（当前 0.1.5-rc.2）"）
+```
+远端版本 ──┬── 真实网络：UpdateChecker.FetchLatestDshVersionFallbackAsync
+           └── 假信号：DSH_TEST_UPDATE_SIGNAL=dsh:X
+                                  ↓
+        DshUpdateManager.CheckForUpdatesAsync（只产结论，不弹 UI）
+                                  ↓
+        UpdateNoticeFlowPolicy.Decide ── "已最新 / 已 pending / 本会话已下载 / 用户跳过" 四道静默
+                                  ↓
+        Program.NotifyPending → NoticeCard（唯一呈现通道）
+
+缺陷①（假信号绕过裁决）：dsh 分支直接 return Outcome，Decide 根本没跑 → 假信号说"有新版"
+  就必弹，哪怕本地就是那个版本。日志实证：`dsh update 0.1.5-rc.2 available (local=0.1.5-rc.2)`。
+  → 【修复点】假信号只替换"远端版本"这一个输入，Decide 成为唯一裁决口（闸：Outcome 构造唯一 +
+    Decide 唯一入口）。**通用教训：测试钩子必须只替换输入，不得替换结论**——否则被钩子覆盖的
+    那条路径上，绿灯证明的是钩子会弹卡，不是产品会提示。
+
+缺陷②（哨兵与判据撞车，比①严重）：Phase 4 把三条版本比较从内联实现抽成 Decide 的 int 入参，
+  "用户从没跳过更新"被编码成 -1，而判据写的是 `latestVsSkipped <= 0` 即静默 →
+  **所有没手动点过"否"的用户，从此收不到任何 dsh 更新提示**。原内联是
+  `skipped is not null && cmp(latest, skipped) <= 0`——空值有独立守卫，抽函数时守卫丢了。
+  → 【修复点】Decide 改收版本串（`skippedVersion` 可空）并自己比较，"没有记录"不再是可被误编码
+    成一个判决的整数；签名闸禁止 int 结论入参；`Regression_NoSkipRecordMeansSilent` 先用旧哨兵
+    语义跑红 5 例（含两条既有测试）再转绿。②被①挡住整整一轮：假信号绕过了 Decide，所以没有任何
+    一次真机验证真正跑过 Decide 的 dsh 分支。
+```
+**测量器教训（同批）**：① harness 的 PowerShell 控制台输出是 **GBK**，用 UTF-8 中文去 grep 日志
+会一条不中（差点把"文案检查没跑"读成"检查通过"）——断言/检索一律用 ASCII 锚点。② 应用日志里的
+中文与 `->` 被 JSON 转义成 `\uXXXX`，正则按字面箭头写会永远匹配不到。
+**回归测试**：`UpdateNoticeFlowContractTests`（含 `Regression_IdenticalVersionNotice` 3 例、
+`Regression_NoSkipRecordMeansSilent` 3 例）；真机 `T3`（卡片文案"检测版本 != 当前版本"，相等即 FAIL）、
+`T3R`（真实应用完成后同一信号必须被裁成 `up-to-date`，实测 `post-apply notice verdict:
+update notice suppressed: up-to-date`）。
+
+### 落点 10：坏插件崩在**就绪前** → 安全模式入口（2026-09-20 真机 T14/T15）
+```
+启动失败裁决链（组合根 HandleStartupFailure ← LauncherApp 的 Outcome.WaitResult）
+   ├─ "ready"          → 主窗
+   ├─ "timeout"        → E2002（"首次下载较慢/网络"）
+   ├─ "logerror"       → E2007
+   └─ "service-exited" → E2010（issue #26 的快速失败）
+
+安全模式询问的既有两条入口：运行期进程退出（E2007 / BootHealthMonitor）
+                            页面插件致命消息（E1008）
+→ 坏插件最常见的形态是**在就绪前**把 node 打死（profile 解析不了某个 bundle
+  → prepareProfile 抛 → exit 1），这条路径两条入口**都不经过** ⇒ 用户只拿到
+  一句 E2010 文案，没有任何下一步。 ← 缺陷 G
+
+证据其实一直在手上，只是没人读：统一日志的服务管道行里明写着
+  `dsh: profile bundle "dsh-broken-demo" declares no dsh.bundle in its package.json`
+而 profile 的 `dsh.profile.bundles` 也确实声明了那个第三方 bundle。
+
+→ 【修复点·判据】`ShellLogic.StartupFailureRecoveryPolicy.ShouldOfferSafeMode`：
+  ①裁决 ∈ {service-exited, logerror}（timeout/canceled 不是"进程自己死了"，不该把
+    用户支去动插件）②服务日志命中模块/插件签名 ③profile 真声明了第三方 bundle。
+  三条全取才问一句。签名表复用运行期归因的**同一张** `BootGuard.PluginInvolvedMarkers`
+  （不另起一套），并新增 `ServiceLinesOnly`：签名只在服务自己吐的行上算——壳会把
+  错误文本回写进日志，混排行参与判定等于让它自证触发。
+→ 【修复点·事务】"建 `.dsh-safe` → 置粘滞标志" = `Domain.SafeModeLaunchPolicy.ArmNextLaunch`，
+  顺序不可颠倒：标志先置而 profile 不在，下一次拉起只会再撞一次失败（同一族的"粘滞状态把
+  自己锁死"见落点 5 / issue #28-4）。建不成一律什么都不置，Warn 留痕后维持原 E2010 文案。
+→ 【缺陷 H：入口修好了，路没修好】用户真实环境实测（2026-09-20 18:01）：答"是"之后实现只弹
+  一句"关闭本提示后重新打开 dsh-launcher"的**回执**就结束进程——把唯一走得通的那一步（重开）
+  丢给用户手动做，屏幕上什么都没有了。现在：答"是"且 profile 建成 → `HandleStartupFailure` 返回
+  true → `EnsureServiceAndRuntime` 的 `StartupStep.RetryInSafeMode` **就地重跑一次启动流水线**
+  （这次 `SafeMode.IsActive` 已置，`EnsureSafeProfileIdentity` 自然带上 `.dsh-safe`），成功即进主窗
+  并弹可退出的粘滞卡。一次会话只问一次（`allowSafeModeAsk: attempt == 0`），不可能来回弹；
+  回执弹窗与那句"让用户自己重开"的文案由静态门禁止存在。
+→ 【缺陷 I：同一事实两个码】`LauncherApp` 把 readiness 失败的**日志码**写死 `ErrorCodes.E2002`，
+  而弹窗按裁决给 E2010（`MapVerdictErrorCode`）。后果：按错误码归因的人只看到"启动超时"，
+  错过"进程就绪前退出"这个真实形态。现在日志码也走 `MapVerdictErrorCode` 单一真相源；失败正文
+  整段从组合根下沉为纯函数 `ServiceReadiness.StartupFailureBody`（7 例契约，含"崩溃裁决不得说
+  '下载慢/网络问题'"这条不变量）。
+
+【四条测量教训，本轮当场付学费换的】
+① fixture 不许照猜。我第一版判据与测试都写 `ERR_MODULE_NOT_FOUND`，真机跑出来的消息形态是
+   `declares no dsh.bundle` —— 我猜的那条**从没在这台机器上出现过**，判据等于空转。以真实
+   日志行为准，标记表因此两族都收。
+② 断言要按"这个运行模式下的物理出口"写。harness 场景一律注入 `DSH_E2E=1`（模态硬化），
+   `ShowError` 只写 stdout + 结构化日志、不弹模态，所以"等一个标题恰为 `DeepSeek Harness` 的
+   窗口"必然等不到（T15 step4 曾据此误报 False）。真正的送达证据是日志里那条 `[E2010] …` +
+   stdout 同文。（这条后来被缺陷 H 反过来用：那条回执本身就不该存在。）
+③ 棘轮 G1 拦到了我自己。这条修复最初在组合根加了 24 行代码行（实测 2031 > 基线 2007 即红）。
+   红是**对信号**：它说明"新事务又被写成了组合根的 static 方法"。出路不是抬基线，而是事务交回
+   Domain、文案交回 ShellLogic；修 H 时又把失败正文整段下沉，基线两次同步钉低 2007 → 2006 → 2003，
+   并由 G9 位置闸钉住 `EnableSafeModeForNextLaunch` 不得回流组合根。
+④ 新闸必须"造脏副本"证明会红。我给 I 写的第一版判据把 `$` 当字面量写进正则——`$` 是行尾锚点，
+   这条**永远匹配不到任何东西**，也就永远不会红；把旧写法在内存里造回来才暴露。同类：卡片那条
+   "用位图角像素判断有没有圆角"也是空断言（`DrawToBitmap` 无视窗口 Region），换成问
+   `Region.IsVisible(角点)` 之后，把圆角代码整个加回来立刻变红。
+
+【回归】`StartupFailureRecoveryContractTests` 11 例（含"只剩堆栈帧时不猜"、"签名只出现在壳自己
+  写的行 → 不 offer"）；`SafeModeSymmetryOutcomes` 2 例 Outcome（真文件系统，反向验证过顺序）；
+  `ServiceReadinessContractTests` 新增 7 例正文契约；真机 T15 全链——干净 profile 起 HEALTHY →
+  注入坏 bundle → 崩在就绪前 → 真鼠标点"是" → **同一个进程**带 `.dsh-safe` 重新拉起（HEALTHY +
+  粘滞卡，无第二个模态、进程不退）→ 撤插件 → 点卡片退出安全模式 → 回到正常 profile。
+```
+
+### 落点 11：通知卡片的三处版式/交互缺陷（2026-09-20 用户实拍 + 原话）
+```
+唯一呈现对象 Windows/NoticeCard（issue #25 收口后全仓只有这一张卡）。用户实拍那张
+"安全模式粘滞卡"同时指出三件事，两条版式、一条交互：
+  ① "圆角很丑" → 改直角；
+  ② "红/蓝装饰条没对齐，左缘有时有一条白线" → 与 ① 同一条根因链；
+  ③ "我点击卡片但没有点到'点击此处'时什么都没发生——没有重启" → 命中区。
+
+【①②同一个根因】卡片原先用 `Region = new Region(GraphicsPath)` 裁圆角：
+  · 贴在左边缘的强调条上下两头被裁掉 → 看起来就是"色条没对齐"；
+  · `OnPaint` 先画强调条、**后**画 1px 边框，而 `DrawRectangle(0,0,W-1,H-1)` 的左边线正好
+    压在色条那一列（#D1D5DB 压在 #D81E06 上）→ 用户看到的"左缘一条白线"。
+  → 【修复点】直角窗口不需要 Region：删掉裁角；绘制顺序改成先边框后色条；色条仍由纯函数
+    `Place` 给成"贴左缘、撑满全高"。`Geometry` 里**不再留 CornerRadius 旋钮**——要圆角就得
+    重新设计这两处，不能顺手把 Region 加回来。
+
+【③命中区】旧实现是"非 × 即整卡触发动作"（老 toast 的点击语义），于是
+  想复制正文 → 误触发"退出安全模式并重启"；点 × → 只有关闭、动作不执行，**日志零留痕**，
+  体感就是"点了没反应"。（实测他 18:36 点动作行那次是成功的：`exit-safe-mode: identity-driven
+  start returned True`——所以这不是"动作坏了"，是"热区画错了 + 沉默路径不可归因"。）
+  → 【修复点】判定下沉纯函数 `NoticeCardLayout.HitTest` → {Close, Action, None}：只有 × 与
+    "点击此处"那一行可点；空白处的点击留一条 Info（带点击坐标与动作行矩形），不留沉默路径；
+    手型光标也只标在这两处（整卡手型等于承诺"哪里都能点"）。
+
+【三条测量教训】
+① 位图角像素**判不了**圆角：`DrawToBitmap` 无视窗口 Region，把圆角代码整个加回来断言照样绿。
+   换成问 `Region.IsVisible(角点)` 才有牙齿。
+② 抓屏必须等卡片画过再抓：刚 `Visible` 的瞬间 WM_PAINT 还没跑，`CopyFromScreen` 会得到一片
+   208,208,208 的死灰——我第一版实拍就是这么一张全灰图，差点把"卡片没画"当成结论。
+③ 静态闸只扫**代码行**：整文件正则会被"解释为什么不再有圆角"的注释命中，这条闸首跑就被
+   自己写的注释判红（与 G6/G9 同一条教训）。
+
+【回归】`NoticeCardLayoutContractTests` 新增 4 例（色条贴左缘撑满全高 / × 与动作行的命中判定 /
+  无动作卡不存在动作热区 / 两矩形重叠时以关闭为准）；`Regression_NoticeCardSquareAccent.RealOs`
+  2 例真机——逐像素要求左缘整列全为强调色、反射调用**生产** `OnMouseDown` 证明"点正文不触发、
+  点动作行恰好触发一次"（不为此新增测试钩子）；真机实拍
+  `sandbox/issue-verify/shots/card-square-demo.png`（84 行左缘，0 行例外）。三处变异各自验红：
+  边框画回色条之上 / 圆角 Region 加回来 / "非 × 即整卡触发"加回来。静态闸 4 条：直角、绘制
+  顺序、必须走 HitTest、不得手写命中判定。
+```
+
 ---
 
 
@@ -248,6 +420,47 @@ Splash 窗：全仓唯一零 DPI 处理窗口——380×180 / 60×22 硬编码�
 > **Scenario 文档**：`docs/scenarios/update-dsh.md`（含 7 个 False Positive 陷阱详解）
 
 ```mermaid
+
+### 落点 12：安全模式进/出的 20 秒空窗——"点了没反应"（2026-09-20 用户两次误判）
+```
+用户动作 → ExitSafeModeRequested → RestartOutOfSafeMode → RestartCore.RestartAsync：
+   停服(3s) → 以正常 profile 拉起 → 第三方插件装载(9s) → 等新 token → 导航回真实页
+   → 页面探针 HEALTHY      ← 真机实测合计 ~25 秒（19:27:00.734 → 19:27:25.901）
+这期间主窗挂着的是**已经断连的旧页面**：没有任何"正在进行"的迹象。
+用户两次把它读成失败："没反应，窗口消失了，没有重启启动器"、"原来的窗口没有第一时间消失，
+让我误判了"。日志证明动作其实每次都执行成功了（`exit-safe-mode: identity-driven start
+returned True`，插件 `session-archive` 在 19:27:12 重新就绪）。
+
+【为什么不能"点完直接关窗口"】本机驻留模式下关窗会**连带停掉 dsh 服务**——今天两次实测
+（18:00、19:24）关闭启动器窗口后 3080 的监听者立刻归零。所以关窗等于把刚重启好的服务杀掉，
+用户还得再点一次启动器图标——正是落点 10 里刚当成缺陷修掉的"让用户自己重开"。
+
+→ 【修复点·可见反馈】动作触发的那一刻：① 标题栏文字换成"（正在退出安全模式…）"，
+  ② 主窗导航到壳自绘等待态（"正在以你的正常配置重新拉起 dsh，请稍候，无需重复点击"），
+  重启完成后由重启核心导航回真实页面并重画标题。进入安全模式那条路径（运行期 E2007 阶梯）
+  同样有这段空窗，所以**两侧都加**，且失败出口必须撤回标题（`StartViaIdentity` 失败分支
+  补 `ApplyVisibility(false)`）——绝不把"正在进入安全模式…"留在一个没进安全模式的窗口上。
+→ 【修复点·顺手收口】等待态需要 `CoreWebView2.NavigateToString`，而组合根里原本还有一份手写的
+  `Navigate + try/catch`。两处一起交回 `WebViewManager`（`NavigateMainWeb` / `ShowWaitingPage`，
+  NavigateToString 全仓唯一），组合根只留"投递到 UI 线程"这一步——所以加功能之后
+  Program.cs 反而从 2003 降到 2001 行。标题栏文字的唯一写入点是 `SafeModeLifecycle.ApplyTitle`
+  （闸：`form.Text =` 在该文件只允许出现 1 次；Lifecycle 层不得直接碰 CoreWebView2）。
+→ 【安全边界】等待态 HTML 经 `NavigateToString` 进入 HTML 上下文，**转义是唯一防线**：
+  `ShellLogic.WaitingPage.Escape` 处理 & < > " '，页面不引任何外部资源、不含脚本、不含 token
+  （它出现的时刻服务已经停了，任何远程资源都拉不到）。
+
+【测量教训】
+① 用户的"没反应"不等于"没执行"——先查日志再定性。这次时间线证明动作成功，缺陷在**反馈缺失**，
+   两者要的东西完全不同（前者要修逻辑，后者要修可见性）。
+② 断言"转义有效"要测"注入的文字不能变成元素"，不是测"某个危险字符串消失"。第一版我拿
+   `onerror=` 当判据——转义后它作为纯文本留在页面里本就无害，测的是转义过度；改成 `<img` 才是对的。
+   反向验证：把 `Escape` 退化成恒等 → 9 例里 4 例立刻红。
+
+【回归】`WaitingPageContractTests` 9 例（三族注入必须失效 / 五种字符转义 / 两串文字都要可见 /
+  自包含无外部资源无脚本 / 空值）；`SafeModeLifecycleTests` 新增 2 例（等待态必须**在停服之前**
+  给出；拉起失败必须撤回可见性）；静态闸 4 条（退出必须给可见反馈、`NavigateToString` 全仓唯一、
+  Lifecycle 不得直接碰 WebView2、标题写入点唯一）。
+```
 graph TD
     subgraph "Phase 1: Detection"
         T["用户打开壳"] --> A

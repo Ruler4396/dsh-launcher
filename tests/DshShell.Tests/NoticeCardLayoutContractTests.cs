@@ -125,7 +125,28 @@ public class NoticeCardLayoutContractTests
     public void Geometry_UnknownDpi_FallsBackTo1x(int dpi)
     {
         Assert.Equal(G(96).Width, G(dpi).Width);
-        Assert.True(G(dpi).CornerRadius >= 1);   // 任何折算都不产生 0 尺寸（Region 会抛）
+        Assert.True(G(dpi).AccentWidth >= 1);     // 任何折算都不产生 0 尺寸（色条会整条消失）
+    }
+
+    /// <summary>
+    /// 左侧强调条必须**贴着窗口左边缘并撑满全高**（真机反馈 2026-09-20：圆角时代它上下两头被
+    /// Region 裁掉，看起来就是"色条没对齐"）。文字一律让开色条，否则第一列字被色条吃掉。
+    /// </summary>
+    [Theory]
+    [InlineData(96)]
+    [InlineData(144)]
+    [InlineData(192)]
+    public void Place_AccentBar_IsFlushLeftAndSpansFullHeight(int dpi)
+    {
+        var g = G(dpi);
+        var p = ShellLogic.NoticeCardLayout.Place(g, 18, 32, hasAction: true);
+        Assert.Equal(0, p.AccentRect.X);
+        Assert.Equal(0, p.AccentRect.Y);
+        Assert.Equal(p.Height, p.AccentRect.Height);
+        Assert.Equal(g.AccentWidth, p.AccentRect.Width);
+        Assert.True(p.TitleRect.Left >= p.AccentRect.Right);
+        Assert.True(p.BodyRect.Left >= p.AccentRect.Right);
+        Assert.True(p.ActionRect.Left >= p.AccentRect.Right);
     }
 
     [Theory]
@@ -218,5 +239,59 @@ public class NoticeCardLayoutContractTests
         var (x, y) = ShellLogic.NoticeCardLayout.PlaceAtBottomRight(wa, g, 400, 120);
         Assert.Equal(g.ScreenMargin, x);
         Assert.Equal(600 - 120 - g.ScreenMargin, y);
+    }
+
+    // ---------------- HitTest：只有 × 与"点击此处"那一行可点 ----------------
+    //
+    // 真机反馈（2026-09-20 用户实拍后原话）："我点击卡片但是没有点到'点击此处'时什么都没发生
+    // ——没有重启"。旧实现是整张卡当动作热区：想复制正文/想点别处都会误触发带进程副作用的动作
+    // （退出安全模式并重启），而点到 × 时只有关闭、动作不执行且日志零留痕。
+
+    private static ShellLogic.NoticeCardLayout.HitTarget Hit(
+        ShellLogic.NoticeCardLayout.Placement p, int x, int y)
+        => ShellLogic.NoticeCardLayout.HitTest(p, x, y);
+
+    [Fact]
+    public void HitTest_ActionRowOnly_RespondsWithAction()
+    {
+        var g = G(96);
+        var p = ShellLogic.NoticeCardLayout.Place(g, 18, 32, hasAction: true);
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.Action,
+            Hit(p, p.ActionRect.X + 2, p.ActionRect.Y + p.ActionRect.Height / 2));
+        // 标题、正文、色条、右下边框——一律不响应（这些正是"想复制/想忽略"的落点）
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.None, Hit(p, p.TitleRect.X + 2, p.TitleRect.Y + 2));
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.None, Hit(p, p.BodyRect.X + 2, p.BodyRect.Y + 2));
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.None, Hit(p, 1, p.Height / 2));
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.None, Hit(p, p.Width - 2, p.Height - 2));
+    }
+
+    [Fact]
+    public void HitTest_CloseButton_Closes()
+    {
+        var p = ShellLogic.NoticeCardLayout.Place(G(96), 18, 32, hasAction: true);
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.Close,
+            Hit(p, p.CloseRect.X + 2, p.CloseRect.Y + 2));
+    }
+
+    [Fact]
+    public void HitTest_CardWithoutAction_HasNoActionTargetAtAll()
+    {
+        // 纯提示卡（没有"点击此处"）：整面都不该有动作热区，只剩 × 可点
+        var p = ShellLogic.NoticeCardLayout.Place(G(96), 18, 32, hasAction: false);
+        Assert.True(p.ActionRect.IsEmpty);
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.None, Hit(p, p.Width / 2, p.Height - 4));
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.Close, Hit(p, p.CloseRect.X + 1, p.CloseRect.Y + 1));
+    }
+
+    [Fact]
+    public void HitTest_CloseWins_WhenTheTwoRectsOverlap()
+    {
+        // Place() 保证两者不重叠；这里造一个重叠的排布，确认"关闭"优先——
+        // 重叠时若动作优先，用户想关掉一张卡却把服务重启了。
+        var p = ShellLogic.NoticeCardLayout.Place(G(96), 18, 32, hasAction: true);
+        var overlapped = new ShellLogic.NoticeCardLayout.Placement(p.Width, p.Height, p.AccentRect,
+            p.TitleRect, p.BodyRect, p.CloseRect, p.CloseRect);
+        Assert.Equal(ShellLogic.NoticeCardLayout.HitTarget.Close,
+            Hit(overlapped, p.CloseRect.X + 2, p.CloseRect.Y + 2));
     }
 }

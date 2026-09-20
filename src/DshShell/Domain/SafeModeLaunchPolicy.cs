@@ -41,6 +41,28 @@ public static class SafeModeLaunchPolicy
         => safeModeActive && !profileExists;
 
     /// <summary>
+    /// 把"以安全模式启动"落到状态上：<b>先建隔离 profile，建成功才置标志</b>。
+    ///
+    /// 【顺序为什么不能反】标志写着"在安全模式"而 <c>.dsh-safe</c> 实际不存在时，下一次拉起只会
+    /// 再撞一次失败（<see cref="NeedsRebuild"/> 那条兜底会在拉起前重建，但那是兜底，不是第一次
+    /// 就该失败）。建不出来就什么都不置：调用方维持原有的启动失败文案，本函数留一条 Warn 让
+    /// "为什么没进安全模式"可归因——绝不留下"标志说在安全模式、profile 却不在"的半吊子状态。
+    /// </summary>
+    public static bool ArmNextLaunch(SafeProfileBuilder profile, SafeModeState safeMode,
+        SafeProfileTier tier = SafeProfileTier.Tier1KeepDeepSeekCore)
+    {
+        if (!profile.Build(tier))
+        {
+            Logger.Warn("SAFEMODE: startup-time profile build failed; safe mode NOT armed",
+                ErrorCodes.E1010, new { path = profile.SafeProfilePackageJson });
+            return false;
+        }
+        safeMode.Activate(tier);
+        Logger.Info("SAFEMODE: profile built + sticky flag set at startup (plugin-suspected pre-readiness crash)");
+        return true;
+    }
+
+    /// <summary>
     /// 重建仍失败的兜底判定：<b>退回正常模式启动</b>（并清掉粘滞标志，让状态自洽）。
     /// 取舍是明确的——"插件被禁用但界面能用"远好于"界面起不来且无法退出"。
     /// </summary>

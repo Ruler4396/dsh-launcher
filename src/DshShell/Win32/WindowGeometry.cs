@@ -122,6 +122,26 @@ public static class WindowGeometry
     }
 
     /// <summary>
+    /// 标题栏拖拽阈值判定（真机 T12 双击最大化失效的修复点）。
+    /// 入参：按下点、当前指针点、以按下点为中心的阈值方框（调用方传 SystemInformation.DragSize）。
+    /// 返回：是否应当把这次按下交给系统 HTCAPTION 拖拽循环。
+    ///
+    /// 为什么需要它：自绘标题栏若在 MouseDown 里**无条件** ReleaseCapture + SendMessage
+    /// (WM_NCLBUTTONDOWN, HTCAPTION)，就立刻进系统模态拖拽循环——第二次点击被循环吞掉，
+    /// WM_LBUTTONDBLCLK 永不产生，<c>MouseDoubleClick</c> 处理器形同虚设，用户双击标题栏
+    /// 无法最大化（T12 实测：单屏 96 DPI 同样复现，与 DPI 无关）。加了阈值后，原地点击
+    /// 不接管，双击可达；真的拖动时指针必然越框，拖拽照旧。
+    /// 阈值框以按下点为中心**四向对称**（半幅 = dragBox/2），负坐标副屏照常成立。
+    /// </summary>
+    public static bool ShouldStartCaptionDrag(Point downAt, Point nowAt, Size dragBox)
+    {
+        // dragBox <=0 时退化成"必须真的移动才算拖动"，绝不反过来把原地不动判成拖拽
+        var halfW = Math.Max(0, dragBox.Width) / 2;
+        var halfH = Math.Max(0, dragBox.Height) / 2;
+        return Math.Abs(nowAt.X - downAt.X) > halfW || Math.Abs(nowAt.Y - downAt.Y) > halfH;
+    }
+
+    /// <summary>
     /// 手工布局窗口的**最小尺寸**（设计 800×600 @96dpi → 物理像素）。
     /// 为什么必须随 DPI 折算：这些窗体是 FormBorderStyle.None + 手工布局，WinForms 不会替我们
     /// 缩放 <c>MinimumSize</c>——写死 800×600 在 200% 屏上等于允许把窗口缩到设计值的一半，
@@ -145,5 +165,43 @@ public static class WindowGeometry
     {
         var s = ShellLogic.DpiScale.Of(dpi);
         return Math.Max(1, (int)Math.Round(designPoint * 96.0 / 72.0 * s));
+    }
+
+    /// <summary>
+    /// 跨倍率后窗口该落到的物理矩形：按 newDpi/oldDpi 等比缩放，尽量保持左上角，
+    /// 越界则平移回目标屏 <paramref name="targetWork"/> 内。
+    ///
+    /// 为什么需要它（真机 T11 实测缺口）：主窗从 96 DPI 主屏拖到 168 DPI 副屏后物理尺寸
+    /// 仍是 1280x840，而标题栏已经长到 56px——壳只在**启动时**按当时那屏的倍率算过一次
+    /// 1280*scale，运行中跨屏（或用户改显示倍率）没人重算，于是页面可用区被静默压掉 43%，
+    /// 高倍率屏上"窗口越用越小"。PerMonitorV2 下 WinForms 也不会替手工布局的窗体改尺寸。
+    /// 纪律：DPI 数据退化（≤0）一律原样返回；目标屏工作区拿不到（Empty）只放大不搬运，
+    /// 绝不把窗口顶到用户找不到的位置。
+    /// </summary>
+    public static Rectangle RescaleWindowForDpi(Rectangle current, int oldDpi, int newDpi,
+        Rectangle targetWork)
+    {
+        if (oldDpi <= 0 || newDpi <= 0) return current;
+        if (oldDpi == newDpi && !targetWork.IsEmpty)
+            return ClampIntoWork(current, targetWork);
+
+        var ratio = (double)newDpi / oldDpi;
+        var w = Math.Max(1, (int)Math.Round(current.Width * ratio));
+        var h = Math.Max(1, (int)Math.Round(current.Height * ratio));
+        var moved = new Rectangle(current.X, current.Y, w, h);
+        return targetWork.IsEmpty ? moved : ClampIntoWork(moved, targetWork);
+    }
+
+    /// <summary>把矩形塞进 <paramref name="work"/>：尺寸先钳到屏大小，再平移回屏内
+    /// （先夹右下再夹左上，保证宽高不越界时位置一定合法）。</summary>
+    private static Rectangle ClampIntoWork(Rectangle r, Rectangle work)
+    {
+        var w = Math.Min(r.Width, work.Width);
+        var h = Math.Min(r.Height, work.Height);
+        var x = Math.Min(r.X, work.Right - w);
+        var y = Math.Min(r.Y, work.Bottom - h);
+        x = Math.Max(x, work.Left);
+        y = Math.Max(y, work.Top);
+        return new Rectangle(x, y, w, h);
     }
 }

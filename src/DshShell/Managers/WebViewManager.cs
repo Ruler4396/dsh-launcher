@@ -161,6 +161,54 @@ public sealed class WebViewManager : IWebViewManager
 
     // ---- 主窗级（B 组映射）----
     /// <summary>主窗口 WebView2 控件引用（托盘恢复检查/重载渲染用）。</summary>
+    /// <summary>
+    /// 主窗导航的**唯一实现点**：真实服务页与壳自绘等待态都从这里走。
+    /// 【线程约定】CoreWebView2 是 UI 线程亲和对象，本方法必须在 UI 线程调用——封送归调用方
+    /// （组合根），本方法只负责"能导航就导航，控件不可用则返回 false 并留痕"，绝不抛。
+    /// </summary>
+    public static bool NavigateMainWeb(string url)
+    {
+        var core = MainCoreOrNull();
+        if (core is null) return false;
+        try { core.Navigate(url); return true; }
+        catch (Exception ex)
+        {
+            Logger.Warn($"navigate main web failed: {ex.Message}");   // 窗体正在关闭等竞态：留痕不阻断
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 把主窗临时换成壳自绘的等待态 HTML（全仓唯一允许 <c>NavigateToString</c> 的地方）。
+    /// 等待态出现在"服务刚被壳自己停掉"的时刻，所以页面**不得引用任何外部资源**——HTML 由
+    /// <c>ShellLogic.WaitingPage.Html</c> 产出并转义（真机 2026-09-20：这 20 秒里界面挂着已断连
+    /// 的旧页面，用户两次读成"点了没反应"）。
+    /// </summary>
+    public static bool ShowWaitingPage(string html)
+    {
+        var core = MainCoreOrNull();
+        if (core is null) return false;
+        try { core.NavigateToString(html); return true; }
+        catch (Exception ex)
+        {
+            Logger.Warn("waiting state navigation failed: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>主窗 CoreWebView2；控件为空/已释放/句柄未建/尚未初始化时返回 null（调用方留痕）。</summary>
+    private static CoreWebView2? MainCoreOrNull()
+    {
+        var web = MainWeb;
+        if (web is null || web.IsDisposed || !web.IsHandleCreated) return null;
+        try { return web.CoreWebView2; }
+        catch (Exception ex)
+        {
+            Logger.Warn("main web core unavailable: " + ex.Message);
+            return null;
+        }
+    }
+
     public static WebView2? MainWeb { get; set; }
     /// <summary>渲染崩溃标志：窗口隐藏期间崩溃，恢复窗口时须重载页面，否则白屏。</summary>
     public static bool RecoveryNeeded { get; set; }

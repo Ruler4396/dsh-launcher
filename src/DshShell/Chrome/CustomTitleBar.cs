@@ -21,6 +21,10 @@ internal sealed class CustomTitleBar : Panel
     private bool _dark;
     private bool _hoverMin, _hoverMax, _hoverClose;
 
+    /// <summary>标题栏左键按下的记账点（null = 无候选）。只有指针越过拖拽阈值才交给系统
+    /// HTCAPTION 拖拽循环——见 OnMouseDown/OnMouseMove 的 T12 修复注释。</summary>
+    private Point? _captionDownAt;
+
     // ---- 2026-09：dsh 版本徽标（"DeepSeek Harness v0.1.0-rc.7"，点击弹版本信息窗） ----
     /// <summary>dsh 当前版本（原始版本号，如 "0.1.0-rc.7"；空 = 不渲染徽标）。Program 启动时写入。
     /// 徽标展示文本由 ShellLogic.VersionInfoPolicy 纯函数合成（UI 层零拼字符串）。</summary>
@@ -31,6 +35,15 @@ internal sealed class CustomTitleBar : Panel
     private Rectangle _versionRect = Rectangle.Empty;
     /// <summary>版本徽标是否悬停（手型光标 + 下划线）。</summary>
     private bool _hoverVersion;
+
+    // ---- 2026-09-20：安全模式标记可点（用户 × 关掉通知卡之后唯一的退出入口） ----
+    /// <summary>点击"（安全模式）"标记的回调（Program 注入：重新呈现带退出动作的卡片）。</summary>
+    internal Action? SafeModeMarkerClick;
+    /// <summary>安全模式标记的命中矩形（OnPaint 计算；空 = 当前没有可点的标记）。</summary>
+    private Rectangle _safeModeRect = Rectangle.Empty;
+    private bool _hoverSafeMode;
+    /// <summary>标记用色与通知卡 Urgent 强调条同色（#D81E06）：两处"你正在降级运行"的线索必须看起来是一回事。</summary>
+    private static readonly Color SafeModeMarkerColor = Color.FromArgb(216, 30, 6);
 
     // ---- 任务五：后台更新构建状态（UI 反馈） ----
     /// <summary>构建状态枚举（组合根写入，OnPaint 读取渲染）。
@@ -155,6 +168,35 @@ internal sealed class CustomTitleBar : Panel
         return -1;
     }
 
+    /// <summary>分段绘制标题：安全模式标记着红并记下命中矩形。整条画不下时退回省略号绘制且
+    /// **不给命中框**——宁可"此刻不可点"，也不要让用户点到看不见的东西。</summary>
+    private void DrawTitleSegments(Graphics g,
+        IReadOnlyList<ShellLogic.TitleBarText.Segment> segments, int titleLeft,
+        Rectangle titleRect, Color textColor)
+    {
+        _safeModeRect = Rectangle.Empty;
+        var x = titleLeft;
+        var total = 0;
+        foreach (var s in segments) total += TextRenderer.MeasureText(g, s.Text, _titleFont).Width;
+        if (total > titleRect.Width)
+        {
+            TextRenderer.DrawText(g, _titleText, _titleFont, titleRect, textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            return;
+        }
+        foreach (var s in segments)
+        {
+            var w = TextRenderer.MeasureText(g, s.Text, _titleFont).Width;
+            var r = new Rectangle(x, 0, w, Height);
+            TextRenderer.DrawText(g, s.Text, _titleFont, r,
+                s.SafeModeMarker ? SafeModeMarkerColor : textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+            if (s.SafeModeMarker)
+                _safeModeRect = _safeModeRect.IsEmpty ? r : Rectangle.Union(_safeModeRect, r);
+            x += w;
+        }
+    }
+
     private void OnMouseDown(object? s, MouseEventArgs e)
     {
         if (e.Button == MouseButtons.Right)
@@ -171,13 +213,25 @@ internal sealed class CustomTitleBar : Panel
             catch (Exception ex) { Logger.Info($"version badge click handler failed: {ex.Message}"); }
             return;
         }
-        // 拖拽移动窗口（系统级 HTCAPTION 拖拽）
-        NativeMethods.ReleaseCapture();
-        NativeMethods.SendMessage(_owner.Handle, (uint)Win32Constants.WM_NCLBUTTONDOWN, (IntPtr)Win32Constants.HTCAPTION, IntPtr.Zero);
+        // [2026-09-20] 点击"（安全模式）"标记：重新呈现带退出动作的通知卡（用户 × 关掉卡片之后
+        // 只剩这个入口；没有它就得手动重启一次才能再拿到退出通道）。同样不进拖拽循环。
+        if (!_safeModeRect.IsEmpty && _safeModeRect.Contains(e.Location))
+        {
+            try { SafeModeMarkerClick?.Invoke(); }
+            catch (Exception ex) { Logger.Info($"safe-mode marker click handler failed: {ex.Message}"); }
+            return;
+        }
+        // [真机 T12 修复] 这里**不再**立刻进系统拖拽循环：旧实现无条件
+        // ReleaseCapture + SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)，一进模态循环就把第二次
+        // 点击吞掉，WM_LBUTTONDBLCLK 永不产生 → OnDoubleClick 是死代码，用户双击标题栏
+        // 无法最大化（单屏 96 DPI 同样复现）。现改为"按下先记账，指针越过拖拽阈值才接管"，
+        // 判定在 WindowGeometry.ShouldStartCaptionDrag（有契约测试）。
+        _captionDownAt = e.Location;
     }
 
     private void OnMouseUp(object? s, MouseEventArgs e)
     {
+        _captionDownAt = null; // 一次按下只对应一次拖拽候选
         if (e.Button != MouseButtons.Left) return;
         switch (HitButton(e.X))
         {
@@ -200,19 +254,34 @@ internal sealed class CustomTitleBar : Panel
 
     private void OnMouseMove(object? s, MouseEventArgs e)
     {
+        // [真机 T12 修复] 按下后指针越过拖拽阈值 → 此刻才交给系统 HTCAPTION 拖拽循环。
+        // 阈值内一律不接管，双击因此能走到 OnDoubleClick；真拖动必然越阈值，行为不变。
+        if (_captionDownAt is { } down && e.Button == MouseButtons.Left
+            && DshWeb.Win32.WindowGeometry.ShouldStartCaptionDrag(
+                down, e.Location, SystemInformation.DragSize))
+        {
+            _captionDownAt = null; // 系统接管后本控件不再参与这次按下
+            NativeMethods.ReleaseCapture();
+            NativeMethods.SendMessage(_owner.Handle, (uint)Win32Constants.WM_NCLBUTTONDOWN, (IntPtr)Win32Constants.HTCAPTION, IntPtr.Zero);
+            return;
+        }
         var btn = HitButton(e.X);
         var h1 = btn == 0;
         var h2 = btn == 1;
         var h3 = btn == 2;
         // [2026-09 版本徽标] 悬停 → 手型光标（与按钮悬停同通道去重 Invalidate）
         var overVersion = _dshVersion.Length > 0 && _versionRect.Contains(e.Location);
-        if (overVersion != _hoverVersion || h1 != _hoverMin || h2 != _hoverMax || h3 != _hoverClose)
+        // 安全模式标记同样给手型光标：红色是"这里不一样"，手型才是"这里能点"
+        var overSafeMode = !_safeModeRect.IsEmpty && _safeModeRect.Contains(e.Location);
+        if (overVersion != _hoverVersion || overSafeMode != _hoverSafeMode
+            || h1 != _hoverMin || h2 != _hoverMax || h3 != _hoverClose)
         {
             _hoverVersion = overVersion;
+            _hoverSafeMode = overSafeMode;
             _hoverMin = h1;
             _hoverMax = h2;
             _hoverClose = h3;
-            Cursor = overVersion ? Cursors.Hand : Cursors.Default;
+            Cursor = overVersion || overSafeMode ? Cursors.Hand : Cursors.Default;
             Invalidate();
         }
     }
@@ -220,6 +289,9 @@ internal sealed class CustomTitleBar : Panel
     /// <summary>版本徽标命中矩形（OnPaint 计算，客户区坐标；空 = 无徽标）。
     /// 供点击命中测试与 E2E TestHook（真实鼠标点击坐标）读取。</summary>
     internal Rectangle GetVersionBadgeRect() => _versionRect;
+
+    /// <summary>安全模式标记命中矩形（空 = 当前标题里没有可点的标记，或被省略号裁掉不给命中框）。</summary>
+    internal Rectangle GetSafeModeMarkerRect() => _safeModeRect;
 
     private void ShowSystemMenu(Point p)
     {
@@ -251,6 +323,12 @@ internal sealed class CustomTitleBar : Panel
         var titleLeft = (int)Math.Round(34 * _scale);
         var rightBound = Width - _btnWidth * BtnCount - (int)Math.Round(8 * _scale); // 按钮区左缘（预留 8 设计像素）
         var badgeText = ShellLogic.VersionInfoPolicy.ComposeTitleBarBadge(_dshVersion);
+        // 标题按段绘制：主体与"（有更新）"用常规色，"（…安全模式…）"用红并且可点。
+        // 测量一律带 g：无 Graphics 的重载按"任意一个 DC"采样 DPI，与下面用 g 绘制的实际宽度
+        // 可能不同一档 → 命中框与墨迹错位（混屏移动后尤其明显，版本徽标当年就是这条）。
+        var segments = ShellLogic.TitleBarText.Segments(_titleText);
+        var titleWidth = 0;
+        foreach (var seg in segments) titleWidth += TextRenderer.MeasureText(g, seg.Text, _titleFont).Width;
         Rectangle titleRect;
         if (badgeText.Length > 0)
         {
@@ -258,13 +336,11 @@ internal sealed class CustomTitleBar : Panel
             // 与标题间隙收窄到 4px，读作 "DeepSeek Harness v0.1.2-rc.1" 的自然文本流。
             using var badgeFont = new Font(_titleFont.FontFamily, _titleFont.Size,
                 _hoverVersion ? FontStyle.Underline : FontStyle.Regular, GraphicsUnit.Pixel);
-            // 测量一律带 g：无 Graphics 的重载按"任意一个 DC"采样 DPI，与下面用 g 绘制的
-            // 实际宽度可能不同一档 → 徽标落点与点击命中框错位（混屏移动后尤其明显）。
             var badgeWidth = TextRenderer.MeasureText(g, badgeText, badgeFont).Width;
             var gap = (int)Math.Round(4 * _scale);
             // 徽标紧跟标题实测宽度之后；空间不足（窗口过窄/标题过长）时右对齐按钮区，
             // 标题被 EndEllipsis 收窄——徽标位置稳定、始终可点。
-            var badgeX = titleLeft + TextRenderer.MeasureText(g, _titleText, _titleFont).Width + gap;
+            var badgeX = titleLeft + titleWidth + gap;
             if (badgeX + badgeWidth > rightBound) badgeX = Math.Max(titleLeft, rightBound - badgeWidth);
             _versionRect = new Rectangle(badgeX, 0, badgeWidth, Height);
             titleRect = new Rectangle(titleLeft, 0, Math.Max(0, badgeX - titleLeft - gap), Height);
@@ -276,8 +352,7 @@ internal sealed class CustomTitleBar : Panel
             _versionRect = Rectangle.Empty;
             titleRect = new Rectangle(titleLeft, 0, Math.Max(0, rightBound - titleLeft), Height);
         }
-        TextRenderer.DrawText(g, _titleText, _titleFont, titleRect,
-            textColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+        DrawTitleSegments(g, segments, titleLeft, titleRect, textColor);
 
         // 窗口按钮：用 Segoe MDL2 字形（最小化/最大化/还原/关闭），清晰且与系统图标一致
         using (var btnFont = new Font("Segoe MDL2 Assets", (float)Math.Round(11 * _scale), FontStyle.Regular, GraphicsUnit.Pixel))
