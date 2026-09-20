@@ -56,6 +56,55 @@ public class Regression_TitleBarSafeModeMarker
             bar.DrawToBitmap(bmp2, new Rectangle(0, 0, 900, 32));
             Assert.True(bar.GetSafeModeMarkerRect().IsEmpty,
                 "没有安全模式标记时仍留着命中矩形");
+
+            // ---- 悬停痕迹（2026-09-20 用户："安全模式能点你得有点痕迹，比如鼠标移上去加下划线"）----
+            // 走生产的 OnMouseMove（反射，不为此加测试钩子）：指针进标记 → 红像素必须变多
+            // （多出来的就是那条下划线），且命中框不许跟着抖动；指针移开 → 回到基线。
+            bar._titleText = "DeepSeek Harness（安全模式）";
+            bar.Invalidate();
+            using var bmp3 = new Bitmap(900, 32, PixelFormat.Format32bppArgb);
+            bar.DrawToBitmap(bmp3, new Rectangle(0, 0, 900, 32));
+            var markerNow = bar.GetSafeModeMarkerRect();
+            Assert.Equal(marker, markerNow);            // 布局不随悬停移动
+            var plain = CountRed(bmp3, markerNow);
+
+            // 类里有私有的 MouseMove 事件处理器，也继承了 Control.OnMouseMove —— GetMethod 不加
+            // 参数类型会 AmbiguousMatch。这里取受保护的 OnMouseMove(MouseEventArgs)：它才是
+            // "鼠标移动"的真实入口（内部再触发事件走到私有处理器），比直接调私有那个更贴近生产。
+            var onMove = typeof(CustomTitleBar).GetMethod("OnMouseMove",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(MouseEventArgs) }, null)!;
+            void Move(int px, int py) => onMove.Invoke(bar, new object[]
+            { new MouseEventArgs(MouseButtons.None, 0, px, py, 0) });
+
+            Move(markerNow.Left + 3, 16);
+            using var bmp4 = new Bitmap(900, 32, PixelFormat.Format32bppArgb);
+            bar.DrawToBitmap(bmp4, new Rectangle(0, 0, 900, 32));
+            var hovered = CountRed(bmp4, markerNow);
+            _out.WriteLine($"red pixels: plain={plain} hovered={hovered}");
+            Assert.True(hovered > plain,
+                $"悬停没有画出下划线（红像素 {plain} → {hovered}）——用户看不出这里能点");
+            Assert.Same(Cursors.Hand, bar.Cursor);
+
+            // 【真机回归 2026-09-20 用户报】鼠标移走后下划线还留着：标题栏的 MouseLeave 清理了
+            // _hoverVersion/_hoverMin/Max/Close，但新加的 _hoverSafeMode 漏在里面。
+            // 指针离开标题栏后不再有任何 MouseMove 事件，残留状态就永久挂在屏幕上。
+            var onLeave = typeof(CustomTitleBar).GetMethod("OnMouseLeave",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(EventArgs) }, null)!;
+            onLeave.Invoke(bar, new object[] { EventArgs.Empty });
+            using var bmp6 = new Bitmap(900, 32, PixelFormat.Format32bppArgb);
+            bar.DrawToBitmap(bmp6, new Rectangle(0, 0, 900, 32));
+            var afterLeave = CountRed(bmp6, markerNow);
+            _out.WriteLine($"red pixels after MouseLeave = {afterLeave}（基线 {plain}）");
+            Assert.Equal(plain, afterLeave);
+            Assert.Equal(Cursors.Default, bar.Cursor);
+
+            Move(6, 16);                                 // 移回主体（非标记）
+            using var bmp5 = new Bitmap(900, 32, PixelFormat.Format32bppArgb);
+            bar.DrawToBitmap(bmp5, new Rectangle(0, 0, 900, 32));
+            Assert.Equal(plain, CountRed(bmp5, markerNow));
+            Assert.Equal(Cursors.Default, bar.Cursor);
         }, "标题栏安全模式标记绘制");
 
     /// <summary>数一片区域里"安全模式红"（#D81E06，与通知卡 Urgent 强调条同色）的像素数。</summary>

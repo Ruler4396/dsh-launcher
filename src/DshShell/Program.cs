@@ -1230,14 +1230,16 @@ internal static class Program
     private static void ShowWaitingPage(string headline, string detail)
     {
         var html = ShellLogic.WaitingPage.Html(headline, detail);
-        TryPostToMainForm(GetMainFormForDialog(), () => WebViewManager.ShowWaitingPage(html));
-        Trace($"waiting state shown: {headline}");
+        // 留痕必须在 UI 线程真的画完之后：反过来会写出"等待态已显示"其实根本没显示
+        TryPostToMainForm(GetMainFormForDialog(), () => Trace(WebViewManager.ShowWaitingPage(html)
+            ? $"waiting state shown: {headline}" : $"waiting state NOT shown (main web unavailable): {headline}"));
     }
     private static void NavigateMainWebToCurrentServiceUrl()
     {
-        Trace($"token follow: navigating main web to {CurrentWebUrl}");
-        if (!WebViewManager.NavigateMainWeb(CurrentWebUrl))
-            Trace("token follow: main web unavailable; skip navigation");
+        // 先导航、后留痕：反过来会出现"说要导航 → 其实没导航"的两行日志（真机 21:55:25 实测到）
+        if (WebViewManager.NavigateMainWeb(CurrentWebUrl))
+            Trace($"token follow: navigating main web to {CurrentWebUrl}");
+        else Trace("token follow: main web unavailable; skip navigation");
     }
 
     /// <summary>

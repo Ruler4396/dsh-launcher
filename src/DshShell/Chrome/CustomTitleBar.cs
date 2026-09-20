@@ -120,9 +120,13 @@ internal sealed class CustomTitleBar : Panel
         MouseMove += OnMouseMove;
         MouseLeave += (_, _) =>
         {
-            if (_hoverMin || _hoverMax || _hoverClose || _hoverVersion)
+            // 每一个悬停态都要在这里清：漏一个就会"鼠标移走了痕迹还在"（2026-09-20 真机就是
+            // 漏了 _hoverSafeMode，安全模式标记的下划线留在原地）。离开后本控件不再收到
+            // MouseMove，残留状态没有任何自愈机会。
+            if (_hoverMin || _hoverMax || _hoverClose || _hoverVersion || _hoverSafeMode)
             {
                 _hoverMin = _hoverMax = _hoverClose = _hoverVersion = false;
+                _hoverSafeMode = false;
                 Cursor = Cursors.Default;
                 Invalidate();
             }
@@ -188,11 +192,22 @@ internal sealed class CustomTitleBar : Panel
         {
             var w = TextRenderer.MeasureText(g, s.Text, _titleFont).Width;
             var r = new Rectangle(x, 0, w, Height);
-            TextRenderer.DrawText(g, s.Text, _titleFont, r,
-                s.SafeModeMarker ? SafeModeMarkerColor : textColor,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
             if (s.SafeModeMarker)
+            {
+                // 悬停加下划线：与版本徽标同一套承诺。红色只说明"这里不一样"，下划线才说明
+                // "这里能点"（2026-09-20 用户：安全模式能点你得有痕迹，比如鼠标移上去加下划线）。
+                // 宽度一律按非下划线字体量（下划线不改字形推进），命中框与布局因此不随悬停抖动。
+                using var markerFont = new Font(_titleFont.FontFamily, _titleFont.Size,
+                    _hoverSafeMode ? FontStyle.Underline : FontStyle.Regular, GraphicsUnit.Pixel);
+                TextRenderer.DrawText(g, s.Text, markerFont, r, SafeModeMarkerColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
                 _safeModeRect = _safeModeRect.IsEmpty ? r : Rectangle.Union(_safeModeRect, r);
+            }
+            else
+            {
+                TextRenderer.DrawText(g, s.Text, _titleFont, r, textColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
+            }
             x += w;
         }
     }
