@@ -20,8 +20,14 @@ internal static class Program
     private const string NodeDownloadUrl = "https://nodejs.org/";
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // 自检模式：`PrereqCheck.exe --selftest-node <结果文件>` —— 只跑 Node 判定并把结论写文件。
+        // 本程序是 WinExe（GUI 子系统，无控制台），所以结果落文件而不是 stdout；
+        // 真实机器上"fnm 装的 node 到底认不认"必须可测，不能只靠安装向导现场试。
+        if (args.Length >= 2 && string.Equals(args[0], "--selftest-node", StringComparison.OrdinalIgnoreCase))
+            return SelfTestNode(args[1]);
+
         var missing = new StringBuilder();
         // 测试开关：PREREQ_SIMULATE_MISSING=1 模拟两者缺失（验收弹窗/退出码，不弹真实检测）
         bool simulate = Environment.GetEnvironmentVariable("PREREQ_SIMULATE_MISSING") == "1";
@@ -228,51 +234,93 @@ internal static class Program
         catch { return false; }
     }
 
-    /// <summary>Node.js：PATH 上能跑 node 且主版本 ≥ 18 即算有（覆盖任何安装方式）。
-    /// 注册表 HKLM\SOFTWARE\Node.js\InstallPath 作为兜底（PATH 未刷新时）。</summary>
-    private static bool DetectNode()
+    /// <summary>Node.js 检测（带证据版）：返回"找到了哪个 node、什么版本"。</summary>
+    private static (bool Found, string Path, string Version) DetectNodeDetailed()
+    {
+        foreach (var cand in NodeCandidatePaths())
+        {
+            try
+            {
+                if (!File.Exists(cand)) continue;
+                var psi = new ProcessStartInfo(cand, "--version")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                using var proc = Process.Start(psi);
+                if (proc is null) continue;
+                var outText = proc.StandardOutput.ReadToEnd().Trim();
+                proc.WaitForExit(3000);
+                if (TryParseMajor(outText, out int major) && major >= 18)
+                    return (true, cand, outText);
+            }
+            catch { /* 该候选不可执行/无权限：下一个 */ }
+        }
+        return (false, "", "");
+    }
+
+    private static bool DetectNode() => DetectNodeDetailed().Found;
+
+    /// <summary>把"只有 IO 才能知道的事实"（fnm 装了哪些版本）取出来，交给纯函数枚举候选。</summary>
+    private static List<string> NodeCandidatePaths()
+    {
+        var fnmRoot = Path.Combine(
+            Environment.GetEnvironmentVariable("FNM_DIR")
+            ?? Path.Combine(Environment.GetEnvironmentVariable("APPDATA") ?? "", "fnm"),
+            "node-versions");
+        var versionDirs = Array.Empty<string>();
+        try { if (Directory.Exists(fnmRoot)) versionDirs = Directory.GetDirectories(fnmRoot); }
+        catch { /* 无权限/竞态删除：别名那几条仍然会试 */ }
+        return NodeLocator.EnumerateCandidates(
+            Environment.GetEnvironmentVariable("PATH"),
+            ReadRegistryPath("Machine"),
+            ReadRegistryPath("User"),
+            Environment.GetEnvironmentVariable,
+            ReadRegistryNodeInstallPath(),
+            versionDirs);
+    }
+
+    /// <summary>自检模式实现：把判定结论（含命中的 node 路径与版本）写进指定文件。</summary>
+    private static int SelfTestNode(string outFile)
+    {
+        var r = DetectNodeDetailed();
+        var text = $"found={(r.Found ? 1 : 0)}\r\nnode={r.Path}\r\nversion={r.Version}\r\n"
+                   + $"candidates={NodeCandidatePaths().Count}";
+        try { File.WriteAllText(outFile, text, Encoding.UTF8); } catch { return 2; }
+        return r.Found ? 0 : 2;
+    }
+
+    /// <summary>读注册表里的持久 PATH（Machine / User）。msiexec 的进程 PATH 就是这两份拼出来的，
+    /// 但"刚装完还没刷新环境变量"的场景下进程 PATH 可能滞后，所以两份都单独扫一遍。</summary>
+    private static string ReadRegistryPath(string scope)
     {
         try
         {
-            foreach (var p in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
-            {
-                if (string.IsNullOrWhiteSpace(p)) continue;
-                try
-                {
-                    var exe = Path.Combine(p.Trim('"'), "node.exe");
-                    if (File.Exists(exe))
-                    {
-                        var psi = new ProcessStartInfo(exe, "--version")
-                        {
-                            UseShellExecute = false,
-                            CreateNoWindow = true,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                        };
-                        using var proc = Process.Start(psi);
-                        if (proc is null) continue;
-                        string outText = proc.StandardOutput.ReadToEnd().Trim();
-                        proc.WaitForExit(3000);
-                        if (TryParseMajor(outText, out int major) && major >= 18)
-                            return true;
-                    }
-                }
-                catch { /* 该 PATH 项不可用则跳过 */ }
-            }
-            // 注册表兜底（安装器写了 InstallPath 但当前会话 PATH 未刷新）
-            foreach (var hive in new[] { "HKLM\\SOFTWARE\\Node.js", "HKLM\\SOFTWARE\\WOW6432Node\\Node.js" })
-            {
-                try
-                {
-                    var ip = Microsoft.Win32.Registry.GetValue(hive, "InstallPath", null) as string;
-                    if (!string.IsNullOrWhiteSpace(ip) && File.Exists(Path.Combine(ip, "node.exe")))
-                        return true;
-                }
-                catch { }
-            }
-            return false;
+            var key = scope == "Machine"
+                ? @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                : @"Environment";
+            return Microsoft.Win32.Registry.GetValue(
+                (scope == "Machine" ? "HKEY_LOCAL_MACHINE" : "HKEY_CURRENT_USER") + "\\" + key,
+                "Path", "") as string ?? "";
         }
-        catch { return false; }
+        catch { return ""; }
+    }
+
+    /// <summary>官方安装器写的 HKLM\SOFTWARE\Node.js\InstallPath（仅作候选之一，**必须过版本**）。</summary>
+    private static string ReadRegistryNodeInstallPath()
+    {
+        foreach (var hive in new[] { "HKLM\\SOFTWARE\\Node.js", "HKLM\\SOFTWARE\\WOW6432Node\\Node.js" })
+        {
+            try
+            {
+                var ip = Microsoft.Win32.Registry.GetValue(hive, "InstallPath", null) as string;
+                if (!string.IsNullOrWhiteSpace(ip)) return ip;
+            }
+            catch { }
+        }
+        return "";
     }
 
     private static bool TryParseMajor(string version, out int major)
@@ -284,6 +332,86 @@ internal static class Program
         var dot = v.IndexOf('.');
         if (dot > 0) v = v.Substring(0, dot);
         return int.TryParse(v, out major);
+    }
+
+    #endregion
+
+    #region Node 候选路径枚举（纯函数，无 IO）
+
+    /// <summary>
+    /// 枚举"机器上可能是 node.exe 的地方"。
+    ///
+    /// 【为什么要认识版本管理器】旧实现只看两件事：进程 PATH 里有没有 node.exe、
+    /// HKLM\SOFTWARE\Node.js\InstallPath 在不在。用 fnm / nvm / volta / scoop 装 node 的人，
+    /// node 既不在持久 PATH 里（那些工具是**每个 shell 会话**用 `fnm env` 注入一个软链目录），
+    /// 也不写官方安装器的注册表键 —— 于是安装向导对着机器上真实可用的 node 说"你没有 Node.js"，
+    /// 直接把人拦在 MSI 门外（本机实测：node v24.21.0 装在 %APPDATA%\fnm 下，注册表 PATH 里
+    /// 一个 node.exe 都没有）。反过来，旧实现那条注册表兜底只判 <c>File.Exists</c> 不判版本，
+    /// 残留的 <c>D:\node</c> 哪怕是个 node 12 也会放行 —— 一个假阴性配一个假阳性。
+    ///
+    /// 本函数只产候选、不碰文件系统（IO 与版本判定留给调用方），因此可被逐条枚举核对。
+    /// </summary>
+    internal static class NodeLocator
+    {
+        public static List<string> EnumerateCandidates(
+            string? processPath, string? machinePath, string? userPath,
+            Func<string, string?> env, string registryInstallPath,
+            IReadOnlyList<string>? fnmVersionDirs = null)
+        {
+            var candidates = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void Add(string? path)
+            {
+                if (string.IsNullOrWhiteSpace(path)) return;
+                var trimmed = path.Trim('"');
+                if (trimmed.Length == 0) return;
+                if (seen.Add(trimmed)) candidates.Add(trimmed);
+            }
+
+            // 1) 三份 PATH：进程（可能已被版本管理器注入）、机器、用户（持久真相）
+            foreach (var scope in new[] { processPath, machinePath, userPath })
+                foreach (var dir in (scope ?? "").Split(';'))
+                    if (!string.IsNullOrWhiteSpace(dir)) Add(Path.Combine(dir.Trim(), "node.exe"));
+
+            // 2) fnm：FNM_DIR 优先，退到 %APPDATA%\fnm；别名目录在前，实体版本目录按名倒序
+            var fnm = FirstNonEmpty(env("FNM_DIR"), Path.Combine(AppData(env), "fnm"));
+            foreach (var alias in new[] { "default", "lts-latest", "lts" })
+                Add(Path.Combine(fnm, "aliases", alias, "node.exe"));
+            Add(Path.Combine(fnm, "node-versions", "node.exe")); // 少数布局直接放根上
+            // 没设过别名（`fnm install` 后没 `fnm default`）时，别名目录是空的——
+            // 所以调用方还要把 node-versions\<ver>\installation 这份实账递进来。
+            foreach (var dir in fnmVersionDirs ?? Array.Empty<string>())
+                Add(Path.Combine(dir, "installation", "node.exe"));
+
+            // 3) nvm-windows：NVM_SYMLINK 是当前生效版本的软链
+            Add(Path.Combine(FirstNonEmpty(env("NVM_SYMLINK"),
+                Path.Combine(AppData(env), "nvm")), "node.exe"));
+
+            // 4) volta / scoop / chocolatey：各自固定的 current 目录
+            Add(Path.Combine(FirstNonEmpty(env("VOLTA_HOME"),
+                Path.Combine(LocalAppData(env), "Volta")), "bin", "node.exe"));
+            Add(Path.Combine(env("USERPROFILE") ?? "", "scoop", "apps", "nodejs", "current", "node.exe"));
+            Add(Path.Combine(env("ProgramData") ?? @"C:\ProgramData",
+                "chocolatey", "lib", "nodejs", "tools", "node.exe"));
+
+            // 5) 官方安装器的注册表键（交给调用方判版本，不再"存在即通过"）
+            if (!string.IsNullOrWhiteSpace(registryInstallPath))
+                Add(Path.Combine(registryInstallPath, "node.exe"));
+
+            return candidates;
+        }
+
+        private static string FirstNonEmpty(params string?[] values)
+        {
+            foreach (var v in values) if (!string.IsNullOrWhiteSpace(v)) return v;
+            return "";
+        }
+
+        private static string AppData(Func<string, string?> env)
+            => env("APPDATA") ?? Path.Combine(env("USERPROFILE") ?? "", "AppData", "Roaming");
+
+        private static string LocalAppData(Func<string, string?> env)
+            => env("LOCALAPPDATA") ?? Path.Combine(env("USERPROFILE") ?? "", "AppData", "Local");
     }
 
     #endregion

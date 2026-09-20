@@ -4,7 +4,27 @@
 
 ## [Unreleased]
 
-（暂无）
+### 修复
+
+- **MSI 前置检查对着 fnm/nvm/volta 装的 node 说"你没有 Node.js"（v0.5.0 发布当晚本机实测）**：
+  用户在有 node v24.21.0 的机器上被 `dsh-launcher 安装 - 缺少运行环境` 弹窗拦下。旧
+  `PrereqCheck.DetectNode` 只有两条判据——进程 PATH 里找 `node.exe`、以及
+  `HKLM\SOFTWARE\Node.js\InstallPath` 存在即放行。版本管理器装的 node **两条都不满足**：
+  fnm 是**每个 shell 会话**用 `fnm env` 注入一个 `fnm_multishells\<pid>_<ts>` 软链目录，
+  持久 PATH（注册表里那份，也正是 msiexec 看到的那份）里一个 node.exe 都没有；fnm 也不写官方
+  安装器的注册表键。实测本机：旧算法在同一世界下判 `hasNode=False`（与截图一致），而
+  `%APPDATA%\fnm\aliases\default\node.exe` 跑起来就是 v24.21.0。
+  修复：候选路径枚举下沉为纯函数 `NodeLocator.EnumerateCandidates`（不碰文件系统，可逐条核对），
+  扫三份 PATH（进程 / 机器 / 用户）+ fnm（`FNM_DIR`、`aliases\{default,lts-latest,lts}`、
+  `node-versions\<ver>\installation`）+ nvm-windows（`NVM_SYMLINK`）+ volta + scoop + chocolatey。
+  **顺带堵掉反向缺陷**：注册表那条兜底过去只判 `File.Exists` 不判版本——本机残留的
+  `InstallPath=D:\node\`（node 24.13.1 时代留下，目录已删）就是活例子，若那里还躺着个 node 12
+  旧实现会照样放行；现在所有候选一律实跑 `node --version` 并要求主版本 ≥ 18。
+  验证：新增 `PrereqCheck.exe --selftest-node <结果文件>`（WinExe 无控制台，结论落文件），
+  本机三例实测——持久 PATH 世界下 `found=1 node=…\fnm\aliases\default\node.exe v24.21.0` 放行；
+  把版本管理器落点全指向空目录 + PATH 清空 → `found=0` 仍然拦得住（不是"改成永远放行"）；
+  旧算法对照实测 `hasNode=False`，证明这条修复针对的是真实假阴性。
+
 
 ## [0.5.0] - 2026-09-20
 
