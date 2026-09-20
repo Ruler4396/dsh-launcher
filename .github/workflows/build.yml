@@ -46,7 +46,7 @@ jobs:
         # P1-5：test.ps1 是唯一测试入口（第 1 节内部已跑 dotnet test，此前独立
         # "Run unit tests" 步骤导致单测在 CI 双跑）；含静态断言 + uninstall/-CleanData
         # 隔离行为测试（防 R05 数据边界 / R06 脚本行为漂移）。纯只读 + %TEMP% 隔离，runner 上安全。
-        # -SkipRealOs：Real-OS 层（Category=RealOS，48 条）不在这里跑，改由下面的 real-os step 跑。
+        # -SkipRealOs：Real-OS 层（Category=RealOS，57 条 / CI 实测 44s）不在这里跑，改由下面的 real-os step 跑。
         # 本地开发者裸跑 ./scripts/test.ps1 仍是全量硬门禁——这个开关只为去掉与 realos workflow
         # 的重复，不削弱任何一层的断言。
         shell: pwsh
