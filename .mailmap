@@ -1,0 +1,7 @@
+# 把 agent 在本机提交时用的两个身份，归并到仓库所有者的账号上。
+# 目的：GitHub 的 Contributors 图不再出现两个"没人认识"的未绑定条目（历史上 337/342 条提交）。
+# 这是非破坏性的做法——不改写历史、不动已发布的 tag。
+Ruler4396 <Ruler4396@users.noreply.github.com> dsh-launcher dev <dev@dsh-launcher.local>
+Ruler4396 <Ruler4396@users.noreply.github.com> dsh-launcher <dsh-launcher@users.noreply.github.com>
+# 顺带把网页端编辑器那一次提交的名字也归一（同一个人，显示名不同）
+Ruler4396 <Ruler4396@users.noreply.github.com> KINBUN <110097886+Ruler4396@users.noreply.github.com>
