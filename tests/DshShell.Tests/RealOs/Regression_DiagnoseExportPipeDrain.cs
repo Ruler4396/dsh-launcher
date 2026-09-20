@@ -15,6 +15,10 @@ namespace DshShell.Tests.RealOs;
 ///
 /// 后果面：--diagnose 导出会在用户机器上卡住（诊断包恰恰是出问题时才需要的东西）。
 /// 本用例用 15s 上限包裹，红时表现为"未完成"而不是把整个测试宿主挂死。
+///
+/// Trait 必须逐字写 `("Category", "RealOS")`：xUnit 的 trait 匹配区分大小写，本文件原先写成
+/// `("category", "real-os")`，于是 RealOS 层的 filter 两头都筛不到它（既进不了 realos 专用
+/// workflow，也不会被快线的 `Category!=RealOS` 排除）——真起 powershell 的用例悄悄躲在快线里。
 /// </summary>
 public class Regression_DiagnoseExportPipeDrain
 {
@@ -37,7 +41,7 @@ public class Regression_DiagnoseExportPipeDrain
     }
 
     [Fact]
-    [Trait("category", "real-os")]
+    [Trait("Category", "RealOS")]
     public void FloodedStderr_DoesNotHang_AndReturnsBounded()
     {
         Assert.True(File.Exists(Powershell), $"前置：找不到宿主机 PowerShell：{Powershell}");
@@ -50,7 +54,7 @@ public class Regression_DiagnoseExportPipeDrain
 
     /// <summary>超时路径必须留下有界结果而不是悬挂进程：小输出正常返回。</summary>
     [Fact]
-    [Trait("category", "real-os")]
+    [Trait("Category", "RealOS")]
     public void SmallOutput_StillCaptured()
     {
         var args = "-NoProfile -NonInteractive -Command \"'l1';'l2'\"";

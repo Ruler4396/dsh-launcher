@@ -77,9 +77,11 @@ public class BootHealthMonitorRealOsTests
         }
     }
 
-    // 下面三条**故意拆开**：realos-test.yml 用 `dotnet test -v q`，xUnit 的 Error Message 整段被吞，
-    // CI 红只留一行 "[FAIL] 测试名"。所以把这条链的三个环节做成三个独立断言——哪一个断，
-    // 那个环节的名字就直接出现在红灯里，不需要日志 verbosity 就能归因。
+    // 下面三条**故意拆开**：这条链原本在 CI 上只留一行 "[FAIL] 测试名"（realos-test.yml 当时用
+    // `dotnet test -v q`，xUnit 的 Error Message 整段被吞）。所以把三个环节做成三个独立断言——
+    // 哪一个断，那个环节的名字就直接出现在红灯里，不依赖日志 verbosity 就能归因。
+    // 2026-09-20：Real-OS 层并入 build.yml 的 real-os step，verbosity 已改为 -v minimal，
+    // 但三条独立断言的形状保留——红灯自解释比"能读到日志"更便宜，也更经得起 runner 侧的截断。
 
     [Fact]
     [Trait("Category", "RealOS")]

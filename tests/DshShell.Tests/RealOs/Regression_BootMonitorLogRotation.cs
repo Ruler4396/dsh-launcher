@@ -18,6 +18,7 @@ namespace DshShell.Tests.RealOs;
 /// 修复形态：删掉私有实现，日志层改为注入 <c>ServiceManager.ReadLogIncrementShared</c>，
 /// 一处实现、偏移由回传值统一推进。本文件同时锁住这个"只许有一份"的契约。
 /// </summary>
+[Trait("Category", "RealOS")] // 归属必须显式：本类原先没有 trait，快线和 realos 层的 filter 各跑不到它
 public class Regression_BootMonitorLogRotation : IDisposable
 {
     private readonly string _dir;

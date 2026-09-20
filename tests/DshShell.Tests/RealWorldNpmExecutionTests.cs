@@ -12,11 +12,15 @@ namespace DshShell.Tests;
 /// 目的：锁定"底层执行引擎"在真实机器上可用——300+ 单测 Mock Process 无法发现 OS 级 Bug
 ///（cmd.exe /c 引号剥离、.cmd 编码冲突、PATH 缺失等真实环境问题），本测试是硬性防线。
 ///
-/// 跳过策略（xUnit v2 无运行时 Skip，用环境变量门控实现"CI 可跳过 / 本地强制"）：
-///  - 默认（CI / 无 DSH_FORCE_NPM_SMOKE）：无 Node 时静默通过（记录 Trace），不阻断 CI；
-///  - test.ps1 本地运行时设置 DSH_FORCE_NPM_SMOKE=1：**无 Node 即失败**（硬门禁，
-///    强制开发者本机验证真实 Node 链路可用——详见 test.ps1 中的配置注释）。
+/// 跳过策略（xUnit v2 无运行时 Skip，用环境变量门控实现"缺环境即硬失败"）：
+///  - DSH_FORCE_NPM_SMOKE=1 且本机无 Node：**失败**（硬门禁，强制验证真实 Node 链路可用）。
+///    test.ps1 与 realos workflow 都无条件设这个变量，所以"静默通过"那一支实际只在
+///    手工裸跑 dotnet test 时才可能走到——不要把它当成 CI 的常态。
+/// 分层归属：本类属于 Real-OS 层（快线 test.ps1 -SkipRealOs 会把它排除，改由 real-os step
+/// 必跑），所以这里同时带 Category=RealOS 与 realos workflow 里的 FQN 条件——两道锁，
+/// 任何一道被误删都不会让真 npm 链路从 CI 上消失。
 /// </summary>
+[Trait("Category", "RealOS")]
 public class RealWorldNpmExecutionTests
 {
     private static bool IsNodeAvailable()

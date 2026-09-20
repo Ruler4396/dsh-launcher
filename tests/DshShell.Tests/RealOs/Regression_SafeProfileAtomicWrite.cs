@@ -20,6 +20,7 @@ namespace DshShell.Tests.RealOs;
 /// 那是本机文件系统的既有限制，不是本缺陷，作为断言只会产出抖动红灯。因此并发用例只断言
 /// **终态有效**（目标存在且可解析），把"固定名踩车"交给 T1 做确定性判定。
 /// </summary>
+[Trait("Category", "RealOS")] // 归属必须显式：本类原先没有 trait，快线和 realos 层的 filter 各跑不到它
 public class Regression_SafeProfileAtomicWrite : IDisposable
 {
     private readonly string _home;

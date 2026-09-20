@@ -12,13 +12,23 @@ dsh-launcher 测试入口：单元测试 + 脚本/打包集成检查 + 可选冒
   4. 冒烟测试（需 dist\DshWeb.exe 存在且 3080 端口开放）：
      启动壳应用、校验窗口标题、验证单实例保护，然后自动关闭。
 
+加 -SkipRealOs（CI 快线用，本地不要加）：
+  dotnet test 排除 Category=RealOS 层。默认全量——本地跑本脚本仍是真实进程/真实 npm 硬门禁。
+
+加 -RealOsOnly（CI 的 real-os 专用环节用）：
+  只跑 Real-OS 层（filter 见 $realOsLayerFilter）+ 1b 节分层归属闸，然后退出。
+  与 -SkipRealOs 互斥。两个 filter 字符串的唯一真相源在本文件，workflow 不再各抄一份。
+
 .EXAMPLE
 ./scripts/test.ps1
 ./scripts/test.ps1 -Smoke
+./scripts/test.ps1 -SkipRealOs   # 只跑快线，Real-OS 层由 CI 的 real-os 专用环节负责
 #>
 param(
     [switch]$Smoke,
-    [switch]$RealNet
+    [switch]$RealNet,
+    [switch]$SkipRealOs,
+    [switch]$RealOsOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,17 +58,86 @@ foreach ($hygieneVar in 'DSH_WEB_URL','DSH_WEB_PORT','DSH_VERSION','DSH_TEST_SPL
 Write-Host "== 1. C# 单元测试 (dotnet test) ==" -ForegroundColor Cyan
 # 任务二硬门禁：DSH_FORCE_NPM_SMOKE=1 强制 RealWorldNpmExecutionTests 真实执行
 #（无 Mock 直接跑 node.exe + npm-cli.js）。本机若无 Node 环境该测试将**失败**并阻断，
-# 打破"测试幻觉"——本地验证真实 npm 链路必须可用（CI 无 Node 时该变量未设，测试自动跳过）。
+# 打破"测试幻觉"——本地验证真实 npm 链路必须可用。注意：这一行是**无条件**设置的，
+# CI 上由 build.yml 调起本脚本时同样带这个变量，所以不存在"CI 未设变量→自动跳过"这条路径。
 $env:DSH_FORCE_NPM_SMOKE = "1"
 # -RealNet：显式开启重型真实网络全链路用例（DshUpdatePipelineRealTests，分钟级、依赖镜像可达性）。
 # 默认关闭——CI build 流水线总是调用本脚本，若默认开启会把发布门禁劫持给外部网络状况。
 if ($RealNet) { $env:DSH_FORCE_REALNET = "1" } else { Remove-Item Env:DSH_FORCE_REALNET -ErrorAction SilentlyContinue }
-$testOut = dotnet test (Join-Path $root "tests\DshShell.Tests") -c Release --nologo -v minimal 2>&1
+# -SkipRealOs：把 Category=RealOS 这一层从本次运行里排除。**默认不开**——本地开发者跑
+# test.ps1 仍然是全量硬门禁（真实 npm / 真实进程 / 真实退出码），保住"任务二"那条铁律。
+# 只有 CI 传它：那里 Real-OS 层由 -RealOsOnly 那一遍跑（同一份 Release 产物，不再编译一次）。
+# 旧写法是两层各跑一次无/半 filter，同 46 条真实用例每次 push 重复一遍（占快线 68s 里的 54s）。
+# ---- 分层 filter 的唯一真相源 ----
+# 1b 节的不重不漏断言复用下面这两个变量：改这里等于同时改 CI 与门禁，
+# 不允许 workflow 里再抄第三份 filter 字符串（抄一份就漂移一份）。
+$fastFilter = 'Category!=RealOS'
+$realOsLayerFilter = '(Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests)&Category!=RealNet'
+if ($SkipRealOs -and $RealOsOnly) {
+    Write-Host "[FAIL] -SkipRealOs 与 -RealOsOnly 互斥：一次调用只允许跑一层" -ForegroundColor Red
+    exit 1
+}
+$testFilter = if ($RealOsOnly) { $realOsLayerFilter } elseif ($SkipRealOs) { $fastFilter } else { $null }
+$testArgs = @((Join-Path $root "tests\DshShell.Tests"), '-c', 'Release', '--nologo', '-v', 'minimal')
+if ($testFilter) { $testArgs += @('--filter', $testFilter) }
+$testOut = dotnet test $testArgs 2>&1
 $testCode = $LASTEXITCODE
 # 失败时把断言详情也留下：原来 -v q + 只取最后 12 行，xUnit 的 Error Message 块被整体截掉，
 # CI 红了只能靠读代码猜原因（issue #25 排查时踩过）。改 -v minimal + 120 行留证。
 $testOut | Select-Object -Last 120
-Assert-True ($testCode -eq 0) "dotnet test 通过（含真实环境冒烟测试）"
+$layerNote = if ($RealOsOnly) { "Real-OS 层" } elseif ($SkipRealOs) { "快线，已排除 Category=RealOS" } else { "全量，含 RealOS 真实环境冒烟" }
+Assert-True ($testCode -eq 0) "dotnet test 通过（$layerNote）"
+
+Write-Host "`n== 1b. Real-OS 分层归属断言（源码级，零编译成本）==" -ForegroundColor Cyan
+# 分层完全靠 xUnit trait 字符串匹配，而它区分大小写、拼错就**静默失效**：本仓库真出现过
+# [Trait("category", "real-os")]——RealOS filter 筛不到它，Category!=RealOS 也排除不掉它，
+# 于是两条真起 powershell 的用例只躲在"无 filter 全跑"那一遍里。光修一处不算修完，这里钉死。
+# 只扫代码行、不扫注释：注释里讲这个事故经过时必然提到错误拼写（同 G6/G9 那条教训）。
+$layerFiles = @(
+    Get-ChildItem (Join-Path $root "tests\DshShell.Tests\RealOs") -Filter *.cs -Recurse -ErrorAction SilentlyContinue
+    Get-ChildItem (Join-Path $root "tests\DshShell.Tests") -Filter *.RealOs.cs -Recurse -ErrorAction SilentlyContinue
+) | Sort-Object -Property FullName -Unique
+Assert-True (@($layerFiles).Count -ge 1) "分层归属闸至少扫到 1 个 Real-OS 文件（实测 $(@($layerFiles).Count)；为 0 = 本闸已经瞎了）"
+$misattributed = @()
+foreach ($lf in $layerFiles) {
+    $lines = @((Get-Content $lf.FullName) | Where-Object { $_ -notmatch '^\s*//' })
+    $factIdx = @(); $traitIdx = @(); $badTraitIdx = @(); $classIdx = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $ln = $lines[$i]
+        if ($ln -match '^\s*\[(Fact|Theory)\b') { $factIdx += $i; continue }
+        if ($ln -match '^\s*\[Trait\(') {
+            if ($ln -match '^\s*\[Trait\(\s*"Category"\s*,\s*"(RealOS|RealNet)"\s*\)\s*\]') { $traitIdx += $i }
+            else { $badTraitIdx += $i }
+            continue
+        }
+        if ($classIdx -lt 0 -and $ln -match '^\s*(public|internal)\s+(sealed\s+|abstract\s+|partial\s+)*class\s') { $classIdx = $i }
+    }
+    # 类级 trait（写在 class 声明之前）一次覆盖全类方法；否则每个 [Fact]/[Theory] 后面必须紧跟自己的 trait。
+    $classLevel = ($classIdx -gt 0 -and @($traitIdx | Where-Object { $_ -lt $classIdx }).Count -gt 0)
+    $uncovered = 0
+    if (-not $classLevel) {
+        foreach ($fi in $factIdx) {
+            $hasOwn = $false
+            foreach ($ti in $traitIdx) { if ($ti -gt $fi -and $ti -le ($fi + 4)) { $hasOwn = $true; break } }
+            if (-not $hasOwn) { $uncovered++ }
+        }
+    }
+    if ($badTraitIdx.Count -gt 0) {
+        $misattributed += "$($lf.Name): 第 $($badTraitIdx[0]+1) 行起有 $($badTraitIdx.Count) 处 Trait 不是逐字 [Trait(`"Category`", `"RealOS`")]（大小写/键名不符即筛不到）"
+    }
+    if ($uncovered -gt 0) {
+        $misattributed += "$($lf.Name): $($uncovered)/$($factIdx.Count) 个用例没有 Category trait，会在两层的 filter 里各跑一次或一次都不跑"
+    }
+}
+Assert-True ($misattributed.Count -eq 0) ("Real-OS 层文件的每个用例都必须显式归属（详见上一条注释）；命中：" + ($misattributed -join ' || '))
+
+if ($RealOsOnly) {
+    # real-os 专用一遍：静态断言与 uninstall 行为测试属于快线，这里不重复跑。
+    Write-Host ""
+    if ($script:failed -eq 0) { Write-Host "Real-OS 层通过" -ForegroundColor Green; exit 0 }
+    Write-Host "$($script:failed) 项测试失败" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
 $webCmd = Get-Content (Join-Path $root "scripts\dsh-web.cmd") -Raw
@@ -128,6 +207,29 @@ Assert-True ($shellSrc -match 'RotateIfNeeded\(\)') "壳启动早段执行日志
 Assert-True ($shellSrc -match '--diagnose') "壳支持 --diagnose 诊断导出"
 Assert-True ($appEnvSrc -match 'IsLifetimePluginInstalled') "壳检测 lifetime 插件（托盘/配置降级；探测现居 AppEnvironment.ReadLifetimeMode）"
 Assert-True ($dshUpdateMgrSrc -match 'StagedUpdate\.MarkPending') "壳实现 dsh 延迟应用更新（staged；T2 后暂存写入位于 DshUpdateManager）"
+# 真机实证（2026-09-20 用户指出）：DSH_TEST_UPDATE_SIGNAL 的 dsh 分支曾**直接 return 一个
+# 通知结论**，于是绕过"本地已是最新就不提示"这道门，弹出过一张自相矛盾的卡片
+# "检测到 dsh 0.1.5-rc.2（当前 0.1.5-rc.2）"。假信号只许替换"远端版本"这一个输入。
+$noticeCtors = ([regex]::Matches($dshUpdateMgrSrc, 'new ShellLogic\.UpdateNoticeFlowPolicy\.Outcome\(')).Count
+Assert-True ($noticeCtors -eq 1) "DshUpdateManager 只允许 1 处直接构造通知结论（当前 $noticeCtors，只应是 test-hook-ignored）：其余一律经 Decide，否则假信号会绕过已最新不提示的门"
+$decideCalls = ([regex]::Matches($dshUpdateMgrSrc, 'UpdateNoticeFlowPolicy\.Decide\s*\(')).Count
+Assert-True ($decideCalls -eq 1) "通知裁决必须只有一个入口 UpdateNoticeFlowPolicy.Decide（当前 $decideCalls）"
+# 真机实测（2026-09-20）：Phase 4 抽函数把"用户没跳过过更新"编码成比较结果 -1，而判据是
+# `<= 0` 即静默 → **全员收不到 dsh 更新提示**（沙盒里没有 skipped-update.json，日志却写着
+# skipped-by-user）。跳过状态必须以"版本串或 null"进裁决，不得以结论 int 进。
+Assert-True ($dshUpdateMgrSrc -match 'Decide\([^;]*skippedVersion:\s*StagedUpdate\.ReadSkippedDshVersion') "跳过版本必须以版本串（无记录=null）传进 Decide，不得传比较结果 int——哨兵与判据撞车会让'从没跳过过'的用户被当成'已跳过'"
+# 真机 T14 实测缺口（修 G）：坏插件在**就绪前**把服务打死时，过去只有 E2010 一条死路——
+# 安全模式询问只挂在运行期 E2007 / 页面 E1008 上。启动失败处理必须过这道归因判定。
+Assert-True ($shellSrc -match 'StartupFailureRecoveryPolicy\.ShouldOfferSafeMode') "启动失败处理必须咨询 StartupFailureRecoveryPolicy（就绪前插件崩溃也要给安全模式入口，否则用户只剩一个'知道了'）"
+# 真机复测（2026-09-20，用户真实 ~/.dsh 注入坏插件）：答"是"之后旧实现只弹一句
+# "关闭本提示后重新打开 dsh-launcher"的回执就结束进程——把唯一走得通的那一步丢给用户手动做。
+# 现在答"是"必须就地重跑启动流水线（且一次会话只问一次，不可能来回弹）。
+Assert-True ($shellSrc -match 'StartupStep\.RetryInSafeMode') "启动失败答复用安全模式后必须就地重跑流水线（RetryInSafeMode），不得只留一句'请你自己重开'"
+# 就绪失败的错误码只有一个真相源（真机实测：LauncherApp 把日志码写死成 E2002，弹窗却按裁决给
+# E2010——同一件事两个码，按码归因的人只会看到"启动超时"，错过"进程就绪前退出"这个真实形态）
+$launcherAppSrc = Get-Content (Join-Path $root "src\DshShell\LauncherApp.cs") -Raw
+Assert-True ($launcherAppSrc -notmatch 'Logger\.Error\(\$"[^"]*service readiness failed[^;]*ErrorCodes\.E20') "readiness failed 的日志码不得硬编码错误码"
+Assert-True ($launcherAppSrc -match 'service readiness failed[\s\S]{0,160}MapVerdictErrorCode') "readiness failed 日志码必须来自 MapVerdictErrorCode（与用户弹窗同源）"
 Assert-True ($shellSrc -notmatch '\.dsh-web\.log') "壳不再引用旧式 .dsh-web.log 路径"
 
 # ---- issue #25 收口：通知只有一条通道（自绘卡片），WPN/系统 Toast 通路整体移除 ----
@@ -141,10 +243,40 @@ $wpnHits = @($srcAll | Where-Object {
     (Get-Content $_.FullName -Raw) -match 'SystemToast\.|Windows\.UI\.Notifications|CreateToastNotifier|ToastNotificationManager|DllImport\("[^"]*wpnapps' } |
     ForEach-Object { $_.Name })
 Assert-True ($wpnHits.Count -eq 0) "壳源码不得再引用 WPN/系统 Toast 通路（命中：$($wpnHits -join ', ')）"
+# 真机复测（2026-09-20 用户真实 ~/.dsh 注入坏插件）：答"是"之后旧实现只弹一句
+# "关闭本提示后重新打开 dsh-launcher"的回执就结束进程——把唯一走得通的那一步丢给用户手动做。
+# 现在回执弹窗与那句承诺都不许存在（放在 $srcAll 定义之后：第一次插错位置把整个脚本跑断了）。
+$receiptHits = @($srcAll | Where-Object {
+    (Get-Content $_.FullName -Raw) -match 'ArmedNotice|关闭本提示后重新打开' } | ForEach-Object { $_.Name })
+Assert-True ($receiptHits.Count -eq 0) "安全模式回执弹窗与'让用户手动重开'的承诺不得存在（命中：$($receiptHits -join ', ')）"
+# 真机反馈（同日，用户第二次误判）：点"退出安全模式"后 20+ 秒界面仍挂着已断连的旧页面，
+# 看起来就是"没反应"。修复是把这段时间换成壳自绘的等待态（HTML 由纯函数转义产出）。
+$safeLifecycleSrc = Get-Content (Join-Path $root "src\DshShell\Lifecycle\SafeModeLifecycle.cs") -Raw
+Assert-True ($shellSrc -match 'ShowWaitingPage\("正在退出安全模式' -or ($shellSrc -match 'ShowWaitingPage\(' -and $shellSrc -match 'ExitingSafeModeTitle')) "退出安全模式必须立刻给出可见反馈（等待态 + 标题栏），不能把 20 秒空窗留给用户猜"
+$navToString = @($srcAll | Where-Object { (Get-Content $_.FullName -Raw) -match 'NavigateToString\(' } | ForEach-Object { $_.Name })
+Assert-True ($navToString.Count -eq 1) "等待态导航只允许一个实现点（命中：$($navToString -join ', ')）——多处 NavigateToString 必然有一份不管 UI 线程/转义"
+Assert-True ($safeLifecycleSrc -notmatch 'CoreWebView2|NavigateToString') "Lifecycle 层不得直接碰 WebView2：等待态必须由组合根注入委托（CoreWebView2 是 UI 线程亲和对象）"
+$titleWrites = ([regex]::Matches($safeLifecycleSrc, 'form\.Text\s*=')).Count
+Assert-True ($titleWrites -eq 1) "安全模式标题栏文字只有一个写入点 ApplyTitle（实测 $titleWrites）——多处写 Text 就是'一处改一处漏'的成因"
 Assert-True (Test-Path (Join-Path $root "src\DshShell\Windows\NoticeCard.cs")) "唯一通知实现 NoticeCard.cs 必须存在"
 $noticeCardSrc = Get-Content (Join-Path $root "src\DshShell\Windows\NoticeCard.cs") -Raw
 Assert-True ($noticeCardSrc -match 'ShowWithoutActivation') "通知卡片非模态：显示时不抢焦点"
 Assert-True ($noticeCardSrc -match 'ShellLogic\.NoticeCardLayout') "通知卡片几何只消费纯函数（不得自乘 DPI 系数）"
+# 真机反馈（2026-09-20 用户实拍）：圆角难看 + 左侧红/蓝条"没对齐"、左缘有时一条白线。
+# 同一个根因链：Region 裁圆角把色条上下两头切掉；OnPaint 先画色条后画 1px 边框，边框压在色条那一列。
+# 只扫代码行——整文件正则会被"解释为什么不再有圆角"的注释命中（本闸首跑就被自己的注释判红，
+# 与 G6/G9 同一条教训）。
+$noticeCardCode = @(Get-Content (Join-Path $root "src\DshShell\Windows\NoticeCard.cs") |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -and -not $_.StartsWith('//') -and -not $_.StartsWith('///') -and -not $_.StartsWith('*') }) -join "`n"
+Assert-True ($noticeCardCode -notmatch 'GraphicsPath|Region\s*=\s*new Region') "通知卡片必须直角：不得再用 GraphicsPath/Region 裁角（会裁掉左侧强调条的上下两头）"
+$ncBorderAt = $noticeCardCode.IndexOf('DrawRectangle(border')
+$ncAccentAt = $noticeCardCode.IndexOf('FillRectangle(accentBrush')
+Assert-True ($ncBorderAt -ge 0 -and $ncAccentAt -gt $ncBorderAt) "强调条必须画在边框**之后**（边框压在色条列上=用户看到的左缘白线；当前 border@$ncBorderAt accent@$ncAccentAt）"
+# 真机反馈（同一批）：整张卡都是动作热区 → 想复制正文就误触发"退出安全模式并重启"；
+# 命中判定必须走纯函数 HitTest，不得再手写"非 × 即整卡触发"。
+Assert-True ($noticeCardCode -match 'NoticeCardLayout\.HitTest') "卡片点击必须走 NoticeCardLayout.HitTest（只有 × 与动作行可点）"
+Assert-True ($noticeCardCode -notmatch 'CloseRect\.Contains\(e\.Location\)') "卡片不得再手写命中判定（旧实现：不是 × 的地方全都触发动作）"
 Assert-True ($noticeCardSrc -match 'NoticeDedupe\.ShouldSuppress') "通知对象必须过去重闸门（保证不重复提示）"
 $traySrc = Get-Content (Join-Path $root "src\DshShell\Managers\WindowManager.cs") -Raw
 Assert-True ($traySrc -notmatch 'ShowBalloonTip') "托盘气泡不再是通知通道（避免第二套呈现实现回潮）"
@@ -160,7 +292,20 @@ Assert-True ($traySrc -match 'MonitorWorkArea\.ForPoint') "托盘菜单钳位必
 Assert-True ($traySrc -match 'TrayMenuLayout\.PlaceAtCursor') "托盘菜单落点必须是纯函数（贴边偏移随 DPI 折算一次）"
 $ctbSrc = Get-Content (Join-Path $root "src\DshShell\Chrome\CustomTitleBar.cs") -Raw
 Assert-True ($ctbSrc -notmatch 'new Font\("[^"]+",\s*\d+(\.\d+)?F') "自绘标题栏不得用 Point 单位字号（s² 根因，见 issue #28-3）"
+# 真机 T12 实测：单屏 96 DPI 下双击标题栏**从不**最大化（P1 zoomed=False），最大化键却正常。
+# 根因就是 OnMouseDown 无条件进系统 HTCAPTION 拖拽模态循环，吞掉第二次点击。这条闸把
+# "拖拽必须过阈值"钉成机器规则：接管点唯一，且必须走 ShouldStartCaptionDrag。
+Assert-True ($ctbSrc -match 'ShouldStartCaptionDrag') "标题栏拖拽必须经 WindowGeometry.ShouldStartCaptionDrag 阈值判定（否则双击最大化再次变成死代码）"
+$ncLButtonDown = ([regex]::Matches($ctbSrc, 'SendMessage\s*\([^;]*Win32Constants\.WM_NCLBUTTONDOWN')).Count
+Assert-True ($ncLButtonDown -eq 1) "标题栏只允许 1 处 SendMessage(WM_NCLBUTTONDOWN) 接管点（当前 $ncLButtonDown）：多一处就多一条绕过阈值、吞掉双击的路径"
 Assert-True ($noticeCardSrc -match 'Win32DisplayMetricsProvider') "通知卡片的定位与 DPI 必须同源，且取物理像素工作区"
+# 真机 T11 实测：主窗拖到 175% 副屏后物理尺寸不变（1280x840），标题栏却已长到 56px——
+# 页面可用区被静默压掉 43%。根因是"跨屏后窗口尺寸要跟着倍率走"这条规则**根本没人实现**，
+# 而 DPI 几何在组合根被主窗/弹窗各抄一份。现收进 DshShellForm.OnDpiChanged 单一所有者。
+$dshFormSrc = Get-Content (Join-Path $root "src\DshShell\Windows\DshShellForm.cs") -Raw
+Assert-True ($dshFormSrc -match 'RescaleWindowForDpi') "窗体 DPI 变化必须经 WindowGeometry.RescaleWindowForDpi 跟随新倍率改物理尺寸"
+$dpiHandlers = ([regex]::Matches($shellSrc, '\.DpiChanged\s*\+=')).Count
+Assert-True ($dpiHandlers -eq 0) "组合根不得再挂 DpiChanged 处理器（当前 $dpiHandlers 处）：几何重算的唯一所有者是 DshShellForm.OnDpiChanged"
 
 # ---- issue #28-4 同族缺口：粘滞安全模式 → 拉起身份，只允许一个 ensure 入口 ----
 # 真机端到端实测到的第二次事故：ensure（缺 .dsh-safe 先重建、重建失败退回正常模式）只补在重启
@@ -170,6 +315,11 @@ Assert-True ($noticeCardSrc -match 'Win32DisplayMetricsProvider') "通知卡片�
 $decorateCalls = ([regex]::Matches($shellSrc, 'SafeModeLaunchPolicy\.Decorate\s*\(')).Count
 Assert-True ($decorateCalls -eq 1) "profile 装饰只允许 1 处调用点（当前 $decorateCalls）：必须收在 EnsureSafeProfileIdentity 内"
 Assert-True ($shellSrc -match 'ServiceIdentityDecorator\s*=\s*EnsureSafeProfileIdentity') "初始启动的身份钩子必须等于重启路径同一个 profile ensure 入口（两侧对称）"
+
+# 真机 T9 实测（托盘驻留模式）：真点托盘菜单"退出"后 `host exited=True; service port closed=False`
+# ——壳走了、node 还占着端口，下次启动被判僵尸/误杀。决策函数的 Tray 分支必须吃到 TrayExitRequested
+# 才成立；组合根漏传这个参数，ServiceLifetime.Tray 注释里"退出才停服务"的承诺就再次静默失效。
+Assert-True ($shellSrc -match 'ShouldStopServiceOnClose\([^;]*TrayExitRequested') "退出决策必须把 WindowManager.Instance.TrayExitRequested 传进 ShouldStopServiceOnClose（漏传=托盘退出不服务，真机 T9 实测过的缺陷）"
 
 # ---- Task 0.2.5 完成态静态断言（重构收尾时启用，重构中保持"旧结构基线"锁定）----
 # 目标（Step 6 收尾）：Program.cs 不再含 `: Form` 子类、WndProc、CreateParams、WebView2 事件接线，
@@ -303,6 +453,11 @@ Assert-True ($shellSrc -match '原因：\{reason\}') "下载失败弹窗暴露�
 Assert-True ($shellSrc -match 'IsNpmNotFoundError') "错误分类纯函数（npm 环境缺失 vs 网络/registry，不同建议文案）"
 $logicSrc = Get-Content (Join-Path $root "src\DshShell\ShellLogic.cs") -Raw
 Assert-True ($logicSrc -match 'IsNpmNotFoundError') "ShellLogic 提供 npm 缺失判定纯函数（契约测试锁定）"
+# 通知裁决的入参形状：只收版本串，不收"比较结果 int"。int 哨兵（-1=无记录）与判据
+# （<=0=静默）撞车过一次，代价是全员收不到更新提示——签名层面就不给它复发的位置。
+$decideSig = [regex]::Match($logicSrc, 'public static Outcome Decide\([^)]*\)')
+Assert-True ($decideSig.Success) "找不到 UpdateNoticeFlowPolicy.Decide 签名（测量器退化，先查纯函数是否被改名）"
+Assert-True ($decideSig.Value -notmatch '\bint\b') "Decide 不得再收 int 型比较结果入参（实测签名：$($decideSig.Value -replace '\s+',' ')）"
 # ---- 预热工作目录修复断言随架构升级改锁新形态：npm 回退构建必须显式传 buildDir 工作目录
 #      （相对路径 ./<tarball> 依赖该目录；ENOENT 根因同类，工作域从 prefetch_temp 迁移到 buildDir）
 #      【ADR-024】实现现居 ProcessRunner.RunNpmCommand ----
@@ -404,7 +559,15 @@ function Get-CodeLineCount {
 $g1ProgramCode = Get-CodeLineCount -Lines $programLines
 # 2014 → 2007：回滚事务补"先停服再隔离"那一环时组合根多了一处注入（+3），同批把更新应用后的
 # 第四份手写"投递到 UI 线程再导航"收敛到 PostNavigateToServiceUrl（-10）——净降，基线随之钉低。
-Assert-True ($g1ProgramCode -le 2007) "【棘轮 G1】Program.cs 代码行数 ≤ 2007（实测 $g1ProgramCode）"
+# 2007 → 2006：真机 T14 的安全模式入口最初在组合根加了 24 行代码行，本闸把它拦红；出路不是抬基线，
+# 是把"建 profile → 置标志"这条事务交回 Domain（SafeModeLaunchPolicy.ArmNextLaunch）、把两句文案交回
+# ShellLogic 策略——净降 1 行，基线按规则三只许同步变小。
+# 2006 → 2003：真机用户实环境复测又抓到"答完是只弹回执、要用户自己重开"（见落点 10 后续），改成
+# 就地重跑流水线时把失败正文整段下沉成 ShellLogic 纯函数（StartupFailureBody，7 例契约），组合根净降 3 行。
+# 2003 → 2001：加"等待态"这条可见反馈时，导航原语整个交回 WebViewManager（NavigateMainWeb /
+# ShowWaitingPage，NavigateToString 全仓唯一），组合根只留"投递到 UI 线程"——顺手把此前抄在
+# 组合根的第二份 Navigate+try/catch 也收掉，净降 2 行。
+Assert-True ($g1ProgramCode -le 2001) "【棘轮 G1】Program.cs 代码行数 ≤ 2001（实测 $g1ProgramCode）"
 
 # ---- G1b 纯函数文件的不纯原语计数（新增即红）----
 # ShellLogic.cs 自称纯函数文件（文件头规则要求有生命周期状态的资源必须抽走），但已实测驻留
@@ -640,7 +803,11 @@ $g9Moves = @(
     @{ Old='WaitSafeModeVerified';                 New='WaitVerified';          Owner='Lifecycle/SafeModeLifecycle.cs' },
     @{ Old='HandleUpdateRollbackOnBootFailure';    New='TryHandleBootFailure';  Owner='Lifecycle/UpdateRollbackCoordinator.cs' },
     @{ Old='ArmUpdateRollbackGuardFromPersistedState'; New='ArmFromPersistedState'; Owner='Lifecycle/UpdateRollbackCoordinator.cs' },
-    @{ Old='HandleUpdateConfirmedHealthy';         New='ConfirmHealthy';        Owner='Lifecycle/UpdateRollbackCoordinator.cs' }
+    @{ Old='HandleUpdateConfirmedHealthy';         New='ConfirmHealthy';        Owner='Lifecycle/UpdateRollbackCoordinator.cs' },
+    # 真机 T14（就绪前插件崩溃补安全模式入口）：这条"建 profile → 置标志"的事务先长在组合根
+    # 一个新加的 static 方法里，被 G1 棘轮当场拦红（2031 > 2007）。红得对——事务不该留在那儿。
+    # 现落 Domain，两侧同时钉住。
+    @{ Old='EnableSafeModeForNextLaunch';          New='ArmNextLaunch';         Owner='Domain/SafeModeLaunchPolicy.cs' }
 )
 $g9Leaks = @()
 $g9OwnerCache = @{}
