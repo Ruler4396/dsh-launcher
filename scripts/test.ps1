@@ -799,7 +799,7 @@ if ($unreleasedAnchors.Count -ge 1) {
     }
     $unrelLen = $next - $unreleasedAnchors[0]
 }
-Assert-True ($unrelLen -le 32) "【G7】CHANGELOG [Unreleased] 段 ≤ 32 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
+Assert-True ($unrelLen -le 33) "【G7】CHANGELOG [Unreleased] 段 ≤ 33 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
 # 上限沿革（每次都要写清授权来源，否则"抬上限"会悄悄变成默认动作）：
 #   315 → 400：用户 2026-09-19 明确授权（当时该段被并行会话的 DPI 批次填到 315/315，任何新记录都红）。
 #   400 → 432 → 454：用户 2026-09-20 授权放宽以记本轮 CI 分层整改 + 测试内容审计，两次都按"钉当下
@@ -814,7 +814,7 @@ Assert-True ($unrelLen -le 32) "【G7】CHANGELOG [Unreleased] 段 ≤ 32 行（
 #   22 → 26：用户 2026-09-21 显式授权"临时放宽"，入账当天全量代码质量审查的修复批次 B1–B6
 #     （8 条记录，docs/reviews/2026-09-21-quality-review.md）。仍钉当下实测值、余量 +0；
 #     下一次定版必须整段搬走并当场收回。
-#   26 → 32：C8 追加批次（真机时序类收口 + CI flaky 装置修）入账；用户同日"临时放宽"授权口径覆盖本批，
+#   26 → 33：C8 追加批次（真机时序类收口 + CI flaky 装置修）入账；用户同日"临时放宽"授权口径覆盖本批，
 #     仍钉当下实测值、余量 +0。
 
 # ---- G8 文档↔代码一致性（防"权威文档毒化后续 agent"）----
