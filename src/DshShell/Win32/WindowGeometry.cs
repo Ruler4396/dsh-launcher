@@ -111,7 +111,9 @@ public static class WindowGeometry
     public static (Rectangle Title, Rectangle Web) LayoutChromeRects(Size client, int dpi)
     {
         const int inset = 1;
-        var titleH = (int)Math.Round(32.0 * dpi / 96.0);
+        // [审查 N5] 裸 `* dpi / 96.0` 不收 DpiScale 时，dpi≤0（坏驱动/RDP 现场）会把标题栏塌成
+        // 0px、WebView 顶到窗口沿——正是台账第 8 条立"≤0 当 96 + 钳制"规则要防的形状。
+        var titleH = ShellLogic.DpiScale.Px(32, ShellLogic.DpiScale.Of(dpi));
         var title = new Rectangle(inset, inset,
             Math.Max(0, client.Width - 2 * inset),
             titleH);

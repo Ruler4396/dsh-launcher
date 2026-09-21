@@ -105,6 +105,16 @@ public class WindowGeometryTests
     }
 
     // ---------- LayoutChromeRects（G7 布局） ----------
+    [Fact]
+    public void LayoutChromeRects_BrokenDriverZeroDpi_FallsBackTo96Baseline()
+    {
+        // [审查 N5 2026-09-21] 坏驱动/RDP 给出 dpi≤0 时不得把标题栏塌成 0px（"≤0 当 96"
+        // 只此一条规则，归 ShellLogic.DpiScale）。旧实现 `32.0 * dpi / 96.0` 在 0 下算出 0，
+        // WebView 顶到窗口沿；且 G10 旧判据只扫 /96f 字面量，看不见这个 /96.0 形态。
+        Assert.Equal(32, WindowGeometry.LayoutChromeRects(new Size(1280, 800), 0).Title.Height);
+        Assert.Equal(32, WindowGeometry.LayoutChromeRects(new Size(1280, 800), -96).Title.Height);
+    }
+
 
     [Fact]
     public void Layout_title_height_scales_with_dpi()

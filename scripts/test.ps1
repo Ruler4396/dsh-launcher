@@ -871,11 +871,14 @@ foreach ($gf in $srcAll) {
         if ($gt -cmatch 'Math\.Clamp' -and $gt -cmatch '96f|BaseDpi' -and -not $isOwner) {
             $g10ClampSites += "$($gf.Name): $gt"
         }
-        if ($gt -cmatch '/\s*96f') { $g10RawDivisions += "$($gf.Name): $gt" }
+        # [审查 N5] 旧判据只扫 `/96f` 字面量，`/ 96.0`、`/ 96`（double/int 形态）从闸下溜走——
+        # 真违例（Program.cs 主窗尺寸、WindowGeometry 标题栏）恰用 96.0，G10"硬零"绿着而洞在。
+        # 现覆盖一切"除以 96 族"形态；DPI→系数只许走 ShellLogic.DpiScale。
+        if ($gt -cmatch '/\s*96(\.0*)?f?\b') { $g10RawDivisions += "$($gf.Name): $gt" }
     }
 }
 Assert-True ($g10ClampSites.Count -eq 0) "【G10 硬闸】DPI 钳制只在 ShellLogic.DpiScale 一处（第二份：$(if($g10ClampSites.Count){$g10ClampSites[0]}else{'clean'})）"
-Assert-True ($g10RawDivisions.Count -eq 0) "【G10 硬闸】无未钳制的裸 /96f 换算（DPI→系数只走 DpiScale.Of；首例：$(if($g10RawDivisions.Count){$g10RawDivisions[0]}else{'clean'})）"
+Assert-True ($g10RawDivisions.Count -eq 0) "【G10 硬闸】无未钳制的裸 /96、/96f、/96.0 换算（DPI→系数只走 DpiScale.Of；首例：$(if($g10RawDivisions.Count){$g10RawDivisions[0]}else{'clean'})）"
 
 # ---- G11 taskkill 只有一个启动点（Phase 5 · D2）----
 # 2026-08 的"等 taskkill 自身退出"竞态修复只打在 RunTaskKill 上，因为另有一份手写 taskkill 启动

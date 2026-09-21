@@ -613,7 +613,9 @@ internal static class Program
                 PromptApplyRestart(form, applyVersion);
             }
             var savedWindow = WindowStateStore.Load();
-            var scale = (double)form.DeviceDpi / 96.0;
+            // [审查 N5] 必须走 DpiScale：此前这里是裸 `/ 96.0`——G10 只扫 `/96f` 字面量看不见它，
+            // 且缺"≤0 当 96"与 [0.5,8] 钳制，坏驱动给 0 时主窗直接塌成 0×0。
+            var scale = ShellLogic.DpiScale.Of(form.DeviceDpi);
             if (savedWindow is not null)
             {
                 var w = Math.Max(savedWindow.WidthLogical, 800);
