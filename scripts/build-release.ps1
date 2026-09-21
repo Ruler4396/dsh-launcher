@@ -75,8 +75,10 @@ Write-Host ">> publishing prereq checker..."
 # AOT 产物是自包含原生 exe，不依赖任何共享框架；本机没装 MSVC 工具链时这一步会直接失败——
 # 失败就是红灯，绝不退回 --self-contained false 悄悄发一个"需要 .NET 才能检查 .NET"的检查器。
 $prereqOut = Join-Path $root "installer\PrereqCheck\out"
+# Native AOT 由 PrereqCheck.csproj 的 <PublishAot> 单点声明（不在命令行重复一份——上一次就是
+# 命令行写 PublishAot、csproj 里留着 SelfContained=false，两者打架被 ILLink 判 error NETSDK1102）。
 dotnet publish (Join-Path $root "installer\PrereqCheck") -c Release -r win-x64 `
-    -p:PublishAot=true -p:DebugType=none -o $prereqOut
+    -p:DebugType=none -o $prereqOut
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish PrereqCheck (Native AOT) failed" }
 $prereqExe = Join-Path $prereqOut "PrereqCheck.exe"
 if (-not (Test-Path $prereqExe)) { throw "PrereqCheck.exe not produced at $prereqExe" }

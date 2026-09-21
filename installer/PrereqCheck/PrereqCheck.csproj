@@ -11,8 +11,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PrereqCheck</AssemblyName>
-    <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>false</SelfContained>
+    <!-- Native AOT：产物是原生 exe，不依赖任何共享框架。这是本程序存在的**前提**而非优化——
+         它检测的第一件事就是"这台机器有没有 .NET"，框架依赖的产物在缺 .NET 的机器上由 apphost
+         抢先弹自己的缺运行时对话框，检查逻辑一行都跑不到（v0.5.1 及以前即如此，用户实拍）。
+         注意不要再写 SelfContained=false / PublishSingleFile：PublishAot 隐含自包含，而
+         CI 实测 `SelfContained=false` + `-p:PublishAot=true` 会被 ILLink 判为
+         error NETSDK1102（"size optimization 需要 self-contained"）直接红。 -->
+    <PublishAot>true</PublishAot>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 </Project>
