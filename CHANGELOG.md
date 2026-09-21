@@ -4,7 +4,29 @@
 
 ## [Unreleased]
 
-（暂无）
+### 修复与维护（2026-09-21 全量代码质量审查 B1–B6；逐条判决见 docs/reviews/2026-09-21-quality-review.md）
+
+- **单实例 mutex 句柄随方法返回释放**（Program.cs `using var`）：二实例直入完整启动、E1009 永不触发；
+  句柄改由 Main 的 using 作用域持有。新增闸 **G14**（造脏双断言各红一次）。
+- **崩溃钩子 stage 3 才注册而 CLI 三模式在其前 return**：stage 1/2 与 CLI 崩溃零 E9001 留痕——
+  注册点提前到 stage 1 末；`TryShowFatalDialog` 补 CLI 守卫（防无人值守被模态框挂死）。
+- **SafeModeLifecycle 异常出口不投 `SafeModeEntryFailed`**（状态机滞留瞬时态）且忽略 TryFire 否决仍跑事务；
+  两协调器同形状改为拒绝留痕；`RestartAsync` 异常折算 StartFailed（退出安全模式原为零留痕未观察异常）。补 4 条 Headless。
+- **两处 DPI 换算用 `/96.0` 绕开 G10**（旧判据只扫 `/96f` 字面量）：坏驱动 dpi=0 时主窗塌 0×0；
+  收进 `ShellLogic.DpiScale`，G10 判据扩到 `/96、/96f、/96.0`，补 dpi≤0 契约用例（两向验证）。
+- **进程"三必须"三处形状洞**：netstat 回退同步 ReadToEnd 排在限时等待前（流挂住=无限阻塞、无 Kill）；
+  `RunTaskKill` 重定向双流却从不读取；`RunPnpmInstall` 的 600s 兜底排在逐行读流之后（纸面保险）、
+  全路径无 Kill、无 ct——全部原位补齐（超时/取消杀整树）；G12 棘轮 2→1；台账 #6/#7 按实况补记。
+- **G6 只数同行 `catch {}`，~130 处块级静默 catch 在闸外**：新增 G6 v2（空体/仅注释/单
+  `return false|null|0` 判静默，`G6-EXEMPT` 显式豁免，基线 130 只减）；清最重八处——含
+  `VerifyChecksum` 把网络异常伪装成 E1004"校验和不匹配"、`ExtractPortableNode` 真因丢弃。
+- **安全模式族 13 条假绿/重复用例清除**（路径守卫、幽灵环境变量 `DSH_SAFE_MODE` Set/Get 自比、
+  一条断言 F16 已废除规则的"回归钉"、三份 E1008 逐字节重复）；沙盒隔离重写为生产 `SafeModeState`
+  真契约 + 主环境字节守卫；`DshSandbox` 夹具空心 helper 删除；快线 filter 补 `Category!=RealNet`
+  （旧账里 3 条裸 return 被计成通过）。快线 1313→1298 全绿。
+- **start-dsh.vbs/start-dsh.cmd 旧预拉起链除名**（审查裁决：对齐=在 vbs 里复刻第五份发现真相源，
+  永追不上；壳早已不经它）：删脚本、csproj/MSI/打包清单摘除、dsh-web.cmd 直达壳；
+  卸载 CA/uninstall 清理存量自启值的分支保留；除名防回流进 test.ps1 §2 与 RepoFile 契约测试。
 
 ## [0.5.2] - 2026-09-21
 

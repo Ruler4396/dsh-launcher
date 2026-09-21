@@ -60,30 +60,25 @@
 
 ## 6. `ProcessRunner.RunCapture` 的**第 6 份**副本留在 ShellLogic（D1 未完部分）
 
-- 现状：进程三必须（双流排空 + 限时等待 + 超时 `Kill(entireProcessTree)`）此前有 6 份手写实现。
-  Phase 5 · D1 已把其中 5 份并到 `Managers.ProcessRunner.RunCapture`
-  （`Domain/DshDiscovery.ProbeVersionOutput`、`RuntimeResolver.IsUsableNode`、
-  `UpdateChecker.ProbeGitDescribeVersion`、`DiagnoseExport.RunCapture` + `RunCaptureLines`）。
-  最后一份在 `ShellLogic.cs` 的 npm 帮助类里。
-- 为什么不动那一份：改成调用 `ProcessRunner.RunCapture` 会让**纯逻辑层反向依赖 Managers 层**
-  （现在是 Managers → ShellLogic）。方向一旦反掉，ShellLogic 里就能塞任意 IO，比一份重复更贵。
-- 前置条件：把那段采集本身从 ShellLogic 挪进 Managers（顺带清 G1b 的一处原语），再复用 helper。
-- 防线：**G1b** 锁住 ShellLogic 的原语行数不涨。
+- 现状（2026-09-21 审查 B4 更正位置）：第 6 份手写采集**不在** npm 帮助类（NpmHelpers 内已无
+  进程代码），实为 `ShellLogic.ProcessManagement.PidByPortViaNetstat`。本轮已把它**原位**补齐
+  三必须（双流后台排空 + `WaitForExitAsync().Wait(3000)` 限时 + 超时 `Kill(entireProcessTree)`），
+  死锁面与僵尸归零；G12 手写 `WaitForExit(数字)` 判据随之从 2 收紧到 1（余 WebRuntimeInstaller）。
+- 为什么仍不并进 RunCapture：改成调用会让**纯逻辑层反向依赖 Managers 层**（现在是
+  Managers → ShellLogic）。方向一旦反掉，ShellLogic 里就能塞任意 IO，比一份重复更贵。
+- 前置条件（不变）：把 `ProcessManagement` 的 OS 侧成员整体搬进 Managers（纯成员
+  `SplitCommandLine`/`SplitLParam` 留 ShellLogic），再复用 helper。
+- 防线：**G1b** 锁住 ShellLogic 的原语行数不涨；**G12** 手写限时采集点 ≤1。
 
-## 7. pnpm 安装阶段不可取消（T6b 顺带发现）
+## 7. pnpm 安装阶段不可取消（T6b 顺带发现）—— **已闭环（2026-09-21 审查 B4）**
 
-- 现状：关窗时"正在构建更新"的确认框提供"强制关闭"。Phase 4 · T6b 把构建占用状态
-  （`BuildInProgress` + 取消源）从组合根静态迁入 `DshUpdateManager`，并把取消令牌**真正**接进了
-  `npm pack` 下载与 npm 安装回退两条 `RunNpmCommand` 路径（取消即 Kill 进程树）。
-  **但 `ProcessRunner.RunPnpmInstall` 自己 `new Process` + 逐行读 ndjson，没有 ct 形参** →
-  pnpm 阶段（常见路径，约 10~24 秒）打不断。
-  修复前的状态更糟：`_buildCts` 从未传给任何进程，日志却写"build process canceled"——一句谎话。
-- 现在留下的路径：取消请求会让 `BuildRuntimeFromTarball` **跳过 npm 回退**（不再续一条最长
-  20 分钟的安装），tarball 按失败同形保全供下次启动免重下。
-- 前置条件：给 `RunPnpmInstall` 加 `CancellationToken` + `ct.Register(() => p.Kill(entireProcessTree:true))`
-  并在读循环里响应取消；需要一次真机长构建验证（网络门控 `-RealNet`）。
-- 防线：`BuildStatusOutcomes.Outcome_NoBuildRunning_IsIdleAndCancelIsNoOp`（幂等语义），
-  以及取消日志现在如实打印 `cancellation requested=True/False`。
+- 现状：`ProcessRunner.RunPnpmInstall` 已挂 `CancellationToken`：`ct.Register(Kill(entireProcessTree:true))`
+  + 逐行读流移入后台任务，与"等进程退出"共用**同一个 10 分钟墙钟**——2026-09-21 审查同时发现
+  本条原记载**低估**了缺陷：旧实现 `WaitForExit(600000)` 排在读流循环**之后**，流挂住时兜底
+  永不生效（真死锁面），且全路径无一处 Kill、未退出读 ExitCode 抛异常被吞成 false。三者一并修掉。
+- 真机长构建验证（网络门控 `-RealNet`）仍未跑过——取消语义由快线可及的形状保证（超时/取消
+  均以杀树收敛），**不得**据此声称"真机 pnpm 取消已实测"。
+- 保留编号以免交叉引用错位；本条已无待办。
 
 ## 8. 未钳制的裸 `/96f` DPI 换算 —— **已闭环（同日，D8 收尾）**
 
@@ -142,6 +137,10 @@
   不得再自立字面量）。已反向验证：注入一条即红并点名违例行。
 - 合法保留：`SafeProfileBuilder` 的 `@deepseek-ai/dsh-base` / `-dsh-web-app` 是**不同包名**
   （核心 bundle 成员），闸按后缀豁免。
+- **2026-09-21 审查补记（N25）**：`DshUpdateManager.cs` 与 `StagedUpdate.cs` 各硬编码一份
+  tarball 文件名 `deepseek-ai-dsh-{ver}.tgz`——连字符形态不触发 G13 的 `@`/斜杠判据，
+  "承诺与现状一致"只对了一半；scope 变更时这两处会双双漏改。修法：从
+  `PackageScope/PackageShortName` 派生文件名 + G13 扩形态（须两向验证）。
 
 ## 14. `BootHealthMonitor.AttachProcess` 的"attach 窗口"盲区（进程层可静默失去）
 
@@ -205,7 +204,9 @@
   现在闸锁成"Outcome 构造唯一 + Decide 唯一入口"。
 - 未做的部分（记债）：仓里其余 `DSH_TEST_*` 钩子（`DSH_TEST_NOTICE_CARD` /
   `DSH_TEST_FAKE_APPLY` / `DSH_TEST_INSTALL_MODE` / `DSH_TEST_ALLOW_GLOBAL_INSTALL` /
-  `DSH_WEB_URL` 外部托管）没有一条系统性核对过"只替换输入还是替换了结论"。判据口径：
+  `DSH_WEB_URL` 外部托管 / **`DSH_TEST_SPLASH_DELAY_MS`（2026-09-21 审查补记：
+  `LauncherApp.cs` 里整段 `return true` 跳过生产流水线，是"替换结论而非替换输入"的
+  最彻底一例，原名单漏了它）**）没有一条系统性核对过"只替换输入还是替换了结论"。判据口径：
   **钩子生效时，被它覆盖的那段生产决策代码是否仍然被执行**；不执行的就是绿灯遮蔽源。
 - 为什么值得单独记：这类遮蔽不会让任何测试变红，只会让"验过了"变成假话——正是本项目
   "声称强度必须匹配测量强度"要防的形态。
@@ -269,10 +270,12 @@
 | G7 | CHANGELOG 单一 `[Unreleased]` 锚点 + 段长棘轮 | 复制锚点 → 红 |
 | G8 | 文档↔代码一致性（docs/00 不得正面命令 cmd.exe；AGENTS.md 地图列全 Manager；映射表必须自称时效） | 删地图条目 → 红 |
 | G9 | 已迁出的运行期事务符号**不得回流**组合根（方法名 + 静态字段 + 回滚无阻塞轮询 + 重挂导航的委托必须是投递形式） | 注入旧方法名/字段/`Thread.Sleep`/裸方法名委托 → 红 |
-| G10 | DPI 钳制只在 ShellLogic.DpiScale 一处（硬零）；未钳制裸 `/96f` 处数棘轮 | 再抄一份钳制 → 红 |
+| G10 | DPI 钳制只在 ShellLogic.DpiScale 一处（硬零）；未钳制裸 `/96`、`/96f`、`/96.0` 换算 = 0（2026-09-21 审查 N5 扩形态：旧判据只扫 `96f`，`96.0` 从闸下溜走且两处真违例已收进 DpiScale） | 再抄一份钳制 → 红；新写一处 `/ 96.0` → 红 |
 | G11 | `taskkill` 启动点唯一 | 新增第二处启动点 → 红 |
-| G12 | 短进程采集走 `ProcessRunner.RunCapture`（调用点 ≥5 为下限）；RunCapture 之外手写限时 `WaitForExit(n)` 处数棘轮（现 2） | 手写第二套采集 → 红 |
+| G12 | 短进程采集走 `ProcessRunner.RunCapture`（调用点 ≥5 为下限）；RunCapture 之外手写限时 `WaitForExit(数字)` 处数棘轮（2026-09-21 净stat 原位修好后收紧至 1：WebRuntimeInstaller） | 手写第二套采集 → 红 |
 | G13 | npm 包名/作用域字面量只在 `DshDiscovery` 一处（硬零） | 在别处再写一次 `@deepseek-ai/dsh` → 红 |
+| G14 | 单实例 Mutex：组合根恰一处 `new Mutex` 且不得方法内 `using var` 创建（2026-09-21 审查 N1：句柄随方法返回释放=闸门整个存活期失效） | 造脏 `using var … new Mutex` → 红（两向已验） |
+| G6 v2 | 静默 catch 块级扫描：体为空/仅注释/单条 `return false\|null\|0` 判为静默，棘轮 ≤130（旧 G6 只数同行 `catch {}`，130+ 处在闸外——2026-09-21 审查 N10；豁免须 `G6-EXEMPT`+理由） | 新增一处空 catch（含多行）→ 红 |
 
 **闸本身也会写坏（2026-09-20 抓到两起，都靠"造脏副本"暴露）**：① 判据里把 `$` 当字面量写进正则
 ——`$` 是行尾锚点，这条闸永远不会红；② 用整文件正则扫"某符号不得再出现"，结果被自己写的
