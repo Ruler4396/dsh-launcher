@@ -69,10 +69,23 @@ dotnet publish (Join-Path $root "installer\FolderPicker") -c Release -r win-x64 
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish FolderPicker failed" }
 
 Write-Host ">> publishing prereq checker..."
+# Native AOT：前置检查器必须在"机器上根本没有 .NET 运行时"的现场跑起来——它检测的第一件事就是
+# .NET 在不在。旧实现是框架依赖的 WPF 单文件（177KB），没装 .NET 10 的机器上 apphost 抢先弹
+# "你必须安装 .NET Desktop Runtime"，检查逻辑一行都没执行，随后 MSI 报"程序包有问题"（用户实拍）。
+# AOT 产物是自包含原生 exe，不依赖任何共享框架；本机没装 MSVC 工具链时这一步会直接失败——
+# 失败就是红灯，绝不退回 --self-contained false 悄悄发一个"需要 .NET 才能检查 .NET"的检查器。
 $prereqOut = Join-Path $root "installer\PrereqCheck\out"
 dotnet publish (Join-Path $root "installer\PrereqCheck") -c Release -r win-x64 `
-    --self-contained false -p:PublishSingleFile=true -o $prereqOut
-if ($LASTEXITCODE -ne 0) { throw "dotnet publish PrereqCheck failed" }
+    -p:PublishAot=true -p:DebugType=none -o $prereqOut
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish PrereqCheck (Native AOT) failed" }
+$prereqExe = Join-Path $prereqOut "PrereqCheck.exe"
+if (-not (Test-Path $prereqExe)) { throw "PrereqCheck.exe not produced at $prereqExe" }
+# 原生 AOT 产物必然远大于框架依赖单文件（旧值 177KB）；小于 1MB 说明 AOT 没生效，退回去了。
+$prereqSize = (Get-Item $prereqExe).Length
+if ($prereqSize -lt 1MB) {
+    throw "PrereqCheck.exe is only $prereqSize bytes — AOT 未生效，产物仍是框架依赖（缺 .NET 的机器跑不起来）"
+}
+Write-Host "   PrereqCheck.exe = $([math]::Round($prereqSize/1MB,2)) MB (Native AOT, 不依赖共享框架)"
 
 Write-Host ">> building folder picker CA..."
 dotnet build (Join-Path $root "installer\FolderPickerCa") -c Release --nologo

@@ -145,10 +145,18 @@
     <CustomAction Id="SetAutoStartFlag" BinaryRef="FolderPickerCa"
                   DllEntry="SetAutoStartFlag"
                   Execute="immediate" Return="ignore" />
-    <!-- 安装前置检查（用户要求）：.NET Desktop Runtime 10 与 Node.js 缺失时弹窗引导下载。
-         Type-38 外部 exe（客户端进程内 MessageBox）。调度见下方 Fragment 的 InstallUISequence
-         （Sequence=1 最早执行，客户端 UI 上下文、弹窗可见）；Return="check" 使缺失/取消
-         （退出码 2/3）中止安装。 -->
+    <!-- 安装前置检查：.NET Desktop Runtime 10 与 Node.js 缺失时弹窗，用户点一次「是」即由 winget
+         静默装好缺失项（不再要求用户自己去点下载页）。Type-38 外部 exe（客户端进程内 MessageBoxW）。
+         【为什么这个 exe 必须是原生 AOT】它要检测的第一件事就是"这台机器有没有 .NET"，旧实现却是
+         框架依赖的 WPF 程序：没装 .NET 的机器上 apphost 抢先弹"你必须安装 .NET Desktop Runtime"，
+         检查逻辑一行都没执行，紧接着就是"Windows Installer 程序包有问题"（用户实拍）。
+         退出码语义：0 = 继续安装（含用户明确选择"仍然继续"）；1602 = ERROR_INSTALL_USEREXIT，
+         MSI 据此干净地报"用户已取消安装"。Return="check" 保留，但**绝不再返回随手非零码**——
+         旧实现的 2/3 就是那句通用错误的来源。静默安装（/qn，没人能点弹窗）下缺 .NET 同样返回
+         1602：装下去也起不来，与其留一个坏安装不如干净退出。
+         （曾在此处加原生 DirectorySearch + LaunchCondition 兜底，但 WiX v5 的 schema 不认
+          Set/Patterns 这两个属性，Package 也不接受 Condition 子元素——校验器直接报错，故删除，
+          检测统一由 AOT 后的检查器负责。要恢复这条原生兜底，先查准 v5 的搜索元素写法。） -->
     <CustomAction Id="CheckPrereq" BinaryRef="PrereqCheckExe"
                   ExeCommand="" Execute="immediate" Return="check" />
   </Package>

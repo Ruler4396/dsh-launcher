@@ -12,7 +12,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Windows;
 
 internal static class Program
 {
@@ -40,82 +39,145 @@ internal static class Program
             missing.AppendLine("• Node.js 18 或更高版本（dsh 服务运行必需）");
 
         if (hasDotNet && hasNode)
-            return 0; // 全部满足，继续安装
+            return Continue; // 全部满足，继续安装
 
-        // 静默安装（/qn 等无交互上下文）：弹窗无人可点会挂起安装——直接返回 2 中止，
-        // 由安装日志说明原因（用户以 UI 向导安装时弹窗可见、可正常交互）。
-        if (!Environment.UserInteractive)
-            return 2;
+        // 静默安装（/qn 等无交互上下文）：没人能点弹窗。缺 .NET 时装完也起不来 → 返回 1602 干净退出
+        // （MSI 报"用户已取消安装"，而不是旧实现返回 2 之后那句"Windows Installer 程序包有问题"）；
+        // 只缺 Node 则放行——启动器首启会引导装便携版 Node，不该因此拒绝安装。
+        if (!Environment.UserInteractive) return hasDotNet ? Continue : UserCancelled;
 
-        // 只有 .NET 缺失时才提供「自动安装」；仅 Node 缺失保持「去下载 / 取消」原行为。
         string message =
-            "检测到缺少以下运行环境，安装后 dsh-launcher 无法正常启动：\n\n"
+            "检测到缺少以下运行环境：\n\n"
             + missing.ToString().TrimEnd('\n', '\r')
-            + "\n\n请选择处理方式：自动安装缺失项、打开下载页手动安装，或取消本次安装。";
-        var result = ShowPrereqDialog(message, showAutoInstall: !hasDotNet);
-
-        if (result == MessageBoxResult.OK)
-            return AutoInstallDotNetDesktopRuntime(); // 自动安装（仅 .NET）
-
-        if (result == MessageBoxResult.Yes)
+            + "\n\n【是】自动安装缺失项（winget 静默安装，可能需要几分钟，期间请留意 UAC 确认）"
+              + "\n【否】仍然继续安装（缺 Node 时，启动器首次运行会引导下载便携版 Node）"
+              + "\n【取消】退出安装向导，稍后自行处理";
+        switch (Ask(message, MB_YESNOCANCEL | MB_WARNING))
         {
-            // 去下载：打开第一个缺失项的下载页；多个缺失时先引导最关键的
-            OpenBrowser(!hasDotNet ? DotNetDownloadUrl : NodeDownloadUrl);
-            return 3; // 用户去下载了，视为取消本次安装（重新运行向导即可）
+            case IDNO: return Continue;      // 用户明确选择"仍然继续"——这是决定，不是失败
+            case IDCANCEL: return UserCancelled;
         }
-        return result == MessageBoxResult.Cancel ? 3 : 2; // 取消=3，否/超时=2
+        return AutoInstallMissing(!hasDotNet, !hasNode);
     }
 
-    #region 自动安装 .NET Desktop Runtime 10（winget）
+    #region 退出码与对话框（不依赖任何托管 UI 栈）
 
-    /// <summary>「自动安装」动作：winget 静默安装 .NET Desktop Runtime 10。
-    /// 返回 0=已满足继续安装；2=失败中止；3=用户取消失败/去下载。</summary>
-    private static int AutoInstallDotNetDesktopRuntime()
+    /// <summary>继续安装。</summary>
+    private const int Continue = 0;
+    /// <summary>ERROR_INSTALL_USEREXIT：MSI 据此干净地报"用户已取消安装"，而不是"程序包有问题"。</summary>
+    private const int UserCancelled = 1602;
+
+    private const uint MB_OK = 0x00000000;
+    private const uint MB_YESNOCANCEL = 0x00000003;
+    private const uint MB_YESNO = 0x00000004;
+    private const uint MB_RETRYCANCEL = 0x00000005;
+    private const uint MB_WARNING = 0x00000030;
+    private const uint MB_INFORMATION = 0x00000040;
+    private const uint MB_SETFOREGROUND = 0x00000100;
+    private const uint MB_TASKMODAL = 0x00002000;
+    private const uint MB_DEFBUTTON2 = 0x00000100;
+    private const int IDOK = 1, IDCANCEL = 2, IDRETRY = 4, IDYES = 6, IDNO = 7;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
+
+    /// <summary>唯一的对话框出口：user32 MessageBoxW。
+    /// 【为什么不用 WPF】本程序要判断的第一件事就是"这台机器有没有 .NET 运行时"，而旧实现自己却是
+    /// 框架依赖的 WPF 程序：没装 .NET 10 的机器上，apphost 抢先弹"你必须安装 .NET Desktop Runtime"，
+    /// 检查逻辑一行都没执行，自动安装分支永远走不到。MessageBoxW 是系统 DLL，不需要托管 UI 栈。</summary>
+    private static int Ask(string message, uint type)
+        => MessageBoxW(IntPtr.Zero, message, "dsh-launcher 安装 - 运行环境检查",
+            type | MB_SETFOREGROUND | MB_TASKMODAL);
+
+    #endregion
+
+    #region 自动安装缺失项（winget）
+
+    /// <summary>用户同意后把缺的都装上：.NET Desktop Runtime 10 与 Node.js LTS。
+    /// 每项单独复检、单独报告；仍装不上的交给用户决定"继续/取消"，绝不返回随手非零码。</summary>
+    private static int AutoInstallMissing(bool needDotNet, bool needNode)
     {
-        // 1) 检测 winget；不存在 → 等价于「去下载」（打开 .NET 下载页，返回 3）
+        var what = new List<string>();
+        if (needDotNet) what.Add(".NET Desktop Runtime 10");
+        if (needNode) what.Add("Node.js LTS");
+
         if (!WingetAvailable())
         {
-            OpenBrowser(DotNetDownloadUrl);
-            return 3;
+            Ask("本机没有 winget（App Installer），无法自动安装。\n\n【重试】装好 App Installer 后再试一次"
+                + "\n【取消】返回后请手动安装：\n  .NET: " + DotNetDownloadUrl + "\n  Node: " + NodeDownloadUrl,
+                MB_RETRYCANCEL | MB_WARNING | MB_DEFBUTTON2);
+            if (!WingetAvailable())
+            {
+                OpenBrowser(needDotNet ? DotNetDownloadUrl : NodeDownloadUrl);
+                return UserCancelled;
+            }
         }
+        Ask("正在通过 winget 静默安装：" + string.Join(" 与 ", what)
+            + "\n\n可能需要几分钟，期间可能弹出 UAC 管理员确认，请留意并同意。",
+            MB_OK | MB_INFORMATION);
 
-        // 2) 先弹提示窗告知用户将要进行静默安装（此后同步等待，不设 60 秒超时）
-        var notice = new MessageBoxWindow(
-            "正在通过 winget 静默安装 .NET Desktop Runtime 10。\n\n"
-            + "可能需要几分钟，期间可能弹出 UAC 管理员确认，请留意并同意。\n"
-            + "安装完成后将自动返回安装向导继续。",
-            new MessageBoxButtonDef("开始安装", MessageBoxResult.OK, true));
-        notice.ShowDialogAndGetResult();
+        var stillMissing = new StringBuilder();
+        if (needDotNet)
+        {
+            if (!InstallViaWinget("Microsoft.DotNet.DesktopRuntime.10", out var dotNetDetail))
+                stillMissing.AppendLine("• .NET Desktop Runtime 10 — " + dotNetDetail);
+            else if (!DetectDotNet10Desktop())
+                stillMissing.AppendLine("• .NET Desktop Runtime 10 — winget 报成功，但复检没在 "
+                    + @"%ProgramFiles%\dotnet\shared\Microsoft.WindowsDesktop.App 下找到 10.x 目录");
+        }
+        if (needNode)
+        {
+            if (!InstallViaWinget("OpenJS.NodeJS.LTS", out var nodeDetail))
+                stillMissing.AppendLine("• Node.js LTS — " + nodeDetail);
+            else if (!DetectNode())
+                stillMissing.AppendLine("• Node.js LTS — winget 报成功，但复检跑不到主版本 ≥ 18 的 node"
+                    + "（新写入的 PATH 可能要重开资源管理器/重新登录才生效；启动器首启也会引导装便携版）");
+        }
+        if (stillMissing.Length == 0) return Continue;
 
-        // 3) 静默安装，10 分钟超时
+        var r = Ask("以下项自动安装未成功：\n\n" + stillMissing.ToString().TrimEnd('\n', '\r')
+            + "\n\n【是】仍然继续安装（缺 Node 时启动器首启会引导下载便携版 Node；"
+              + "缺 .NET 时壳起不来，装好后重开本向导即可）\n【否】取消本次安装",
+            MB_YESNO | MB_WARNING | MB_DEFBUTTON2);
+        return r == IDYES ? Continue : UserCancelled;
+    }
+
+    /// <summary>winget 静默安装一个包；返回是否成功，失败原因经 detail 带回。</summary>
+    private static bool InstallViaWinget(string packageId, out string detail)
+    {
+        detail = "";
         try
         {
             var psi = new ProcessStartInfo("winget",
-                "install Microsoft.DotNet.DesktopRuntime.10 --silent --accept-package-agreements --accept-source-agreements")
+                "install " + packageId + " --silent --accept-package-agreements --accept-source-agreements")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             using var proc = Process.Start(psi);
-            if (proc is null)
-                return FailInstallPrompt("无法启动 winget 进程。");
-
+            if (proc is null) { detail = "无法启动 winget 进程"; return false; }
+            string stdout = proc.StandardOutput.ReadToEnd();
             if (!proc.WaitForExit(600000)) // 10 分钟超时
             {
                 try { proc.Kill(entireProcessTree: true); } catch { /* 已退出则忽略 */ }
                 proc.WaitForExit();
-                return FailInstallPrompt("安装超时（超过 10 分钟）。");
+                detail = "安装超时（超过 10 分钟）";
+                return false;
             }
-
-            // 4) 退出码 0 → 重新检测 .NET；已满足返回 0（继续安装）
-            if (proc.ExitCode == 0 && DetectDotNet10Desktop())
-                return 0;
-
-            return FailInstallPrompt($"winget 退出码 {proc.ExitCode}。");
+            if (proc.ExitCode != 0)
+            {
+                detail = "winget 退出码 " + proc.ExitCode
+                    + (string.IsNullOrWhiteSpace(stdout) ? "" : "：" + stdout.Trim().Split('\n')[0]);
+                return false;
+            }
+            return true;
         }
         catch (Exception ex)
         {
-            return FailInstallPrompt($"执行出错：{ex.Message}");
+            detail = ex.Message;
+            return false;
         }
     }
 
@@ -137,69 +199,6 @@ internal static class Program
             return proc.ExitCode == 0;
         }
         catch { return false; }
-    }
-
-    /// <summary>安装失败提示：说明失败原因并给出「去下载」路径。返回 2/3 语义：
-    /// 去下载=3、取消=3、用户未响应（60 秒超时/否）=2 中止。</summary>
-    private static int FailInstallPrompt(string detail)
-    {
-        var result = ShowTimeoutableDialog(
-            "自动安装 .NET Desktop Runtime 10 失败——" + detail + "\n\n"
-            + "仍可自行下载安装；安装完成后重新运行本安装向导即可。",
-            System.Windows.MessageBoxResult.No, // 60 秒超时 → 中止（返回 2）
-            new MessageBoxButtonDef("去下载(Y)", MessageBoxResult.Yes, true),
-            new MessageBoxButtonDef("取消", MessageBoxResult.Cancel, false));
-
-        if (result == MessageBoxResult.Yes)
-        {
-            OpenBrowser(DotNetDownloadUrl);
-            return 3;
-        }
-        return result == MessageBoxResult.Cancel ? 3 : 2; // 取消=3，否/超时=2
-    }
-
-    #endregion
-
-    #region 对话框
-
-    /// <summary>弹出前置检查对话框。showAutoInstall 为 true 时才出现「自动安装」按钮；
-    /// 仅 Node 缺失时保持「去下载 / 取消」两个按钮。60 秒无响应自动按「否」（中止安装）——
-    /// 兜底静默/无人值守场景，避免安装进程无限挂起。</summary>
-    private static MessageBoxResult ShowPrereqDialog(string message, bool showAutoInstall)
-    {
-        var buttons = new List<MessageBoxButtonDef>();
-        if (showAutoInstall)
-            buttons.Add(new MessageBoxButtonDef("自动安装(A)", MessageBoxResult.OK, true)); // 默认按钮
-        buttons.Add(new MessageBoxButtonDef("去下载(Y)", MessageBoxResult.Yes, !showAutoInstall));
-        buttons.Add(new MessageBoxButtonDef("取消", MessageBoxResult.Cancel, false));
-        return ShowTimeoutableDialog(message, MessageBoxResult.No, buttons.ToArray());
-    }
-
-    /// <summary>带 60 秒超时自动关闭的对话框容器：超时按 timeoutDefault 关闭返回。</summary>
-    private static MessageBoxResult ShowTimeoutableDialog(
-        string message,
-        System.Windows.MessageBoxResult timeoutDefault,
-        params MessageBoxButtonDef[] buttons)
-    {
-        var autoClose = new System.Threading.Timer(_ => { }, null, Timeout.Infinite, Timeout.Infinite);
-        var result = timeoutDefault;
-        var dialog = new MessageBoxWindow(message, buttons);
-        var closed = false;
-        // 60 秒后自动关闭（按 timeoutDefault）
-        autoClose = new System.Threading.Timer(_ =>
-        {
-            if (!closed) { closed = true; dialog.CloseWith(timeoutDefault); }
-        }, null, TimeSpan.FromSeconds(60), Timeout.InfiniteTimeSpan);
-        try
-        {
-            result = dialog.ShowDialogAndGetResult();
-        }
-        finally
-        {
-            closed = true;
-            autoClose.Dispose();
-        }
-        return result;
     }
 
     private static void OpenBrowser(string url)
@@ -415,80 +414,4 @@ internal static class Program
     }
 
     #endregion
-}
-
-/// <summary>对话框按钮描述。</summary>
-internal readonly struct MessageBoxButtonDef
-{
-    public readonly string Text;
-    public readonly System.Windows.MessageBoxResult Result;
-    public readonly bool IsDefault;
-
-    public MessageBoxButtonDef(string text, System.Windows.MessageBoxResult result, bool isDefault)
-    {
-        Text = text;
-        Result = result;
-        IsDefault = isDefault;
-    }
-}
-
-/// <summary>带超时自动关闭的 MessageBox 替代（WPF 窗口）：支持程序化按指定结果关闭，
-/// 兜底静默/无人值守场景防挂起。按钮集合由调用方传入（顺序即显示顺序）。</summary>
-internal sealed class MessageBoxWindow : System.Windows.Window
-{
-    private System.Windows.MessageBoxResult _result;
-    private readonly System.Windows.Controls.WrapPanel _panel = new();
-
-    public MessageBoxWindow(string message, params MessageBoxButtonDef[] buttons)
-    {
-        Title = "dsh-launcher 安装 - 缺少运行环境";
-        Width = 460;
-        SizeToContent = System.Windows.SizeToContent.Height;
-        WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen;
-        ResizeMode = System.Windows.ResizeMode.NoResize;
-        ShowInTaskbar = true;
-
-        var grid = new System.Windows.Controls.StackPanel { Margin = new System.Windows.Thickness(16) };
-        var text = new System.Windows.Controls.TextBlock
-        {
-            Text = message,
-            TextWrapping = System.Windows.TextWrapping.Wrap,
-            Margin = new System.Windows.Thickness(0, 0, 0, 16),
-        };
-        grid.Children.Add(text);
-
-        _panel.HorizontalAlignment = System.Windows.HorizontalAlignment.Right;
-        foreach (var b in buttons)
-            AddButton(b.Text, b.Result, b.IsDefault);
-        grid.Children.Add(_panel);
-        Content = grid;
-    }
-
-    private void AddButton(string text, System.Windows.MessageBoxResult result, bool isDefault)
-    {
-        var btn = new System.Windows.Controls.Button
-        {
-            Content = text,
-            MinWidth = 76,
-            Margin = new System.Windows.Thickness(6, 0, 0, 0),
-            IsDefault = isDefault,
-            IsCancel = result == System.Windows.MessageBoxResult.Cancel,
-        };
-        btn.Click += (_, _) => CloseWith(result);
-        _panel.Children.Add(btn);
-    }
-
-    /// <summary>以指定结果关闭（线程安全：任意线程可调用）。</summary>
-    public void CloseWith(System.Windows.MessageBoxResult result)
-    {
-        _result = result;
-        Dispatcher.Invoke(() => Close());
-    }
-
-    /// <summary>显示窗口并返回用户选择（或超时默认结果）。</summary>
-    public System.Windows.MessageBoxResult ShowDialogAndGetResult()
-    {
-        ShowDialog();
-        return _result;
-    }
 }

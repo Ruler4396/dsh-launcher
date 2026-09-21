@@ -4,7 +4,10 @@
          与 FolderPicker 同模式，客户端进程内弹窗）。 -->
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
+    <!-- 不用 WPF/WinForms：本程序要在"机器可能根本没有 .NET"的现场跑起来（它检测的第一件事就是
+         .NET 在不在），任何托管 UI 栈都是自相矛盾——旧实现正是框架依赖的 WPF 程序，没装 .NET 的
+         机器上 apphost 抢先弹"你必须安装 .NET Desktop Runtime"，检查逻辑一行都没执行。
+         对话框改用 user32 MessageBoxW（见 PrereqCheck.cs 的 Ask）。 -->
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>PrereqCheck</AssemblyName>
