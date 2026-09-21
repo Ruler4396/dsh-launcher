@@ -72,10 +72,9 @@
 
 | 模块 | 角色 | 检查点 |
 |---|---|---|
-| `DshDiscovery` | 统一发现 | Source + InstalledVersion 是否与 start-dsh.vbs 一致 |
+| `DshDiscovery` | 统一发现 | Source + InstalledVersion 是否与唯一启动轨（壳经 DshDiscovery）一致 |
 | `UpdateChecker` | 版本检测 | 是否委托 DshDiscovery（而非独立探测） |
 | `Program.ReadGlobalDshVersion` | 版本读取 | 是否委托 DshDiscovery |
-| `start-dsh.vbs` | 服务启动 | 三级回退链是否与 DshDiscovery 一致 |
 | `Program.HandlePendingUpdateAtStartup` | 更新决策 | 基于 Identity.InstalledVersion 比较 |
 
 ### Outcome Contract 测试铁律

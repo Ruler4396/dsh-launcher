@@ -715,7 +715,7 @@ Safe-mode ask happens at most once per session, shared by all detection paths.
 ### 背景
 
 升级前系统存在**双轨制**：同一件事"把 dsh 跑起来"有两条并行实现——
-旧轨：`Program.Main → wscript start-dsh.vbs → cmd.exe`，内部再做 where-dsh/npm-shim/npx 三级回退；
+旧轨：`Program.Main → wscript start-dsh.vbs → cmd.exe`，内部再做 where-dsh/npm-shim/npx 三级回退（2026-09-21 审查 N11/B6：该脚本与全部随包分发点已从仓库物理除名——单轨制收口后它是最后一份会漂移的回退链副本；防回流由 test.ps1 §2 除名断言 + BrowserSuppressOutcomes 的 RepoFile 契约钉住）；
 新轨：`RuntimeManager → ServiceManager`。
 两轨各自探测版本与路径，"检测到的 dsh"与"启动的 dsh"可以不是同一个（FP1 身份错位事故的直接根因）。同时 `Program.cs` 仍是事实上的 God Object：HTTP 客户端、npm 执行、注册表、msiexec、PID 管理散落其间，Manager 的依赖方向被架空。
 

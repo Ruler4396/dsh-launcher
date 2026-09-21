@@ -15,7 +15,7 @@
 
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
-| 1 | `web` 子命令 + `--host 127.0.0.1 --port N --no-open` | 强 | `ShellLogic.ServiceLaunch.BuildArgs`（ShellLogic.cs）；遗留 `scripts/start-dsh.vbs` | 中 | 直启失败→E2001 响亮 | `ServiceLaunchContractTests` |
+| 1 | `web` 子命令 + `--host 127.0.0.1 --port N --no-open` | 强 | `ShellLogic.ServiceLaunch.BuildArgs`（ShellLogic.cs）；~~遗留 scripts/start-dsh.vbs~~（2026-09-21 B6 除名；壳侧 BuildArgs 为唯一实现） | 中 | 直启失败→E2001 响亮 | `ServiceLaunchContractTests` |
 | 2 | 根级 `--profile <name>`（与 `web` 互斥；只收目录名，无分隔符） | 强 | `BuildArgs` + `SafeProfileBuilder.SafeProfileName` | 中 | 安全模式双观测失败→E1011 + Deactivate 回正常模式 | `ServiceLaunchContractTests` + `SafeModeE2EOutcomes` |
 
 ## stdout / stderr 与前端消息
@@ -73,7 +73,7 @@
 | # | 依赖项 | 强/弱 | 使用位置 | 风险 | 现有兜底 | 哨兵 |
 |---|---|---|---|---|---|---|
 | 28 | 服务子进程 env：`DSH_PORT`/`DSH_LOG`（dsh 是否读取**待人工确认**） | 弱 | `ServiceManager.ApplyServiceEnvironment` | 低 | `--port` 显式传参为主 | 无 |
-| 29 | `DSH_PROFILE` env【死契约：唯一读者 start-dsh.vbs 已退出启动链，F8】 | — | `Program`（只写不读） | 低 | 无 | 删除而非测试 |
+| 29 | `DSH_PROFILE` env【死契约收口中：唯一读者 start-dsh.vbs 已于 2026-09-21 B6 除名；`Program` 侧写入仍在（F8 余项）】 | — | `Program`（只写不读） | 低 | 无 | 删除写入 |
 
 ## 时序假设
 

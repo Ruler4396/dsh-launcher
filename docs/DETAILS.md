@@ -22,7 +22,6 @@
 │  WebView2    │  Web UI   │  数据/插件/会话都在 DSH_HOME  │
 └──────┬──────┘            └──────────────────────────────┘
        │ 启动/停止/就绪探测（端口+HTTP）/PID 记录
-       │ start-dsh.vbs（wscript 静默拉起，输出 append 统一日志）
        ▼
    统一日志 ~/.dsh/dsh-launcher/dsh.log（JSON Lines + 服务输出共存）
 ```
@@ -34,7 +33,7 @@
 | 端口探测 | `ConnectAsync`（`ShellLogic.PortOpenAsync`，3s 超时）——v0.4.0 起异步化，不再阻塞调用线程；壳启动时探测、未就绪则轮询等待（最长 180s）；目标默认 `3080`，可用环境变量 `DSH_WEB_URL` 覆盖（免重建），设置后视为外部托管服务、不再自动拉起 |
 | 启动体验（v0.4.0 极速启动） | `SplashForm`（Windows/SplashForm.cs）双缓冲渲染，后台流水线经 `IProgress<T>` 回填进度，双击后 <500ms 出现启动窗；Node 缺失/服务超时等确认交互走窗体内联面板（非 MessageBox 嵌套模态循环）；编排唯一由组合根 `LauncherApp` 驱动（ADR-010） |
 | UI 自动化（TestHook） | `DSH_TEST_MODE=1` + `--ui-probe` 时激活 NamedPipe（`Win32/UiTestHook.cs`，ADR-009），命令 `ToggleMaximize`/`GetWindowRect`/`GetWorkArea`/`Shutdown`；与 `--ui-selftest`（进程内自测）互补，供 E2E 精确验证最大化 0px 间隙 |
-| 开机自启 | MSI 勾选后写 `HKCU\...\Run` 直接指向 `DshWeb.exe`（登录 → 壳窗口出现 → 壳自行拉起服务）；安装器同时落 HKLM 意图标志（per-machine 提权安装直接写 HKCU 不可靠，壳首启补写兜底）；便携版：启动文件夹放置 `start-dsh.vbs` 由 `wscript` 执行，或直接放 `DshWeb.exe` 快捷方式 |
+| 开机自启 | MSI 勾选后写 `HKCU\...\Run` 直接指向 `DshWeb.exe`（登录 → 壳窗口出现 → 壳自行拉起服务）；安装器同时落 HKLM 意图标志（per-machine 提权安装直接写 HKCU 不可靠，壳首启补写兜底）；便携版：启动文件夹放 `DshWeb.exe` 快捷方式（2026-09-21 B6：vbs 选项已除名，壳自拉服务） |
 | 权限 | `PermissionRequested` 自动放行：通知、剪贴板、多文件下载、持久存储（插件兼容），麦克风/摄像头保持默认拒绝；自动播放经共享 WebView2 环境注入的 `--autoplay-policy=no-user-gesture-required` 放行（当前 SDK 不会为 Autoplay 触发权限事件，只能走浏览器参数） |
 | 下载 | 保存到系统"下载"文件夹（同名自动改名），blob: 按 MIME 补扩展名，完成后默认程序打开 |
 | 弹窗 | 外部 http(s) → 系统默认浏览器；同源弹窗新建轻量窗口（保留会话）；blob:/data: 保持默认 |
@@ -107,7 +106,7 @@
 - 只调用 `dsh web` 的 CLI（`--host` / `--port`）、默认端口 `3080` 和 Web UI 的 HTTP 访问，不依赖 dsh 内部实现，dsh 升级一般无需重新编译壳；壳的目标地址可用环境变量 `DSH_WEB_URL` 覆盖（默认 `http://127.0.0.1:3080`）
 - **运行时身份假设（P1-8 人工调研结论）**：dsh 服务目前以 `node` 进程名监听目标端口（`IsLikelyDshService` 身份校验依据）；若上游更换运行时（非 node），需同步调整该判定，否则"跟随窗口"关闭时无法停服务（宁可拒绝杀，也不误杀无关进程）。Node 可用门槛：主版本 ≥18（`IsUsableNodeVersion` 单一判定点；`DSH_NODE_VERSION` 可覆盖便携版版本）
 - `npm update -g @deepseek-ai/dsh` 后重启服务即可
-- dsh 处于开发者预览阶段，若官方变更启动参数或默认端口：壳侧设置 `DSH_WEB_URL` 即可免重建；自启脚本需同步修改 `start-dsh.vbs`、`dsh-web.cmd` 两处
+- dsh 处于开发者预览阶段，若官方变更启动参数或默认端口：壳侧设置 `DSH_WEB_URL` 即可免重建；参数契约只剩壳内一处（`ShellLogic.ServiceLaunch`）；`dsh-web.cmd` 仅是启动壳的别名
 - 本工具不锁定 dsh 版本，始终跟随本地最新版
 
 ## 从源码构建 / Building from source
@@ -128,7 +127,7 @@ git clone https://github.com/Ruler4396/dsh-launcher.git
 cd dsh-launcher
 dotnet publish src/DshShell -c Release -r win-x64
 # 产物在 src/DshShell/bin/Release/net10.0-windows/win-x64/publish/
-copy scripts\start-dsh.vbs, scripts\start-dsh.cmd, scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd `
+copy scripts\dsh-web.cmd, scripts\uninstall-autostart.cmd `
   src\DshShell\bin\Release\net10.0-windows\win-x64\publish\
 # 运行：
 src\DshShell\bin\Release\net10.0-windows\win-x64\publish\DshWeb.exe
@@ -165,8 +164,7 @@ dsh-launcher/
 │   ├── FolderPickerCa/        # DTF 托管 CA（net20，读回所选目录 + 自启注册表动作）
 │   └── PrereqCheck/           # 前置检查 exe（Type-38，检测 .NET 10 / Node.js）
 ├── scripts/                   # 部署脚本（发布包内与 DshWeb.exe 同目录）
-│   ├── start-dsh.vbs          # 静默启动服务（壳拉起服务用）
-│   ├── start-dsh.cmd / dsh-web.cmd  # 调试启动 / 一键入口
+│   ├── dsh-web.cmd            # 一键入口（直达壳；2026-09-21 B6 起旧 vbs/cmd 链已除名）
 │   ├── check-prereq.cmd       # 便携版环境自检（.NET/WebView2/Node，随发布包分发）
 │   ├── uninstall-autostart.cmd      # 清理自启与快捷方式
 │   ├── test.ps1 / negative-test.ps1 / e2e-test.ps1 # 测试（仅开发用）
@@ -190,7 +188,7 @@ dsh-launcher/
 ## 常见问题 / FAQ
 
 **Q：端口 3080 被占用怎么办？**
-设置环境变量 `DSH_WEB_URL=http://127.0.0.1:<新端口>` 再启动壳即可（免重建）；若还需要壳自动拉起服务，则同步修改 `start-dsh.vbs`、`dsh-web.cmd` 中的端口。
+设置环境变量 `DSH_WEB_URL=http://127.0.0.1:<新端口>` 再启动壳即可（免重建）；壳自动拉起服务的端口契约在 `ShellLogic.ServiceLaunch` 一处（脚本不再各自抄端口）。
 
 **Q：为什么不用 Electron / Tauri？**
 Electron 自带完整 Chromium（与浏览器同级的内存开销）；Tauri 底层同样是 WebView2 但需要 Rust 工具链。本工具直接用 WebView2 封装，产物更小、构建更简单。

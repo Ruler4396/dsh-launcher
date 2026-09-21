@@ -5,7 +5,7 @@ dsh-launcher 测试入口：单元测试 + 脚本/打包集成检查 + 可选冒
 .DESCRIPTION
 默认运行：
   1. dotnet test（ShellLogic 单元测试）
-  2. 静态回归断言（dsh-web.cmd 路径、uninstall 不再用 schtasks、vbs 命令正确）
+  2. 静态回归断言（dsh-web.cmd 路径、uninstall 不再用 schtasks、旧 vbs 链除名防回流）
   3. uninstall-autostart.cmd 行为测试（伪造 APPDATA/USERPROFILE，不触碰真实文件）
 
 加 -Smoke 额外运行：
@@ -144,9 +144,25 @@ if ($RealOsOnly) {
 
 Write-Host "`n== 2. 脚本静态回归断言 ==" -ForegroundColor Cyan
 $webCmd = Get-Content (Join-Path $root "scripts\dsh-web.cmd") -Raw
-Assert-True ($webCmd -match '%DIR%DshWeb\.exe') "dsh-web.cmd 从脚本同目录启动 DshWeb.exe"
-Assert-True ($webCmd -notmatch 'bin\\') "dsh-web.cmd 不再引用不存在的 bin\ 子目录"
-Assert-True ($webCmd -match 'start-dsh\.vbs') "dsh-web.cmd 会调用 start-dsh.vbs"
+# 只扫非 rem 行：解释"为什么不再有 vbs"的注释本身必然提到 start-dsh（G9 实测过的自命中坑）。
+$webCmdCode = (($webCmd -split "`r?`n") | Where-Object { $_ -notmatch '^\s*rem ' }) -join "`n"
+Assert-True ($webCmdCode -match '%DIR%DshWeb\.exe') "dsh-web.cmd 从脚本同目录启动 DshWeb.exe"
+# [B6 2026-09-21 审查 N11] start-dsh.vbs/start-dsh.cmd 除名：旧预拉起中转（where dsh→npm shim→npx，
+# 缺 SelfContained 一级、违 ADR-021、GBK 写 UTF-8 日志）不得复活；服务只有一条轨——壳经
+# DshDiscovery 拉起（ADR-024），文件面由 BrowserSuppressOutcomes.LegacyVbsLaunchChain_MustStayDeleted 钉。
+Assert-True ($webCmdCode -notmatch 'start-dsh|wscript') "dsh-web.cmd 代码行不引用 vbs 预拉起（单轨直达壳）"
+Assert-True (-not (Test-Path (Join-Path $root "scripts\start-dsh.vbs"))) "scripts/start-dsh.vbs 必须不存在（审查 N11 除名）"
+Assert-True (-not (Test-Path (Join-Path $root "scripts\start-dsh.cmd"))) "scripts/start-dsh.cmd 必须不存在（同上）"
+# 分发清单三处（csproj Copy / MSI Component / 打包 ps1）不得再携带——按"属性/代码行"扫，不按整文件扫（注释豁免）
+$csprojLines = Get-Content (Join-Path $root "src\DshShell\DshShell.csproj")
+$csprojCode = ($csprojLines | Where-Object { $_ -notmatch '^\s*<!--' -and $_ -notmatch '^\s*\S*-->\s*$' } | Where-Object { $_ -match 'SourceFiles=' }) -join "`n"
+Assert-True ($csprojCode -notmatch 'start-dsh') "csproj Copy 清单不含 start-dsh.*"
+$wxsCode = ((Get-Content (Join-Path $root "installer\product.wxs")) | Where-Object { $_ -match '<File ' }) -join "`n"
+Assert-True ($wxsCode -notmatch 'start-dsh') "MSI File 清单不含 start-dsh.*（卸载 CA 清理旧自启值的分支另有断言）"
+foreach ($bp in "scripts\build-portable.ps1","scripts\build-release.ps1") {
+    $bpCode = ((Get-Content (Join-Path $root $bp)) | Where-Object { $_ -notmatch '^\s*#' -and $_ -match 'foreach|Copy-Item' }) -join "`n"
+    Assert-True ($bpCode -notmatch 'start-dsh') "$bp 复制清单不含 start-dsh.*"
+}
 
 $uninstall = Get-Content (Join-Path $root "scripts\uninstall-autostart.cmd") -Raw
 Assert-True ($uninstall -notmatch 'schtasks') "uninstall-autostart.cmd 不再删除计划任务"
@@ -158,20 +174,10 @@ Assert-True ($uninstall -match 'rmdir /s /q "!DSH_HOME_P!\\dsh-launcher"') "unin
 Assert-True ($uninstall -match '!DSH_HOME_P!') "uninstall -CleanData 使用延迟扩展（防解析期空值误删盘根，历史事故回归断言）"
 Assert-True ($uninstall -match 'EnableDelayedExpansion') "uninstall 启用延迟扩展"
 
-$vbs = Get-Content (Join-Path $root "scripts\start-dsh.vbs") -Raw
-# ---- v0.4.x 安全模式/浏览器自启修复后的启动形态：三分支统一经 bootMode 变量拼装
-#      （web 子命令 / ADR-022 安全模式 --profile），并强制 --no-open（壳自管 WebView2 窗口，
-#       防 dsh web 默认 ShellExecute 拉起系统浏览器弹同窗）----
-Assert-True ($vbs -match '& bootMode & " --host 127\.0\.0\.1 --port " & port & " --no-open"') "start-dsh.vbs 三分支统一以 bootMode 启动 web（host/port/--no-open 一致）"
-Assert-True ($vbs -match 'bootMode = "web"') "start-dsh.vbs 默认 bootMode 为 dsh web 子命令"
-Assert-True ($vbs -match '--profile ') "start-dsh.vbs 支持安全模式 --profile 注入（ADR-022）"
-Assert-True ($vbs -match '--no-open') "start-dsh.vbs 全分支携带 --no-open（防系统浏览器弹同窗）"
-Assert-True ($vbs -match 'DSH_LOG') "start-dsh.vbs 使用壳传入的统一日志路径（DSH_LOG）"
-Assert-True ($vbs -match 'dsh-launcher\\dsh\.log') "start-dsh.vbs 回退路径也是统一 dsh.log"
-Assert-True ($vbs -match 'OpenTextFile\(logfile, 8') "start-dsh.vbs 改为追加模式（8），不再截断"
-Assert-True ($vbs -notmatch '\.dsh-web\.log') "start-dsh.vbs 不再写旧式 .dsh-web.log"
-Assert-True ($vbs -match 'Chr\(34\)') "start-dsh.vbs 日志重定向加引号（防用户名含空格/元字符注入，S5）"
-Assert-True ($vbs -match 'npx -y @deepseek-ai/dsh') "start-dsh.vbs 包含 npx 回退（dsh 不在 PATH 时）"
+# （2026-09-21 B6：这里原有 10 条针对 scripts/start-dsh.vbs 文本形状的正断言随脚本除名一并删除。
+#   判决"删掉后 CI 少挡什么"：什么都不少挡——cmdline/--no-open/--profile 的真实现只有一份
+#   （ShellLogic.ServiceLaunch.BuildArgs，由 ServiceLaunchContractTests 把守）；vbs 那份是从不被
+#   壳调用的副本。防其复活的形状由上一段"除名/防回流"断言 + BrowserSuppressOutcomes 承担。）
 
 # v0.3.1：check-prereq.cmd 便携版环境自检（纯 cmd，零依赖）
 $prereq = Get-Content (Join-Path $root "scripts\check-prereq.cmd") -Raw

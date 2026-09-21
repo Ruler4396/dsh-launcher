@@ -3,51 +3,38 @@ using Xunit;
 namespace DshShell.Tests.Outcomes;
 
 /// <summary>
-/// 【L3 Outcome — 启动脚本命令行契约】start-dsh.vbs 的**最终物理形态**：
-/// 三条回退分支（全局 dsh / npm shim / npx）拼出的 cmdline 都必须带 --no-open，
-/// 且 ADR-022 安全模式必须以 `--profile &lt;name&gt;` 形态出现（由壳注入 DSH_PROFILE 驱动）。
+/// 【L3 Outcome — 启动脚本链的最终物理形态（2026-09-21 B6 反转）】
 ///
-/// 本文件重写自一套"永久绿"的假断言：原来它读 AppContext.BaseDirectory\start-dsh.vbs
-/// 并 `if (!File.Exists) return;`，而该文件从不在测试输出目录 ⇒ 断言一次都没执行过；
-/// 更糟的是它断言的 token（"DSH_SAFE_MODE"、"--safe-mode"）在真实 vbs 里根本不存在，
-/// 一旦真跑必然红。现改为走 RepoFile 读真实 scripts/start-dsh.vbs，找不到就抛。
-///
-/// 分工说明：scripts/test.ps1 的静态闸也用正则钉 --no-open 与 bootMode 形状，那是
-/// "改脚本时当场拦"；这里钉的是"启动后进程实际收到的命令行参数形状"，两者可独立失败
-/// （test.ps1 只扫 vbs 文本，不校验 --profile 与 env 读取的配对关系）。
+/// 本类原先钉的是 start-dsh.vbs 三条回退分支的 cmdline 形状（--no-open / DSH_PROFILE→--profile）。
+/// 审查 N11 的判决是**除名而不是对齐**：vbs 的 where-dsh→npm-shim→npx 链缺 SelfContained
+/// 一级、走 ADR-021 禁止的 cmd/shim 形态、向 UTF-8 日志写 GBK；在 vbs 里复刻版本比较只会造出
+/// 第五份"发现真相源"。壳早已不经它拉服务（ADR-024 单轨 + Program 里 grep 零调用），
+/// 存量用户的部署副本自包含——停发即无断裂。
+/// 于是这里的契约从"vbs 长什么样"反转为"vbs 不得复活、一键入口必须直达壳"：
+/// 壳侧的等价形状（--no-open/--profile）继续由 <c>ServiceLaunchContractTests</c> 把守——
+/// 删旧用例少挡的东西没有丢失，只是从"脚本副本"收敛到"壳的单一实现"。
+/// （历史：本文件 2026-09-20 曾从"路径守卫假绿"重写为 RepoFile 真断言，形状教训见 RepoFile.cs 头注。）
 /// </summary>
 public class BrowserSuppressOutcomes
 {
-    /// <summary>三条分支各一条 cmdline 赋值，每条都必须带 --no-open（防系统浏览器弹同窗）。</summary>
+    /// <summary>[B6 防回流] start-dsh.vbs / start-dsh.cmd 必须不在仓库——若有人再加回来，
+    /// 分发清单（csproj/wxs/build-*.ps1）与这套断言会一起红。</summary>
     [Fact]
-    public void StartDshVbs_EveryBranchCommandLine_CarriesNoOpen()
+    public void LegacyVbsLaunchChain_MustStayDeleted()
     {
-        var lines = RepoFile.Read("scripts/start-dsh.vbs")
-            .Split('\n')
-            .Select(l => l.Trim())
-            .Where(l => l.StartsWith("cmdline = ", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        Assert.True(lines.Length >= 3,
-            $"start-dsh.vbs 应至少有三条分支的 cmdline 赋值（全局 dsh / npm shim / npx），实测 {lines.Length} 条");
-        var missing = lines.Where(l => !l.Contains("--no-open")).ToArray();
-        // 消息参数是先求值的：这里绝不能写 missing[0]，否则"全部分支都带 --no-open"这条
-        // **成功路径**会自己抛 IndexOutOfRange（本用例首跑就是这样红的，被测试抓了个现行）。
-        Assert.True(missing.Length == 0,
-            $"有 {missing.Length}/{lines.Length} 条分支命令行缺 --no-open，dsh web 会自己弹系统浏览器：{string.Join(" | ", missing)}");
+        Assert.False(RepoFile.Exists("scripts/start-dsh.vbs"),
+            "start-dsh.vbs 复活——旧三级回退链会把 dsh 身份割裂带回来（审查 N11/B6）");
+        Assert.False(RepoFile.Exists("scripts/start-dsh.cmd"),
+            "start-dsh.cmd 复活——同上（where dsh/npx 的 PATH 依赖形状）");
     }
 
-    /// <summary>安全模式在 vbs 里的真形态：读壳注入的 DSH_PROFILE，拼成根级 --profile 启动。</summary>
+    /// <summary>一键入口 dsh-web.cmd 的最终物理形态：直接启动同目录的壳，不再伸手拉 vbs。</summary>
     [Fact]
-    public void StartDshVbs_SafeMode_UsesProfileFlagNotASafeModeSwitch()
+    public void DshWebCmd_LaunchesShellDirectly_NoVbsDetour()
     {
-        var content = RepoFile.Read("scripts/start-dsh.vbs");
-
-        Assert.Contains("DSH_PROFILE", content);
-        Assert.Contains("\"--profile \"", content);
-        Assert.Contains("bootMode", content);
-        // 反向钉住一次真实事故：曾有人按 "--safe-mode" 这个**不存在**的开关去理解启动链，
-        // 并照它写了断言（永远跑不到）。安全模式只有 --profile 这一条表达。
-        Assert.DoesNotContain("--safe-mode", content);
+        var cmd = RepoFile.Read("scripts/dsh-web.cmd");
+        Assert.Contains("%DIR%DshWeb.exe", cmd);
+        Assert.DoesNotContain("start-dsh", cmd);
+        Assert.DoesNotContain("wscript", cmd);
     }
 }

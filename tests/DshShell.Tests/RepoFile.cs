@@ -16,17 +16,29 @@ namespace DshShell.Tests;
 /// </summary>
 internal static class RepoFile
 {
-    public static string Read(string repoRelativePath)
+    /// <summary>定位仓库内某相对路径的绝对路径；找不到仓库根就抛（同 Read 的不静默纪律）。</summary>
+    public static string FullPath(string repoRelativePath)
     {
+        var sep = repoRelativePath.Replace('/', Path.DirectorySeparatorChar);
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var candidate = Path.Combine(dir.FullName, repoRelativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(candidate)) return File.ReadAllText(candidate);
+            if (Directory.Exists(dir.FullName) && File.Exists(Path.Combine(dir.FullName, ".gitignore")))
+                return Path.Combine(dir.FullName, sep);
             dir = dir.Parent;
         }
+        throw new FileNotFoundException($"未从 {AppContext.BaseDirectory} 向上找到仓库根（以 .gitignore 为锚）。");
+    }
+
+    /// <summary>存在性判定（供"不得回流"类负断言用）。找不到仓库根同样抛——不存在的是答案，不是绿灯。</summary>
+    public static bool Exists(string repoRelativePath) => File.Exists(FullPath(repoRelativePath));
+
+    public static string Read(string repoRelativePath)
+    {
+        var path = FullPath(repoRelativePath);
+        if (File.Exists(path)) return File.ReadAllText(path);
         throw new FileNotFoundException(
-            $"未从 {AppContext.BaseDirectory} 向上找到 {repoRelativePath}。" +
+            $"{path} 不存在。" +
             "本 helper 刻意不返回 null、不静默跳过：断言没跑就该红，而不是绿。", repoRelativePath);
     }
 }

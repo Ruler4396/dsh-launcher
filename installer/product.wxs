@@ -200,12 +200,6 @@
         <File Source="$(var.SourceDir)\runtimes\win-x64\native\WebView2Loader.dll" />
       </Component>
       <Component Directory="INSTALLFOLDER" Guid="*">
-        <File Source="$(var.SourceDir)\start-dsh.vbs" />
-      </Component>
-      <Component Directory="INSTALLFOLDER" Guid="*">
-        <File Source="$(var.SourceDir)\start-dsh.cmd" />
-      </Component>
-      <Component Directory="INSTALLFOLDER" Guid="*">
         <File Source="$(var.SourceDir)\dsh-web.cmd" />
       </Component>
       <Component Directory="INSTALLFOLDER" Guid="*">

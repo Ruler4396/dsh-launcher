@@ -1,19 +1,8 @@
 @echo off
 setlocal
+rem 2026-09-21 B6: the legacy script pre-launch chain (see ADR-024 / review N11)
+rem was removed from this package. The shell is the ONE track that discovers and starts
+rem dsh (DshDiscovery single source), plus updates / safe mode / health monitoring.
+rem This script is now just "start the shell from the deploy folder".
 set "DIR=%~dp0"
-
-rem If dsh is not listening yet, start it silently (DshWeb.exe also does this;
-rem doing it here avoids the extra startup wait inside the shell app).
-powershell -NoProfile -Command "try{$c=New-Object Net.Sockets.TcpClient;$c.Connect('127.0.0.1',3080);$c.Close();exit 0}catch{exit 1}"
-if errorlevel 1 (
-  if exist "%DIR%start-dsh.vbs" (
-    wscript "%DIR%start-dsh.vbs"
-  ) else (
-    echo [ERROR] start-dsh.vbs not found next to this script.
-    echo Run this from the dsh-launcher deploy folder.
-    pause
-    exit /b 1
-  )
-)
-
 start "" "%DIR%DshWeb.exe"

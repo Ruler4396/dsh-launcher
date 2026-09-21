@@ -54,7 +54,7 @@ Copy-Item (Join-Path $publishDir "WebView2Loader.dll") $distDir
 if (Test-Path (Join-Path $publishDir "runtimes")) {
     Copy-Item (Join-Path $publishDir "runtimes") $distDir -Recurse
 }
-foreach ($script in "start-dsh.vbs", "start-dsh.cmd", "dsh-web.cmd",
+foreach ($script in "dsh-web.cmd",
                     "uninstall-autostart.cmd", "check-prereq.cmd") {
     Copy-Item (Join-Path $root "scripts\$script") $distDir
 }
