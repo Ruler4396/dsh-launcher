@@ -272,7 +272,14 @@ public static class RuntimeResolver
             var actual = Convert.ToHexString(SHA256.HashData(fs));
             return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
         }
-        catch { return false; }
+        // [审查 N10] 旧版任何异常（网络、文件锁、解析）都吞成 false，调用方把它报成
+        // E1004"校验和不匹配"——把环境问题写成供应链完整性事故，归因完全错位。
+        // 返回值语义不变（false=不可信），但日志留下真实原因。
+        catch (Exception ex)
+        {
+            Logger.Warn("checksum verification errored (NOT necessarily a mismatch): " + ex.Message);
+            return false;
+        }
     }
 
     private static bool ExtractPortableNode(string zipPath, string version)
@@ -292,7 +299,14 @@ public static class RuntimeResolver
             }
             return File.Exists(Path.Combine(PortableNodeDir, "node.exe"));
         }
-        catch { return false; }
+        // [审查 N10] 真实失败原因（磁盘满/占用/坏 zip）必须留场：调用方只给猜测式文案
+        // "磁盘空间不足或目录被占用？"，日志里若再没有原文，这一条链就无法归因。
+        catch (Exception ex)
+        {
+            Logger.Error($"extract portable node failed: {ex.Message}", ErrorCodes.E1005,
+                new { zipPath, tmp });
+            return false;
+        }
         finally
         {
             try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch { }

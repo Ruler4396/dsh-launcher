@@ -72,12 +72,23 @@ internal static class LegacyUpgradeCleanup
                         Verb = "runas",
                     };
                     using var p = System.Diagnostics.Process.Start(psi);
-                    p?.WaitForExit();
-                    if (p is null || p.ExitCode != 0) failed++;
+                    // [审查 N10] 无界 WaitForExit → 300s 上限。超时只记不再等：真正的卸载执行
+                    // 归 Windows Installer 服务，杀掉 msiexec 客户端不会中止卸载、只会丢回码。
+                    // （Wait 形参写法走 Task 版：G12 把同步 `WaitForExit(数字)` 钉为手写采集形状。）
+                    if (p is null) failed++;
+                    else if (!p.WaitForExitAsync().Wait(300_000))
+                    {
+                        Logger.Warn($"msiexec /x {old.ProductCode} still running after 300s; not waiting further");
+                        failed++;
+                    }
+                    else if (p.ExitCode != 0) failed++;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // [审查 N10] UAC 被拒/启动失败的真实原因必须留场——旧版吞掉后用户只见
+                    // "部分旧版本未能卸载"，无从归因。
                     failed++;
+                    Logger.Warn($"failed to launch msiexec /x {old.ProductCode}: {ex.Message}");
                 }
             }
 
@@ -87,9 +98,10 @@ internal static class LegacyUpgradeCleanup
                 "DeepSeek Harness", MessageBoxButtons.OK,
                 failed == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
-        catch
+        catch (Exception ex)
         {
-            // 检测/清理失败不打扰用户
+            // [审查 N10] 失败不打扰用户可以，但日志必须留痕（旧版连原因都没了）。
+            Logger.Warn("legacy version cleanup errored (user undisturbed): " + ex.Message);
         }
     }
 

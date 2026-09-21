@@ -730,6 +730,51 @@ foreach ($f in $srcAll) {
 }
 Assert-True ($emptyCatchTotal -le 30) "【棘轮 G6】src/DshShell 空 catch 总数 ≤ 30（实测 $emptyCatchTotal）"
 
+# ---- G6 v2 静默吞异常全量块扫描（2026-09-21 审查 N10/B5）----
+# 旧判据的整行正则 `catch[^\{\r\n]*\{\s*\}` 只数"同一行内开合并拢"的空 catch——多行"只有注释"的
+# 空 catch 与单语句 `catch { return false; }`（docs/00 三.1 明令禁止的形状）全部在闸外，
+# 本轮审查实测 130 处。新判据逐块解析：catch 体（剔除注释行与 /*..*/）为空，或恰为单条
+# `return false|null|0;` → 静默。显式豁免：catch 行或其上一行带 G6-EXEMPT（当下 0 处；
+# 豁免必须写理由，理由在注释里）。基线 = 2026-09-21 B4/B5 清剿最重八处之后的实测 130，只许降。
+$g6v2SilentHits = @()
+foreach ($gf in $srcAll) {
+    $lc = @(Get-Content $gf.FullName)
+    for ($i = 0; $i -lt $lc.Count; $i++) {
+        $t = $lc[$i].Trim()
+        if ($t.StartsWith('//') -or $t.StartsWith('///') -or $t.StartsWith('*')) { continue }
+        if ($t -notmatch '^catch\b') { continue }
+        $ctx = $t + '|' + $(if ($i -gt 0) { $lc[$i - 1].Trim() } else { '' })
+        if ($ctx -cmatch 'G6-EXEMPT') { continue }
+        $openIdx = -1; $openCol = -1
+        if ($t.IndexOf('{') -ge 0) { $openIdx = $i; $openCol = $t.IndexOf('{') }
+        elseif ($i + 1 -lt $lc.Count -and $lc[$i + 1].Trim() -eq '{') { $openIdx = $i + 1; $openCol = 0 }
+        else { continue }
+        $body = ''
+        # 先归一字符串字面量再剥注释（GATE-PROBE 实测抓出的闸自身盲区：`catch { } // 说明` 曾被
+        # 当成多行体起点吞掉后续代码行——闸也会写坏，本仓口径：造脏副本是唯一裁判）。
+        $tailCode = (($lc[$openIdx].Trim()).Substring($openCol + 1) -replace '"[^"]*"', '""')
+        $tailCode = ($tailCode -replace '//.*$', '') -replace '/\*.*?\*/', ''
+        if ($tailCode.TrimEnd() -match '^(.*?)\}\s*$') {
+            $body = $Matches[1].Trim()
+        }
+        else {
+            $depth = 1; $bodyLines = @()
+            for ($k = $openIdx + 1; $k -lt $lc.Count -and $depth -gt 0; $k++) {
+                $bl = ($lc[$k] -replace '"[^"]*"', '""') -replace "'[^']*'", "''"
+                $depth += ([regex]::Matches($bl, '\{')).Count - ([regex]::Matches($bl, '\}')).Count
+                if ($depth -le 0) { break }
+                $bt = $lc[$k].Trim()
+                if ($bt -eq '' -or $bt.StartsWith('//') -or $bt.StartsWith('///') -or $bt.StartsWith('*')) { continue }
+                $bodyLines += $bt
+            }
+            $body = $bodyLines -join ' '
+        }
+        $isSilent = ($body -eq '') -or ($body -cmatch '^return (false|null|0);\s*$')
+        if ($isSilent) { $g6v2SilentHits += "$($gf.Name):$($i + 1)" }
+    }
+}
+Assert-True ($g6v2SilentHits.Count -le 130) "【棘轮 G6 v2】src 静默 catch（空体/仅注释/单 return false|null|0）≤ 130（实测 $($g6v2SilentHits.Count)：$(if($g6v2SilentHits.Count){$g6v2SilentHits[0..([Math]::Min(4,$g6v2SilentHits.Count-1))] -join ','}else{'clean'})…）"
+
 # ---- G7 CHANGELOG 结构闸 ----
 # CHANGELOG.md 是 884 行只增文件，而 .github/workflows/build.yml 的发布闸只校验"版本条目存在"
 # ——一个只增闸管不住只增文件。实测本窗口内它 +301 行（+58%），并长出**两个** `## [Unreleased]`

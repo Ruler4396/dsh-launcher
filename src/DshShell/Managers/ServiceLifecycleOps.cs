@@ -149,7 +149,12 @@ internal static class ServiceLifecycleOps
         {
             return ShellLogic.ProcessManagement.KillServiceProcess(pid, port);
         }
-        catch { return false; }
+        // [审查 N10] 旧版吞掉一切异常只回 false——调用方连"杀失败要保留 pid 文件"都不知道为什么。
+        catch (Exception ex)
+        {
+            Logger.Error($"KillProcess threw (pid={pid}, port={port}): {ex.Message}", ErrorCodes.E2005);
+            return false;
+        }
     }
 
     /// <summary>尽力而为的优雅终止通道（历史决策保留）：CTRL_BREAK 广播路径因会误杀共享
