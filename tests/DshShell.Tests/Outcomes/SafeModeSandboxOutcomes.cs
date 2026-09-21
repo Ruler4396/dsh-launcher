@@ -1,164 +1,89 @@
 using DshShell.Tests.Sandbox;
 using DshWeb;
+using DshWeb.Domain;
 using Xunit;
 
 namespace DshShell.Tests.Outcomes;
 
 /// <summary>
-/// 【L3 Outcome — 安全模式沙盒测试】
+/// 【L3 Outcome — 安全模式沙盒契约】
 ///
-/// 在隔离的 DSH_HOME 环境中测试安全模式，不影响当前运行的 dsh。
+/// 只保留**碰得到生产符号**的用例。2026-09-21 质量审查（B2）删掉了本族其余形状，
+/// 判决与替代把守者（删掉之后 CI 少挡什么——逐条答）：
+/// ① CrashMessageDetection Theory（5 行 InlineData，含 "ModuleLoader is undefined"→true）：
+///    在测试里重写**已被 F16 删除**的旧匹配规则自比对——生产判据是
+///    <c>ShellLogic.WebViewPolicy.IsPluginCrashMessage</c>，对 "ModuleLoader" 精确判**否**；
+///    这条"回归钉"会把误报缺陷钉回来（可红性铁律点名的最坏形状）。真判据由
+///    <c>ServiceIdentityGuardTests.IsPluginCrashMessage_OnlyMatchesExactFatalPhrases_F16</c> 把守。
+/// ② EnvironmentVariable_InSandbox / PluginCrash_TriggersDetection / （同族 SafeModeOutcomes.cs、
+///    SafeModeE2EOutcomes.cs 全部）：断言的是 <c>DSH_SAFE_MODE</c> 这个**生产全仓零引用**的幽灵
+///    环境变量（Set/Get 自比 = 测 BCL）。安全模式真形态 = <c>SafeModeState</c> 粘滞落盘 →
+///    <c>SafeModeLaunchPolicy.Decorate</c> 套 <c>--profile</c>，由 SafeModeStateTests /
+///    SafeModeSymmetryOutcomes / SafeModeLifecycleTests 把守。
+/// ③ CompleteCausalChain_E2E：路径守卫 <c>if (File.Exists(BaseDirectory\start-dsh.vbs))</c> 使
+///    断言从未执行，而断言的 "--safe-mode" 在真实 vbs 里根本不存在（真跑必红）——铁律 2026-09-20
+///    事故清单里"已删"的那条**原位复发**。vbs 契约改由
+///    <c>BrowserSuppressOutcomes.StartDshVbs_SafeMode_UsesProfileFlagNotASafeModeSwitch</c>
+///    经 RepoFile 真读真断言（本文件不再重复）。
+/// ④ E1008 describe 断言曾在三个文件各一份（逐字节重复型），收口为本文件唯一一份。
 ///
-/// 测试场景：
-/// 1. 创建沙盒环境，安装一个会导致崩溃的插件
-/// 2. 验证崩溃检测逻辑能正确识别插件错误消息
-/// 3. 验证安全模式环境变量能正确注入
-/// 4. 验证 start-dsh.vbs 能正确传递 --safe-mode 参数
-///
-/// 因果链：
-///   Given: 插件导致 "bootstrap facade is missing" 错误
-///   When:  WebView2 捕获到该错误消息
-///   Then:  PluginCrashDetected 事件被触发
-///   And:   DSH_SAFE_MODE=1 被设置
-///   And:   服务以 --safe-mode 重启
+/// 本文件保住的两条：
+/// - 沙盒隔离的物理形状：生产 SafeModeState 写沙盒 DSH_HOME，主环境字节分毫不动；
+/// - E1008 错误码注册与描述契约。
 /// </summary>
 public class SafeModeSandboxOutcomes
 {
     /// <summary>
-    /// 【L3 Outcome — 崩溃消息识别】
-    /// 验证 WebViewManager 能正确识别插件崩溃消息。
-    /// </summary>
-    [Theory]
-    [InlineData("bootstrap facade is missing", true)]
-    [InlineData("ModuleLoader is undefined", true)]
-    [InlineData("plugin fatal error occurred", true)]
-    [InlineData("normal web page content", false)]
-    [InlineData("", false)]
-    public void Outcome_SafeMode_CrashMessageDetection(string message, bool shouldDetect)
-    {
-        // Given: 一条 WebView2 消息
-        // When: 检查是否包含崩溃标志
-        var detected = message.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("ModuleLoader", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase);
-
-        // Then: 检测结果应与预期一致
-        Assert.Equal(shouldDetect, detected);
-    }
-
-    /// <summary>
-    /// 【L3 Outcome — 安全模式环境变量注入】
-    /// 验证在沙盒环境中，安全模式环境变量能正确设置。
-    /// </summary>
-    [Fact]
-    public void Outcome_SafeMode_EnvironmentVariable_InSandbox()
-    {
-        using var sandbox = new DshSandbox();
-
-        // Given: 沙盒环境，无安全模式
-        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", null);
-        Assert.Null(sandbox.GetEnvironmentVariable("DSH_SAFE_MODE"));
-
-        // When: 模拟用户确认进入安全模式
-        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", "1");
-
-        // Then: 环境变量已设置
-        Assert.Equal("1", sandbox.GetEnvironmentVariable("DSH_SAFE_MODE"));
-
-        // 清理
-        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", null);
-    }
-
-    /// <summary>
-    /// 【L3 Outcome — 插件崩溃检测 + 安全模式触发】
-    /// 验证完整的崩溃检测到安全模式触发的因果链。
-    /// </summary>
-    [Fact]
-    public void Outcome_SafeMode_PluginCrash_TriggersDetection()
-    {
-        using var sandbox = new DshSandbox();
-
-        // Given: 安装一个会导致崩溃的插件
-        sandbox.InstallBrokenPlugin("broken-plugin",
-            @"
-            // 模拟插件崩溃：发送致命错误消息
-            if (typeof window !== 'undefined' && window.chrome && window.chrome.webview) {
-                window.chrome.webview.postMessage('bootstrap facade is missing');
-            }
-            module.exports = { name: 'broken-plugin' };
-            ");
-
-        // When: 模拟 WebView2 收到崩溃消息
-        var crashMessage = "bootstrap facade is missing";
-        var detected = crashMessage.Contains("bootstrap facade is missing", StringComparison.OrdinalIgnoreCase)
-            || crashMessage.Contains("ModuleLoader", StringComparison.OrdinalIgnoreCase)
-            || crashMessage.Contains("plugin fatal", StringComparison.OrdinalIgnoreCase);
-
-        // Then: 崩溃应被检测到
-        Assert.True(detected, "插件崩溃消息应被检测到");
-
-        // When: 模拟用户确认进入安全模式
-        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", "1");
-
-        // Then: 安全模式环境变量已设置
-        Assert.Equal("1", Environment.GetEnvironmentVariable("DSH_SAFE_MODE"));
-
-        // 清理
-        Environment.SetEnvironmentVariable("DSH_SAFE_MODE", null);
-    }
-
-    // 原本这里有一条 Outcome_SafeMode_StartDshVbs_SupportsSafeModeFlag：它读
-    // AppContext.BaseDirectory\start-dsh.vbs 并 if (!File.Exists) return; —— 该文件不在测试输出目录，
-    // 断言从未执行；而它断言的 "DSH_SAFE_MODE"/"--safe-mode" 在真实 vbs 里根本不存在（安全模式的真
-    // 形态是 DSH_PROFILE → --profile）。假绿且假判据，已删；契约改由
-    // Outcomes/BrowserSuppressOutcomes.StartDshVbs_SafeMode_UsesProfileFlagNotASafeModeSwitch 真跑真断言。
-
-    /// <summary>
-    /// 【L3 Outcome — 沙盒环境隔离】
-    /// 验证沙盒环境与主环境完全隔离。
+    /// 【L3 Outcome — 沙盒环境隔离】生产的 SafeModeState 落盘只准碰沙盒 DSH_HOME：
+    /// 沙盒内原子写 + 重载可读 + 梯级保真是生产行为；主环境 safe-mode.json 字节序列
+    /// 不得被创建/改写——这是 [SANDBOX] 门控的**可红**表达（门控回归即红，不靠肉眼）。
     /// </summary>
     [Fact]
     public void Outcome_SafeMode_SandboxIsolation()
     {
         using var sandbox = new DshSandbox();
 
-        // Given: 沙盒环境
-        Assert.True(Directory.Exists(sandbox.DshHome), "沙盒 DSH_HOME 应存在");
-        Assert.True(Directory.Exists(sandbox.LauncherDataDir), "沙盒 launcher 数据目录应存在");
-
-        // When: 在沙盒中写入配置
-        sandbox.WriteSettings(new { serviceLifetime = 1 });
-
-        // Then: 配置应写入沙盒目录
-        var settingsPath = Path.Combine(sandbox.LauncherDataDir, "settings.json");
-        Assert.True(File.Exists(settingsPath), "settings.json 应存在");
-
-        // 验证不影响主环境
-        var mainSettingsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".dsh", "dsh-launcher", "settings.json");
-        // 主环境的 settings.json 不应被修改（如果存在的话）
-        if (File.Exists(mainSettingsPath))
+        var mainStorePath = SafeModeState.DefaultStorePath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh"));
+        var mainBefore = File.Exists(mainStorePath) ? File.ReadAllBytes(mainStorePath) : null;
+        try
         {
-            var mainContent = File.ReadAllText(mainSettingsPath);
-            // 主环境配置不应包含沙盒的 serviceLifetime=1
-            // （除非主环境本来就配置了这个值）
+            // When: 用生产实现激活安全模式粘滞状态（落盘在沙盒 DSH_HOME 下）
+            var storePath = SafeModeState.DefaultStorePath(sandbox.DshHome);
+            new SafeModeState(storePath).Activate(SafeProfileTier.Tier2Minimal);
+
+            // Then 1: 物理文件落在沙盒路径，且经构造函数重载后状态保真
+            Assert.True(File.Exists(storePath), "safe-mode.json 应由生产 SafeModeState 原子落到沙盒 DSH_HOME");
+            var reloaded = new SafeModeState(storePath);
+            Assert.True(reloaded.IsActive, "重载后仍应处于激活态（粘滞语义）");
+            Assert.Equal(SafeProfileTier.Tier2Minimal, reloaded.Tier);
+
+            // Then 2: 主环境零触碰——不存在保持不存在，存在则字节分毫不动
+            var mainAfter = File.Exists(mainStorePath) ? File.ReadAllBytes(mainStorePath) : null;
+            Assert.True(mainBefore is null
+                    ? mainAfter is null
+                    : mainBefore.SequenceEqual(mainAfter ?? Array.Empty<byte>()),
+                "沙盒内的 SafeModeState 落盘触碰/改写了主环境 safe-mode.json —— 沙盒门控失效");
+        }
+        finally
+        {
+            var leaked = File.Exists(mainStorePath) ? File.ReadAllBytes(mainStorePath) : null;
+            Assert.True(mainBefore is null ? leaked is null
+                : mainBefore.SequenceEqual(leaked ?? Array.Empty<byte>()),
+                "用例失败也不得留下被改写的用户配置");
         }
     }
 
     /// <summary>
-    /// 【L3 Outcome — 错误码 E1008 完整性】
-    /// 验证 E1008 错误码已注册且描述正确。
+    /// 【L3 Outcome — 错误码 E1008 完整性】E1008 已注册且描述带得出"插件/安全模式/禁用"三要素。
+    /// （全仓唯一一份——见头注 ④。）
     /// </summary>
     [Fact]
     public void Outcome_SafeMode_ErrorCode_E1008_Complete()
     {
-        // Given: E1008 错误码
-        // When: 检查错误码描述
         var code = ErrorCodes.E1008;
         var desc = ErrorCodes.Describe("E1008");
 
-        // Then: 错误码应正确注册
         Assert.Equal("E1008", code);
         Assert.Contains("插件", desc);
         Assert.Contains("安全模式", desc);

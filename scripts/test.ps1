@@ -71,7 +71,10 @@ if ($RealNet) { $env:DSH_FORCE_REALNET = "1" } else { Remove-Item Env:DSH_FORCE_
 # ---- 分层 filter 的唯一真相源 ----
 # 1b 节的不重不漏断言复用下面这两个变量：改这里等于同时改 CI 与门禁，
 # 不允许 workflow 里再抄第三份 filter 字符串（抄一份就漂移一份）。
-$fastFilter = 'Category!=RealOS'
+# [审查 N7 2026-09-21] RealNet-only 用例（DshUpdatePipelineRealTests ×2 + StagedBuildRealNetTests ×1）
+# 在 DSH_FORCE_REALNET 未设时直接 return，而旧快线 filter 放行它们 → 每遍把"什么都没判"计成通过，
+# 条数对账口径被掺水。与 realos 层的 `&Category!=RealNet` 对称收口，"不重不漏"才真的成立。
+$fastFilter = 'Category!=RealOS&Category!=RealNet'
 $realOsLayerFilter = '(Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests)&Category!=RealNet'
 if ($SkipRealOs -and $RealOsOnly) {
     Write-Host "[FAIL] -SkipRealOs 与 -RealOsOnly 互斥：一次调用只允许跑一层" -ForegroundColor Red
