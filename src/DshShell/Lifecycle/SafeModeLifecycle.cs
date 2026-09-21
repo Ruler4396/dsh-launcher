@@ -135,7 +135,14 @@ internal sealed class SafeModeLifecycle
             _d.Trace($"SAFEMODE(bg): building tier {tier}");
             // 进入安全模式是"带补偿的多步事务"，必须先经状态机登记：Phase 3 加的
             // EnteringSafeMode 状态此前无人投递，等于状态机对这条流转仍是盲的。
-            _d.TryFireLifecycle(LifecycleTrigger.SafeModeEntryRequested);
+            // [审查 N3 2026-09-21] 被状态机否决（返回 false = 别的事务在途/已终结）时这一跳
+            // 必须整个跳过："状态机是唯一真相源"的意思就是它说不行就不行——此前忽略返回值
+            // 照常建 profile/停服/拉起，事务跑在状态机的盲区里。
+            if (!_d.TryFireLifecycle(LifecycleTrigger.SafeModeEntryRequested))
+            {
+                _d.Trace("SAFEMODE(bg): state machine refused SafeModeEntryRequested; tier attempt skipped");
+                return false;
+            }
             if (!_d.BuildProfile(tier))
             {
                 Logger.Error($"safe mode disabled: failed to build tier {tier} profile", ErrorCodes.E1010);
@@ -214,6 +221,10 @@ internal sealed class SafeModeLifecycle
             _d.StopMonitor(); // 重启流程异常中断：服务状态未知，停止监控防误报
             _d.Deactivate();
             ApplyVisibility(false);
+            // [审查 N3] 异常出口此前独缺这一投——其余失败出口都闭合事务。不投则状态机
+            // 永久滞留 EnteringSafeMode 瞬时态（:142 注释自证后果）。Requested 未投成功时
+            // 这一投会被拒绝（TryFire 不抛），无副作用。
+            _d.TryFireLifecycle(LifecycleTrigger.SafeModeEntryFailed);
             return false;
         }
     }

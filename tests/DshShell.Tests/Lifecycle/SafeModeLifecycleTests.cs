@@ -25,11 +25,15 @@ public class SafeModeLifecycleTests
     private DateTime _crashUtc = new(2026, 1, 1);
     private int _crashReads;
     private bool _crashAdvancesAfterFirstRead;
+    // [审查 N3] 两个新旋钮：状态机拒绝 Requested / 停服中途抛异常
+    private bool _refuseEntryRequest;
+    private bool _stopThrows;
 
     private SafeModeLifecycle Make()
     {
         _fired.Clear(); _ui.Clear(); _posts = 0;
         _deactivations = _stops = _activations = 0;
+        _refuseEntryRequest = false; _stopThrows = false;
         return new SafeModeLifecycle(new SafeModeLifecycle.Dependencies(
             Trace: _ => { },
             SessionShuttingDown: () => _shuttingDown,
@@ -40,7 +44,7 @@ public class SafeModeLifecycleTests
             SuspendMonitor: () => { },
             StopMonitor: () => _stops++,
             ResumeMonitor: _ => { },
-            StopService: () => _ui.Add("stop-service"),
+            StopService: () => { _ui.Add("stop-service"); if (_stopThrows) throw new InvalidOperationException("boom (test)"); },
             StartViaIdentity: () => _startOk,
             WaitForFreshToken: () => { },
             IsReady: () => _ready,
@@ -55,7 +59,11 @@ public class SafeModeLifecycleTests
             // 等待态由组合根投递到 UI 线程；这里只记录"有没有给、什么时候给"
             ShowWaitingPage: (headline, _) => _ui.Add("waiting:" + headline),
             Port: 3080,
-            TryFireLifecycle: t => { _fired.Add(t.ToString()); return true; }));
+            TryFireLifecycle: t =>
+            {
+                if (t == LifecycleTrigger.SafeModeEntryRequested && _refuseEntryRequest) return false;
+                _fired.Add(t.ToString()); return true;
+            }));
     }
 
     /// <summary>
@@ -167,6 +175,33 @@ public class SafeModeLifecycleTests
             Assert.DoesNotContain(banned, src);
         Assert.Contains("SafeModeFlow!.TryEnter(", src);
         Assert.Contains("SafeModeFlow!.ApplyVisibility(", src);
+    }
+
+    /// <summary>[审查 N3 2026-09-21] 事务中途抛异常也必须闭合状态机事务（投 EntryFailed）。
+    /// 审查实测：其余失败出口都有这一投，唯独 catch 漏了 → 状态机永久滞留 EnteringSafeMode
+    /// 瞬时态，下一次任何运行期触发都是非法转移。</summary>
+    [Fact]
+    public void ExceptionMidTransaction_StillClosesTheStateMachineTransaction()
+    {
+        var m = Make();
+        _stopThrows = true;
+        Assert.False(m.TryEnter(null!, SafeProfileTier.Tier1KeepDeepSeekCore));
+        Assert.Equal(new[] { "SafeModeEntryRequested", "SafeModeEntryFailed" }, _fired);
+        Assert.Equal(1, _deactivations);
+        Assert.Equal(1, _stops); // StopMonitor 的反向补偿照常发生
+    }
+
+    /// <summary>[审查 N3] 状态机拒绝 Requested = 这一跳整个跳过：不停服、不建等待态、不激活。
+    /// "状态机唯一真相源"的机器化表达——此前忽略返回值照常跑事务，事务落在状态机盲区。</summary>
+    [Fact]
+    public void RefusedEntryRequest_SkipsTheWholeTransaction_WithoutSideEffects()
+    {
+        var m = Make();
+        _refuseEntryRequest = true;
+        Assert.False(m.TryEnter(null!, SafeProfileTier.Tier1KeepDeepSeekCore));
+        Assert.Equal(0, _activations);
+        Assert.Empty(_ui);      // 无"stop-service"、无等待态
+        Assert.Empty(_fired);   // 被拒绝的投递不落账
     }
 
     private static string RepoRoot()

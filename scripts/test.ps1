@@ -925,6 +925,16 @@ Assert-True ($g13Hits.Count -eq 0) "【G13 硬闸】包名/路径段/scope 前�
 $g13ProfileSrc = Get-Content (Join-Path $root "src\DshShell\Domain\SafeProfileBuilder.cs") -Raw
 Assert-True ($g13ProfileSrc -notmatch 'DeepSeekScope\s*=\s*"@deepseek-ai/"') "【G13】bundle scope 前缀从 PackageScope 派生，不得另立第二份字面量"
 
+# ---- G14 单实例 mutex 的句柄持有期（2026-09-21 审查 N1 防回归）----
+# 修复前的形状：EnsureSingleInstanceAndAutostart 里 `using var mutex = new Mutex(...)`——
+# 方法一返回就 Dispose，单实例闸门整个存活期失效（二实例直入完整启动，E1009 永不触发）。
+# 两条断言：① new Mutex 全组合根恰一处（自检防退化：句柄若被搬去别处，计数归零同样红）；
+# ② 创建它的那一行不得是方法内 using var（持有者必须是 Main 的 using 作用域）。
+$g14MutexLines = @($g9ProgramCode | Where-Object { $_ -cmatch 'new\s+Mutex\s*\(' })
+Assert-True ($g14MutexLines.Count -eq 1) "【G14】Program.cs 恰有一处 new Mutex（实测 $($g14MutexLines.Count)；多处=双真相源，0 处=句柄搬离组合根需连带改闸）"
+$g14BadHold = @($g14MutexLines | Where-Object { $_ -cmatch '^using\s+var\s+\w+\s*=\s*new\s+Mutex' })
+Assert-True ($g14BadHold.Count -eq 0) "【G14】单实例 Mutex 不得方法内 using var 创建（随返回释放=闸门失效，审查 N1；首例：$(if($g14BadHold.Count){$g14BadHold[0]}else{'clean'}))"
+
 Write-Host "`n== 2.5. Sandbox 静态断言 ==" -ForegroundColor Cyan
 # DSH_SANDBOX 门控：四个机器级副作用调用点必须被 DSH_SANDBOX 门控
 Assert-True ($shellSrc -match 'IsSandboxMode') "Program.cs 暴露 IsSandboxMode 属性（DSH_SANDBOX=1 判定）"

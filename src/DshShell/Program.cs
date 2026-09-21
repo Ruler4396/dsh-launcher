@@ -147,7 +147,7 @@ internal static class Program
     /// 仅非无头模式弹出；弹窗自身失败不影响已完成的日志留痕。</summary>
     private static void TryShowFatalDialog(string kind, string? detail)
     {
-        if (NoUiMode || E2EMode) return; // 无头/探针模式维持纯 stdout+log，防模态窗挂起自动化
+        if (NoUiMode || E2EMode || Environment.GetCommandLineArgs().Any(a => a.Equals("--diagnose", StringComparison.OrdinalIgnoreCase) || a.Equals("--ui-selftest", StringComparison.OrdinalIgnoreCase) || a.Equals("--ui-probe", StringComparison.OrdinalIgnoreCase))) return; // 无头/探针/CLI 三模式维持纯 stdout+log，防模态窗挂起自动化（审查 N2 的配套守卫）
         try
         {
             var summary = string.IsNullOrWhiteSpace(detail) ? "" :
@@ -189,7 +189,9 @@ internal static class Program
         // [2026-08-29 token 栅栏] 必须先于 EnsureServiceAndRuntime 订阅：服务横幅在启动轮询期间
         // 即到达（实测 55.561 触发 vs RunUserInterface 55.787 建窗——晚订阅必然错过事件）。
         WireServiceTokenFollow();
-        if (!EnsureSingleInstanceAndAutostart()) return;
+        // [审查 N1 2026-09-21] mutex 句柄的持有期 = 主窗全存活期：方法体内 `using var` 随返回
+        // 释放句柄，单实例闸门整个存活期失效（二实例直入完整启动，E1009 分支永不触发）。
+        using var singleInstanceLock = EnsureSingleInstanceAndAutostart(); if (singleInstanceLock is null) return;
 
         if (!EnsureServiceAndRuntime()) return;
 
@@ -228,6 +230,12 @@ internal static class Program
         // [INVARIANT] WinForms global init must complete before ANY window/control creation. See ADR-004.
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        // [INVARIANT] Crash hooks write E9001 log before process terminates. No recovery logic.
+        // [审查 N2 2026-09-21] 注册点从 stage 3 提前到 stage 1 末：此前 CLI 三模式在钩子注册前
+        // 就 return，stage 1/2 与 CLI 抛异常零留痕——"双击后无声消失"的文档口径曾声称已根治。
+        // CLI 路径若真崩溃，弹窗由 TryShowFatalDialog 的 CLI 守卫拦截（保持纯 stdout+exit code，
+        // 防无人值守自动化被模态框挂死）；日志在 Logger.Init 前的写入按 Logger 既有语义丢弃。
+        RegisterCrashHooks();
     }
 
     /// <summary>Stage 2: Handle CLI args (--diagnose, --ui-selftest, --ui-probe). Returns true if Main should exit.</summary>
@@ -275,18 +283,19 @@ internal static class Program
         Logger.Init(UnifiedLogPath);
         Trace("feature flag: DSH_USE_NEW_LIFECYCLE="
             + (Environment.GetEnvironmentVariable("DSH_USE_NEW_LIFECYCLE") == "1" ? "1 (new)" : "unset (legacy)"));
-        // [INVARIANT] Crash hooks write E9001 log before process terminates. No recovery logic.
-        RegisterCrashHooks();
+        // RegisterCrashHooks 已前移至 InitializeProcessEnvironment（审查 N2：CLI 分发前必须挂上钩子）
         if (Environment.GetEnvironmentVariable("DSH_TEST_CRASH") == "1")
             throw new InvalidOperationException("test crash hook (DSH_TEST_CRASH=1)");
         Trace($"start target={Target.Url} external={ServerManagedExternally}");
     }
 
-    /// <summary>Stage 4: Single-instance mutex + old version cleanup + orphan shortcut cleanup. Returns false if not first instance.</summary>
-    private static bool EnsureSingleInstanceAndAutostart()
+    /// <summary>Stage 4: Single-instance mutex + old version cleanup + orphan shortcut cleanup.
+    /// 返回"必须存活到 Main 结束的 mutex"（Main 的 using 作用域负责 Dispose）；非首实例返回 null。</summary>
+    private static Mutex? EnsureSingleInstanceAndAutostart()
     {
         // [F21] mutex 名由纯函数产出（契约测试锁定格式）；按端口隔离实例组。
-        using var mutex = new Mutex(true, ShellLogic.LifecycleDecisions.SingleInstanceMutexName(Target.Port), out var firstInstance);
+        // [审查 N1] 这里**不得**写 using var：句柄随本方法返回关闭 = 单实例锁整个存活期失效。
+        var mutex = new Mutex(true, ShellLogic.LifecycleDecisions.SingleInstanceMutexName(Target.Port), out var firstInstance);
         if (!firstInstance)
         {
             // [静默失败收口] 主窗等待从 20s 收紧到 5s，且找不到不再无声退出——给出 [E1009]
@@ -313,7 +322,7 @@ internal static class Program
                     $"请稍候再试一次；若反复出现，请查看统一日志：{UnifiedLogPath}",
                     level: Logger.Level.Info);
             }
-            return false;
+            mutex.Dispose(); return null; // 二实例不持有锁，只关自己的句柄
         }
         Trace("first instance");
         if (!IsSandboxMode) // [SANDBOX] 禁用机器级副作用
@@ -321,7 +330,7 @@ internal static class Program
             Windows.LegacyUpgradeCleanup.TryPromptOldVersionCleanup(NoUiMode);
             Windows.LegacyUpgradeCleanup.CleanupOrphanShortcuts();
         }
-        return true;
+        return mutex;
     }
 
     /// <summary>Stage 5: SplashForm pipeline + service readiness check + NoUiMode. Returns false if failure/canceled.</summary>

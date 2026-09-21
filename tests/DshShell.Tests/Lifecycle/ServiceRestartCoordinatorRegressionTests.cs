@@ -106,6 +106,37 @@ public class ServiceRestartCoordinatorRegressionTests
         Assert.Equal(ServiceRestartCoordinator.Outcome.StartFailed, await c.RestartAsync("test"));
     }
 
+    /// <summary>[审查 N6 2026-09-21] 事务中途抛异常必须折算成 StartFailed 而不是漏出来——
+    /// 组合根的"退出安全模式"路径是 fire-and-forget await，异常若不被兜住就是未观察任务异常：
+    /// 零留痕、标题栏永停"正在退出安全模式…"（全仓实测无 UnobservedTaskException 钩子）。</summary>
+    [Fact]
+    public async Task RestartAsync_TransactionThrows_ReturnsStartFailedWithoutThrowing()
+    {
+        var deps = new ServiceRestartCoordinator.Dependencies(
+            _ => { }, () => false, _ => throw new InvalidOperationException("boom (test)"),
+            () => (true, false), _ => { }, () => true,
+            () => { }, () => 0, _ => { }, () => { }, () => { }, _ => { }, () => false, 3080,
+            _ => true);
+        var c = new ServiceRestartCoordinator(deps);
+        Assert.Equal(ServiceRestartCoordinator.Outcome.StartFailed, await c.RestartAsync("test"));
+    }
+
+    /// <summary>[审查 N3 裁决固化] 状态机拒绝 RestartRequested 时重启**照做**（上层事务自持状态
+    /// 的在途调用方是合法形状，如退出安全模式），差别只在留痕。此用例把"拒绝≠阻断"钉住，
+    /// 防止后来者顺手把它改成 abort 而打断退出安全模式链。</summary>
+    [Fact]
+    public async Task RestartAsync_RefusedByStateMachine_StillPerformsTheRestart()
+    {
+        var started = 0;
+        var deps = new ServiceRestartCoordinator.Dependencies(
+            _ => { }, () => false, _ => 0, () => { started++; return (true, false); }, _ => { }, () => true,
+            () => { }, () => 0, _ => { }, () => { }, () => { }, _ => { }, () => false, 3080,
+            _ => false);
+        var c = new ServiceRestartCoordinator(deps);
+        Assert.Equal(ServiceRestartCoordinator.Outcome.Ready, await c.RestartAsync("test"));
+        Assert.Equal(1, started);
+    }
+
     /// <summary>
     /// 结构闸：事务与预算不得回流组合根。G1 只挡体量、挡不住"换个名字搬回来"，
     /// 所以这里按符号名钉。

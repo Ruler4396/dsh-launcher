@@ -159,8 +159,29 @@ internal sealed class ServiceRestartCoordinator
     public async Task<Outcome> RestartAsync(string reason, bool expectSelfRespawn = false,
         int readyBudgetSeconds = ReadyBudgetSeconds, bool driveLifecycleState = true)
     {
+        // [审查 N6 2026-09-21] 本事务在组合根被 fire-and-forget await（"退出安全模式"路径原先
+        // lambda 首 await 不在任何 try 内）：不在这里兜住异常，抛错=未观察任务异常，零留痕、
+        // 标题栏永停"正在退出安全模式…"。异常按既有语义折算成 StartFailed（E2001 可见化）。
+        try
+        {
+            return await RestartUncheckedAsync(reason, expectSelfRespawn, readyBudgetSeconds, driveLifecycleState);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"{reason}: restart transaction threw", ErrorCodes.E2001, new { ex = ex.ToString() });
+            if (driveLifecycleState) _d.TryFireLifecycle(LifecycleTrigger.RestartFailed);
+            return Outcome.StartFailed;
+        }
+    }
+
+    private async Task<Outcome> RestartUncheckedAsync(string reason, bool expectSelfRespawn,
+        int readyBudgetSeconds, bool driveLifecycleState)
+    {
         _d.SuspendMonitor();
-        if (driveLifecycleState) _d.TryFireLifecycle(LifecycleTrigger.RestartRequested);
+        // [审查 N3 同形状] 被状态机拒绝不阻断动作（退出安全模式等上层事务自持状态是合法在途），
+        // 但必须留痕："事务在跑、状态机失明"的窗口是本仓反复踩的盲区；调用方都在稳态时此 Warn 永不亮。
+        if (driveLifecycleState && !_d.TryFireLifecycle(LifecycleTrigger.RestartRequested))
+            Logger.Warn($"{reason}: RestartRequested refused by state machine; restart proceeds UNREGISTERED");
         _d.Trace($"{reason}: stopping service");
         var adoptedPid = _d.StopService(expectSelfRespawn);
 

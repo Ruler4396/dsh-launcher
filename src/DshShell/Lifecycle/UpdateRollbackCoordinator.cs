@@ -131,7 +131,9 @@ internal sealed class UpdateRollbackCoordinator
                 "rolling back pre-update data and quarantining runtime",
                 ErrorCodes.E4003, new { version, code = verdict.ErrorCode });
             _d.SuspendMonitor();
-            _d.TryFireLifecycle(LifecycleTrigger.RollbackRequested);
+            // [审查 N3 同形状] 拒绝不阻断 saga（上层已判死，回滚是唯一自救路），但必须留痕。
+            if (!_d.TryFireLifecycle(LifecycleTrigger.RollbackRequested))
+                Logger.Warn("[update-rollback] RollbackRequested refused by state machine; saga proceeds UNREGISTERED");
             _ = Task.Run(() => RunAsync(version, verdict));
             return true;
         }
