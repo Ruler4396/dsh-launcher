@@ -41,6 +41,11 @@ internal static class Program
         if (hasDotNet && hasNode)
             return Continue; // 全部满足，继续安装
 
+        // 显式放行开关（高级/脚本场景）：`set PREREQ_FORCE_CONTINUE=1` 后跑 msiexec，
+        // 缺什么都不拦——只缺 Node 时壳首启会引导装便携版，所以这条对"我自己管环境"的人有用。
+        // 它必须是**用户主动设的开关**，不能是弹窗里那个一眼看不懂的第三按钮。
+        if (Environment.GetEnvironmentVariable("PREREQ_FORCE_CONTINUE") == "1") return Continue;
+
         // 静默安装（/qn 等无交互上下文）：没人能点弹窗。缺 .NET 时装完也起不来 → 返回 1602 干净退出
         // （MSI 报"用户已取消安装"，而不是旧实现返回 2 之后那句"Windows Installer 程序包有问题"）；
         // 只缺 Node 则放行——启动器首启会引导装便携版 Node，不该因此拒绝安装。
@@ -49,14 +54,13 @@ internal static class Program
         string message =
             "检测到缺少以下运行环境：\n\n"
             + missing.ToString().TrimEnd('\n', '\r')
-            + "\n\n【是】自动安装缺失项（winget 静默安装，可能需要几分钟，期间请留意 UAC 确认）"
-              + "\n【否】仍然继续安装（缺 Node 时，启动器首次运行会引导下载便携版 Node）"
-              + "\n【取消】退出安装向导，稍后自行处理";
-        switch (Ask(message, MB_YESNOCANCEL | MB_WARNING))
-        {
-            case IDNO: return Continue;      // 用户明确选择"仍然继续"——这是决定，不是失败
-            case IDCANCEL: return UserCancelled;
-        }
+            + "\n\n【是】自动安装缺失项后继续（winget 静默安装，可能需要几分钟，期间请留意 UAC 确认）"
+              + "\n【否】退出安装，不装本软件（自行装好环境后重开本向导即可）"
+              + "\n【取消】同【否】：什么都不改，直接退出";
+        // 是=装齐再继续；否/取消=**不安装**。"仍然继续"不在这里给——环境都没齐就默默装下去，
+        // 用户回头只会看到一个起不来的软件；它只作为"自动安装失败之后"的第二问（见 AutoInstallMissing），
+        // 那时用户已经知道具体哪一项没装上，选择才有意义。
+        if (Ask(message, MB_YESNOCANCEL | MB_WARNING) != IDYES) return UserCancelled;
         return AutoInstallMissing(!hasDotNet, !hasNode);
     }
 
