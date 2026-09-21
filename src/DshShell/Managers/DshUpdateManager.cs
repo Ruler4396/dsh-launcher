@@ -836,7 +836,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
                     : regSources;
                 buildOk = ProcessRunner.TryNpmOverRegistries(pnpmSources, srcIdx => ProcessRunner.RunPnpmInstall(
                     nodeExe!, pnpmEntryJs!, tarballPath, buildDir, percentProgress,
-                    pnpmSources[srcIdx]), "pnpm-build", out _);
+                    pnpmSources[srcIdx], ct), "pnpm-build", out _);
                 buildTool = "pnpm";
                 Logger.Info($"pnpm build result: {buildOk}");
             }
@@ -848,8 +848,9 @@ public sealed class DshUpdateManager : IDshUpdateManager
 
         if (!buildOk && ct.IsCancellationRequested)
         {
-            // 已请求取消：绝不另起 npm 这条更长的构建链（pnpm 安装阶段本身不可中断，
-            // 见 docs/ARCHITECTURE-DEBT-LEDGER.md——但至少不让它续上一小时的 npm 安装）。
+            // 已请求取消：绝不另起 npm 这条更长的构建链。[2026-09-21 审查 B4] pnpm 阶段现在
+            // 也真的可断了（RunPnpmInstall 挂接 ct，取消即杀进程树），这里跳过回退是为了
+            // 不在用户已放弃后继续消耗网络与磁盘。
             Logger.Info("build canceled; skipping npm fallback");
             return (false, buildTool);
         }

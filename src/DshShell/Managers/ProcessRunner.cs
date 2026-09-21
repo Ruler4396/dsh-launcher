@@ -226,14 +226,20 @@ internal static class ProcessRunner
         }
     }
 
-    /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟。
+    /// <summary>pnpm 安装（机会主义加速，绝不安装 pnpm）。超时 10 分钟（墙钟，见下）。
     /// 使用 node.exe 直接执行 pnpm.cjs，彻底绕过 .cmd shim 和 cmd.exe。
     /// [ADR-021] 使用 --reporter=ndjson 获取精确进度（按 packageId 自归一化，见 UpdateProgress）。
     /// 注意：--no-audit --no-fund 是 npm 专用参数，pnpm 不支持，不能传。
-    /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。</summary>
+    /// ERR_PNPM_IGNORED_BUILDS（exit=1）表示包已安装但 build scripts 被安全策略阻止。
+    /// [审查 N9 2026-09-21] ct 生效 + 超时兜底改真墙钟：旧实现把 `WaitForExit(600000)` 排在逐行
+    /// ReadLine **之后**——pnpm 挂住输出流时循环永不退出，"10 分钟兜底"只管"流关进程不关"，
+    /// 是纸面保险；且全路径没有一处 Kill(entireProcessTree)，悬挂进程树留场；进程未退出就读
+    /// ExitCode 抛异常、被外层 catch 吞成 false（台账第 7 条低估的部分，本轮补记）。</summary>
     internal static bool RunPnpmInstall(string nodeExe, string pnpmEntryJs, string tarballPath, string buildDir,
-        Action<int>? progressCallback = null, string? registryArgs = null)
+        Action<int>? progressCallback = null, string? registryArgs = null,
+        System.Threading.CancellationToken ct = default)
     {
+        const int PnpmInstallWallClockMs = 600_000; // 10 分钟：从进程起跑就计，不再排在读流之后
         try
         {
             // [Fix] 在 buildDir 创建干净的 package.json，防止 pnpm 向上查找父目录的
@@ -283,26 +289,50 @@ internal static class ProcessRunner
                 try { errorOutput = p.StandardError.ReadToEnd(); } catch { }
             });
 
-            // 主线程逐行解析 stdout ndjson
-            try
+            // 逐行解析 stdout 移入后台任务（[审查 N9] 旧版在主线程读到 EOF 才轮到限时等待——
+            // 超时兜底失效；现在读流与"等进程退出"并行，同一个墙钟管到底）。
+            var stdoutTask = System.Threading.Tasks.Task.Run(() =>
             {
-                while (!p.StandardOutput.EndOfStream)
+                try
                 {
-                    var line = p.StandardOutput.ReadLine();
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    stdoutBuilder.AppendLine(line);
-                    aggregator.OnLine(line);
-                    if (progressCallback is not null)
+                    while (!p.StandardOutput.EndOfStream)
                     {
-                        var (percent, hasData) = aggregator.Snapshot();
-                        if (hasData) progressCallback(percent); // 无数据回退脉冲模式（不显示伪百分比）
+                        var line = p.StandardOutput.ReadLine();
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        stdoutBuilder.AppendLine(line);
+                        aggregator.OnLine(line);
+                        if (progressCallback is not null)
+                        {
+                            var (percent, hasData) = aggregator.Snapshot();
+                            if (hasData) progressCallback(percent); // 无数据回退脉冲模式（不显示伪百分比）
+                        }
                     }
                 }
-            }
-            catch { /* 流读取中断 */ }
+                catch { /* 流读取中断（进程被杀/流关闭） */ }
+            });
 
-            stderrTask.Wait(1000);
-            p.WaitForExit(600000); // 10 分钟超时兜底
+            // 取消 = 立刻杀整棵进程树（台账第 7 条的正解）；退出后注册句柄随 using 释放。
+            using var killOnCancel = ct.Register(() =>
+            {
+                try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
+            });
+            var exitTask = p.WaitForExitAsync();
+            var winner = System.Threading.Tasks.Task.WhenAny(exitTask, System.Threading.Tasks.Task.Delay(PnpmInstallWallClockMs)).GetAwaiter().GetResult();
+            if (winner != exitTask)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
+                try { stdoutTask.Wait(2000); stderrTask.Wait(2000); } catch { /* 观察掉被杀后的流读失败 */ }
+                Logger.Warn($"pnpm install timed out after {PnpmInstallWallClockMs / 1000}s wall clock; process tree killed",
+                    ErrorCodes.E4001);
+                return false;
+            }
+            // 进程已退出：双流到 EOF 只是收尾，给有限等待兜底（管道里是有限字节）。
+            try { stdoutTask.Wait(5000); stderrTask.Wait(1000); } catch { /* 进程已退出，流收尾读失败不需观察 */ }
+            if (ct.IsCancellationRequested)
+            {
+                Logger.Info("pnpm install canceled (process tree killed)");
+                return false;
+            }
 
             // ERR_PNPM_IGNORED_BUILDS（exit=1）：包已安装，只是 build scripts 被安全策略阻止
             if (ShellLogic.UpdateProgress.IsPnpmIgnoredBuildsExit(p.ExitCode, stdoutBuilder.ToString(), errorOutput))

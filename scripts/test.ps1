@@ -908,7 +908,10 @@ foreach ($gf in $srcAll) {
     }
 }
 Assert-True ($g12Callers.Count -ge 5) "【G12】RunCapture 已是短进程采集主路径（调用点 $($g12Callers.Count)，≥5）"
-Assert-True ($g12HandRolled.Count -le 2) "【棘轮 G12】RunCapture 之外手写限时 WaitForExit 的采集点 ≤ 2（实测 $($g12HandRolled.Count)：$(if($g12HandRolled.Count){$g12HandRolled[0]}else{'clean'})）"
+# 2→1（2026-09-21 审查 N8/B4）：ShellLogic.PidByPortViaNetstat 的 `WaitForExit(3000)` 换成
+# `WaitForExitAsync().Wait(ms)` 形状后不再落进本判据——注意它**不是**消失，死锁面修好了但手写
+# 采集仍在（台账 6 的前置条件未变）；此处计数随之钉到当下实测 1（WebRuntimeInstaller）。
+Assert-True ($g12HandRolled.Count -le 1) "【棘轮 G12】RunCapture 之外手写限时 WaitForExit 的采集点 ≤ 1（实测 $($g12HandRolled.Count)：$(if($g12HandRolled.Count){$g12HandRolled[0]}else{'clean'})）"
 
 # ---- G13 包名/作用域字面量单一真相源（Phase 5 · F9 收尾）----
 # `DshDiscovery` 的注释早就写着"路径段与提示文案一律从这里取"，但实测仍有 3 处用户可见文案 +

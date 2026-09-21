@@ -2268,17 +2268,30 @@ public static class ShellLogic
             return 0;
         }
 
-        /// <summary>netstat -ano 解析（GetExtendedTcpTable 的兼容回退；Program 旧路径同款逻辑）。</summary>
+        /// <summary>netstat -ano 解析（GetExtendedTcpTable 的兼容回退；Program 旧路径同款逻辑）。
+        /// [审查 N8 2026-09-21] 三必须在原位补齐（不能改调 Managers.ProcessRunner——依赖方向是
+        /// Managers→ShellLogic，反向调用等于给纯逻辑层开 IO 后门，台账第 6 条写明了前置条件）：
+        /// 旧实现同步 ReadToEnd 排在限时等待**之前**（netstat 挂住不关流 = 3s 形同虚设、调用线程
+        /// 无限阻塞）、超时不 Kill（僵尸）、stderr 未重定向。现：双流后台排空 + 真限时 + 超时杀树。</summary>
         private static int PidByPortViaNetstat(int port)
         {
             try
             {
                 var psi = new System.Diagnostics.ProcessStartInfo("netstat", "-ano -p tcp")
-                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+                { UseShellExecute = false, CreateNoWindow = true,
+                  RedirectStandardOutput = true, RedirectStandardError = true };
                 using var p = System.Diagnostics.Process.Start(psi);
                 if (p is null) return 0;
-                var output = p.StandardOutput.ReadToEnd();
-                p.WaitForExit(3000);
+                var stdoutTask = p.StandardOutput.ReadToEndAsync();
+                var exitTask = p.WaitForExitAsync();
+                if (!exitTask.Wait(3000))
+                {
+                    try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
+                    try { stdoutTask.Wait(1000); } catch { /* 被杀后流读失败——观察掉，不留未观察异常 */ }
+                    Logger.Warn("netstat probe timed out; port-owner fallback unavailable");
+                    return 0;
+                }
+                var output = stdoutTask.Wait(1000) ? stdoutTask.Result : "";
                 var token = ":" + port + " ";
                 foreach (var line in output.Split('\n'))
                 {
@@ -2373,12 +2386,18 @@ public static class ShellLogic
                 Logger.Warn($"taskkill start threw: {ex.Message}");
                 return false;
             }
+            // [审查 N8-小] 双流必须排空：/T 杀大树时 taskkill 逐进程打印，管道缓冲（~4KB）填满
+            // 会把 taskkill 卡死在写阻塞上——旧实现"重定向了但从不读取"只靠超时 Kill 兜底。
+            var outDrain = proc.StandardOutput.ReadToEndAsync();
+            var errDrain = proc.StandardError.ReadToEndAsync();
             if (!proc.WaitForExit(timeoutMs))
             {
                 // taskkill 自身超时（极罕见）→ 强杀 taskkill 整树后判定失败
                 try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+                try { outDrain.Wait(1000); errDrain.Wait(1000); } catch { /* 被杀后流读失败不需观察 */ }
                 return false;
             }
+            try { outDrain.Wait(1000); errDrain.Wait(1000); } catch { /* 同上 */ }
             return true; // taskkill 已退出；目标是否真死由 WaitForProcessExit 判定
         }
 
