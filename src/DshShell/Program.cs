@@ -519,7 +519,8 @@ internal static class Program
         // 最小尺寸随 DPI 折算（纯函数）：本窗体无边框 + 手工布局，WinForms 不会替我们缩放
         // MinimumSize——写死 800×600 在 200% 屏上等于允许把窗口缩到设计值的一半。
         form.MinimumSize = DshWeb.Win32.WindowGeometry.MinimumWindowSize(form.DeviceDpi);
-        using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
+        // [审查 N21] toggle 投递进 UI 队列、钩子回调立即返回（钩子线程禁做布局，超时会静默摘钩）
+        using var f11Hook = new F11LowLevelHook(() => form.BeginInvoke(new Action(form.ToggleFullscreen)),
             () => F11LowLevelHook.GetForegroundWindow() == mainHwnd);
         var titleHeight = ShellLogic.DpiScale.Px(32, ShellLogic.DpiScale.Of(form.DeviceDpi));
         form.TitleBar = new CustomTitleBar(form, ResolveDarkMode())

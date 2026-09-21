@@ -84,5 +84,19 @@
 | B5 | G6 v2 块级静默 catch 扫描（空体/仅注释/单 `return false|null|0`，`G6-EXEMPT` 显式豁免），基线棘轮 130 只许降；清剿最重八处：VerifyChecksum 不再把网络异常伪装成 E1004、ExtractPortableNode 真因入 E1005、msiexec 启动失败/整流程/UAC 拒绝三处留痕 + 无界 WaitForExit→300s、KillProcess 抛错入 E2005 | N10 | ✅ 完成（闸自身盲区被 GATE-PROBE 抓出一次并修复：`catch { } // 注释` 曾被当多行体起点；余 ~130 处存量按棘轮只减不增分批清） |
 | B6 | vbs 处置：对齐 DshDiscovery 三级回退 / 从因果地图除名+停止分发 | N11 | ⏸ 待用户裁决路线 |
 
+### 追加批次 C8（同日，用户指令"用真 OS 证据实测真机时序类"+一行级小项）
+
+| 发现 | 修复 | 证据 |
+|---|---|---|
+| N15 状态机 TOCTOU | `LauncherLifecycle` 全部读写走锁 + 新增原子 `TryFire`；`LauncherApp.TryFire` 改用它 | 真线程并发回归 8×300 次投递不得抛（`LauncherLifecycleConcurrencyTests`）+ 拒绝零副作用形状钉 |
+| N16 NC 激活无去重 | `WM_NCACTIVATE` 只在激活态真实翻转时推一次 `SWP_FRAMECHANGED`（`_ncActivateState`） | 真机 `--ui-selftest`（本窗体真实建窗/最大化 0px 断言）通过；视觉闪影无法程序断言——边界如实记 |
+| N17 托盘唤回吞恢复标志 | Core 未就绪时复位改为**保持标志 + Trace 留痕**，下次唤回续做 | 编译期形状 + 真机自测过；"崩溃恰发生在 Core 未建立"的完整链路仍待真机复现（未实测，不得声称闭环） |
+| N18 弹窗初始化打死宿主 | `NewWindowRequested` 补 catch → E1013 注册（含 Describe）+ 错误码契约测试 | 弹窗失败不再上抛；E1013 三要素断言进快线 |
+| N21 F11 钩子超时摘钩 | 接线处改 `form.BeginInvoke`，钩子回调零工作立即返回 | 真机 F11 由 e2e-geo 线（--ui-probe + 虚拟屏）覆盖，本次 push 后验 |
+| N24 PrereqCheck 文档头 | 改写为实测形状（0/1602 + "任何非零码=程序包有问题"纠正） | 一行级 |
+| N23 ui-test.yml | 触发补 `tags: v[0-9]*.*[0-9]*`（与 build.yml 口径一致） | action SHA pin 未做（独立小项） |
+| xUnit2020 | `Assert.True(false,…)` → `Assert.Fail` | 一行级 |
+| CI flaky（DshDiscoveryProbeTests） | 5 条 spawn 子进程用例挂 `Category=RealOS` 迁 real-os 层（Ensure Node.js 之后）| 重跑原失败 job=绿 佐证装置时序；本文件不在 1b 扫描面，头注留迁移判决 |
+
 ### 本轮未修、留档的其余发现
 N5(台账引用行号漂移已顺带更正)、N13/N14/N15/N16/N17/N18/N19/N20/N21/N22/N23/N24/N26/N27/N28 与全部 P3：判决与证据在本文 §1–§3，其中 N15/N16/N17/N18/N19/N20/N21 属真机敏感项，修前需按测试铁律配 RealOS/E2E 验证，不与本轮快线批次混跑。CHANGELOG `[Unreleased]` 已到 G7 上限 400/400，本轮修复记录**尚未**写入——压缩他条或按台账 #11 口径申请抬限需用户裁决。

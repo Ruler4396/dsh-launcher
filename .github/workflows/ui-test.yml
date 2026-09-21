@@ -6,6 +6,9 @@ name: ui-selftest
 on:
   push:
     branches: [master]
+    # 2026-09-21 审查 N23：触发口径与 build.yml 对齐——tag 发布也要跑无头几何回归，
+    # 否则"发布版本从没被这条线测过"（PR 在本仓库不存在，tag 是另一条唯一真实入口）。
+    tags: ['v[0-9]*.*[0-9]*']
     paths: ['src/**', 'scripts/**', 'docs/DETAILS.md']
   pull_request:
     paths: ['src/**']

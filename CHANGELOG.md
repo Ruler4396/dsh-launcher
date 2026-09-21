@@ -24,6 +24,13 @@
   一条断言 F16 已废除规则的"回归钉"、三份 E1008 逐字节重复）；沙盒隔离重写为生产 `SafeModeState`
   真契约 + 主环境字节守卫；`DshSandbox` 夹具空心 helper 删除；快线 filter 补 `Category!=RealNet`
   （旧账里 3 条裸 return 被计成通过）。快线 1313→1298 全绿。
+- **真机时序类收口（审查 C8）**：状态机读写全入锁 + 原子 `TryFire`（并发 8×300 投递回归不抛=契约红灯）；
+  `WM_NCACTIVATE` 只在激活态真实翻转时推一次帧重算（约束四.2 去重补齐最后一条路径）；托盘唤回改为「重载
+  真的发生才复位 RecoveryNeeded」（Core 未就绪保标志，堵住「崩溃恰逢 Core 未建立→永久白屏」）；弹窗初始化
+  失败兜住折算新码 E1013 不再打死宿主；F11 钩子回调改投递，LowLevelHooksTimeout 静默摘钩面归零。
+  真机 `--ui-selftest` pass=True（几何 0px 间隙，本机 1852×1080@96）。
+- **CI flaky 装置修**：`DshDiscoveryProbeTests` 5 条 spawn 子进程用例挂 `Category=RealOS` 迁 real-os 层——
+  快线 job 在装 node 前赌「必可解析」是装置假设不是产品契约（原失败 job 重跑=绿，佐证 flaky 归因）。
 - **start-dsh.vbs/start-dsh.cmd 旧预拉起链除名**（审查裁决：对齐=在 vbs 里复刻第五份发现真相源，
   永追不上；壳早已不经它）：删脚本、csproj/MSI/打包清单摘除、dsh-web.cmd 直达壳；
   卸载 CA/uninstall 清理存量自启值的分支保留；除名防回流进 test.ps1 §2 与 RepoFile 契约测试。

@@ -17,6 +17,7 @@ internal sealed class DshShellForm : Form
     internal CustomTitleBar? TitleBar;
     internal WebView2? MainWebView2;
     private FormWindowState _lastWindowState = FormWindowState.Normal;
+    private bool _ncActivateState = true; // WM_NCACTIVATE 去重（约束四.2，审查 N16）：只在激活态真实翻转时推一次
 
     // Step 3 薄壳化：结构体/常量/P- Invoke 已迁入 Win32/NativeMethods.cs；
     // 决策逻辑下沉 WindowChromeController（Chrome/WindowChromeController.cs）。
@@ -192,7 +193,13 @@ internal sealed class DshShellForm : Form
             case Win32Constants.WM_NCACTIVATE:
                 // 不吞掉则 DefWindowProc 用经典 NC 渲染器画 Win98 式标题栏（见 ADR-003）；
                 // 本窗口 NC 全自绘，吞掉并返回 1（声明已处理激活态重绘）。
-                ForceNonClientRedraw();
+                // [审查 N16 2026-09-21] 约束四.2 的去重此前只管 OnResize：每次点其它窗/Alt+Tab
+                // 都在 WndProc 内同步 SetWindowPos(SWP_FRAMECHANGED)。现只在激活态真实翻转时推一次。
+                if ((m.WParam != IntPtr.Zero) != _ncActivateState)
+                {
+                    _ncActivateState = m.WParam != IntPtr.Zero;
+                    ForceNonClientRedraw();
+                }
                 m.Result = (IntPtr)1; // 1：已处理激活态重绘
                 return;
             case Win32Constants.WM_NCPAINT:

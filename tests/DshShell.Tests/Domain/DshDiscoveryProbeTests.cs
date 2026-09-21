@@ -5,8 +5,10 @@ namespace DshShell.Tests.Domain;
 
 /// <summary>
 /// DshDiscovery 版本探测的三必须合规与记忆化契约（2026-09 启动时延修复配套）：
-/// - 旧实现同步 ReadToEnd 可无限阻塞且超时不杀树（违反进程三必须）→ RealOS 回归锁定有界终止；
-/// - 会话内重复探测（组合根/拉起链/就绪探针多次调用）曾致 Splash 冻结 → 记忆化只缓存昂贵探测，
+/// - 旧实现同步 ReadToEnd 可无限阻塞且超时不杀树（违反进程三必须）→ RealOS 回归锁定/// 分层（2026-09-21 CI 快线红后修装置）：凡 spawn 子进程的 5 条用例挂 Category=RealOS，由 real-os 层
+/// （Ensure Node.js 之后）执行——快线 job 装 node 前执行时 DSH_FORCE_NPM_SMOKE=1 解析不到，
+/// 是装置错不是产品错（本文件不在 RealOs/ 下，1b 闸扫不到，靠本注记留判据）。
+/// - 会话内重复探测会话内重复探测（组合根/拉起链/就绪探针多次调用）曾致 Splash 冻结 → 记忆化只缓存昂贵探测，
 ///   环境钩子（DSH_VERSION 等）保持即时生效；InvalidateCache 清除记忆供写侧（首装安装成功等）调用。
 /// </summary>
 public class DshDiscoveryProbeTests
@@ -35,6 +37,7 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    [Trait("Category", "RealOS")]
     public void ProbeVersionOutput_NormalChild_ReturnsTrimmedVersion()
     {
         var node = FindNodeExeOrSkip();
@@ -47,6 +50,7 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    [Trait("Category", "RealOS")]
     public void ProbeVersionOutput_MultilineBannerChild_ExtractsVersionLine_RealOS()
     {
         // F3 端到端：真实子进程先打 banner 行再打版本行——旧行为会返回多行脏版本，
@@ -62,6 +66,7 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    [Trait("Category", "RealOS")]
     public void ProbeVersionOutput_HangingChild_KilledWithinBound_RealOS()
     {
         // 零 Mock 回归：子进程持有 stdout 不关（旧实现会在此无限 ReadToEnd 阻塞），
@@ -79,6 +84,7 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    [Trait("Category", "RealOS")]
     public void ProbeMemo_SecondCallServedFromMemory_InvalidateCacheForcesRepro()
     {
         // 记忆化契约：同 (fileName,arguments) 第二次调用不再 spawn；InvalidateCache 后重新探测，
@@ -137,6 +143,7 @@ public class DshDiscoveryProbeTests
     }
 
     [Fact]
+    [Trait("Category", "RealOS")]
     public void DiscoverCurrentRuntime_GlobalNpmCustomPrefix_ResolvesSiblingEntry_RealOS()
     {
         // issue #24 回归门禁：自定义 prefix（非 %APPDATA%\npm）下发现层必须产出现实可直启身份。

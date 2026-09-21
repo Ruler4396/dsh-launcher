@@ -66,7 +66,7 @@ public class DshUpdatePipelineRealTests
                 catch (Exception ex) { last = ex; Logger.Warn($"packument via {b} 失败(轮{round + 1}): {ex.Message}"); }
             }
         }
-        Assert.True(false, $"packument 拉取失败（双源两轮）: {last?.Message}");
+        Assert.Fail($"packument 拉取失败（双源两轮）: {last?.Message}");
         return null!;
     }
 

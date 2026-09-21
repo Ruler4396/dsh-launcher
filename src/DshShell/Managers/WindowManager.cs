@@ -173,8 +173,9 @@ public sealed class WindowManager : IWindowManager
             && DateTime.UtcNow - WebViewManager.HiddenSince >= TimeSpan.FromMinutes(5);
         if (WebViewManager.RecoveryNeeded || longHidden)
         {
-            WebViewManager.RecoveryNeeded = false;
             WebViewManager.HiddenSince = DateTime.MinValue;
+            // [审查 N17 2026-09-21] RecoveryNeeded 不再"先清后刷"——它只在重载真的执行后复位；
+            // Core 未就绪就落到下一分支不动标志，下次唤回续做（旧形状=崩溃恰逢 Core 未建立→永久白屏）。
             _ = TryReloadWebViewDeferred(form); // fire-and-forget：不等待结果
         }
     }
@@ -196,6 +197,7 @@ public sealed class WindowManager : IWindowManager
             }
             if (WebViewManager.MainWeb?.CoreWebView2 is not null)
             {
+                WebViewManager.RecoveryNeeded = false; // 走到这里才是"重载真的会发生"——标志此刻才许复位
                 Instance.TraceAction?.Invoke("tray restore: reloading webview after process failure (deferred)");
                 WebViewManager.MainWeb.CoreWebView2.Reload();
             }

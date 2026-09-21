@@ -327,6 +327,14 @@ public sealed class WebViewManager : IWebViewManager
                         e.NewWindow = popup.Web.CoreWebView2;
                         popup.Form.Show();
                     }
+                    catch (Exception ex)
+                    {
+                        // [审查 N18 2026-09-21] 本处理器是 async void：EnsureCoreWebView2Async 抛
+                        // （user-data 被锁/环境失效）若漏出去=UI 线程未处理异常，一个弹窗失败打死宿主。
+                        // 留痕 + 放弃本次弹窗（E1013），绝不上抛。
+                        Logger.Error("internal popup webview init failed: " + ex, ErrorCodes.E1013,
+                            new { uri = e.Uri });
+                    }
                     finally { deferral.Complete(); }
                     return;
                 }

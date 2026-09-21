@@ -410,13 +410,11 @@ public sealed class LauncherApp
     /// </summary>
     public bool TryFire(LifecycleTrigger trigger)
     {
-        if (!_lifecycle.CanFire(trigger))
-        {
-            Logger.Info($"lifecycle: {trigger} ignored while {_lifecycle.State}");
-            return false;
-        }
-        _lifecycle.Fire(trigger);
-        return true;
+        // [审查 N15] 合法判定与转移在状态机内部同锁原子完成——这里的 CanFire→Fire
+        // 两份读观之间的竞态窗口曾让"TryFire 不抛"在并发下失守。
+        if (_lifecycle.TryFire(trigger)) return true;
+        Logger.Info($"lifecycle: {trigger} ignored while {_lifecycle.State}");
+        return false;
     }
 
     public void HandleWebViewCrashed()

@@ -179,7 +179,7 @@ internal static class UiSelftestProbe
             // F11 钩子（与真实路径一致）：仅主窗前台时切换并吞键。
             // 跨线程修复（Step2b）：缓存 hwnd 再进 lambda，避免销毁期 ObjectDisposedException。
             var probeHwnd = form.Handle;
-            using var f11Hook = new F11LowLevelHook(form.ToggleFullscreen,
+            using var f11Hook = new F11LowLevelHook(() => form.BeginInvoke(new Action(form.ToggleFullscreen)),
                 () => F11LowLevelHook.GetForegroundWindow() == probeHwnd);
             Logger.Info($"ui-probe: f11 hook installed hwnd=0x{probeHwnd.ToInt64():X}"); // 诊断：确认走 --ui-probe 分支
 

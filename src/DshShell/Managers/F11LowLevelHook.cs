@@ -73,6 +73,10 @@ internal sealed class F11LowLevelHook : IDisposable
             var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
             if (ShouldHandleF11Hook(nCode, wParam, info.vkCode, _isForeground()))
             {
+                // [审查 N21 2026-09-21] LL 钩子回调由系统在 LowLevelHooksTimeout 内等返回：
+                // 内联做窗口切换（→布局→WebView2 Resize）慢一次就被 Windows **静默摘钩**
+                // （此后 F11 永久失效且 _hook 非零、无报错）。toggle 的投递义务在接线方
+                // （组合根 BeginInvoke 进 UI 队列后返回），钩子线程零工作。
                 _toggle();
                 return (IntPtr)1; // 吞掉 F11，阻止继续分发
             }

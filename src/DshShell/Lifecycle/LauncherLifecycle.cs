@@ -72,12 +72,16 @@ public enum LifecycleTrigger
 /// </summary>
 public sealed class LauncherLifecycle
 {
+    // [审查 N15 2026-09-21] 本类被 UI 线程与后台事务线程并发触碰是既成事实（安全模式阶梯 /
+    // 自愈重启 / 关窗收尾）。此前 _state 无任何保护，CanFire→Fire 的 check-then-act 竞态
+    // 会让"TryFire 不抛"契约在竞态窗口里失守。现：全部读写走 _sync，投递用 TryFire 原子化。
+    private readonly object _sync = new();
     private LifecycleState _state = LifecycleState.Idle;
 
     /// <summary>状态变化事件（携带新状态，供 UI/编排层驱动副作用）。</summary>
     public event EventHandler<LifecycleState>? StateChanged;
 
-    public LifecycleState State => _state;
+    public LifecycleState State { get { lock (_sync) return _state; } }
 
     // 显式转移表：缺省即非法转移
     private static readonly Dictionary<(LifecycleState, LifecycleTrigger), LifecycleState> Table = new()
@@ -158,11 +162,31 @@ public sealed class LauncherLifecycle
     /// （直接调 Fire 仍然会抛）。与 RequestShutdown / HandleWebViewCrashed 同法。
     /// </summary>
     public bool CanFire(LifecycleTrigger trigger)
-        => trigger == LifecycleTrigger.Fatal
-           || (_state is not (LifecycleState.Failed or LifecycleState.ShuttingDown)
-               && Table.ContainsKey((_state, trigger)));
+    {
+        lock (_sync)
+            return trigger == LifecycleTrigger.Fatal
+                || (_state is not (LifecycleState.Failed or LifecycleState.ShuttingDown)
+                    && Table.ContainsKey((_state, trigger)));
+    }
+
+    /// <summary>[审查 N15] 检查与转移在同一把锁内完成——运行期事务入口一律用它。
+    /// 被拒绝返回 false 不抛；Fire 的 Fail-Fast 抛错语义原样保留给编程错误。</summary>
+    public bool TryFire(LifecycleTrigger trigger)
+    {
+        lock (_sync)
+        {
+            if (!CanFire(trigger)) return false;
+            Fire(trigger);
+            return true;
+        }
+    }
 
     public void Fire(LifecycleTrigger trigger)
+    {
+        lock (_sync) FireCore(trigger);
+    }
+
+    private void FireCore(LifecycleTrigger trigger)
     {
         if (trigger == LifecycleTrigger.Fatal)
         {
