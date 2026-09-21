@@ -54,13 +54,16 @@ internal static class Program
         string message =
             "检测到缺少以下运行环境：\n\n"
             + missing.ToString().TrimEnd('\n', '\r')
-            + "\n\n【是】自动安装缺失项后继续（winget 静默安装，可能需要几分钟，期间请留意 UAC 确认）"
-              + "\n【否】退出安装，不装本软件（自行装好环境后重开本向导即可）"
-              + "\n【取消】同【否】：什么都不改，直接退出";
-        // 是=装齐再继续；否/取消=**不安装**。"仍然继续"不在这里给——环境都没齐就默默装下去，
-        // 用户回头只会看到一个起不来的软件；它只作为"自动安装失败之后"的第二问（见 AutoInstallMissing），
-        // 那时用户已经知道具体哪一项没装上，选择才有意义。
-        if (Ask(message, MB_YESNOCANCEL | MB_WARNING) != IDYES) return UserCancelled;
+            + "\n\n【是】我来自动装：winget 静默安装缺失项（可能需要几分钟，期间请留意 UAC 确认），"
+              + "装好后继续安装本软件"
+              + "\n【否】不安装本软件，退出向导（你自行装好环境后重开本向导即可）；"
+              + "右上角 ✕ 等价于【否】";
+        // 只有【是】【否】两键（✕ 等价于否）。原先是 是/否/取消 三键，用户看了实拍说
+        // "文案和按钮太混乱了，取消和否留一个就行"——两个语义重复的退出键只会让人停在原地不动。
+        // "仍然继续"不在这里给：环境都没齐就默默装下去，用户回头只会看到一个起不来的软件；
+        // 它只作为"自动安装失败之后"的第二问（见 AutoInstallMissing），那时用户已经知道具体
+        // 哪一项没装上，选择才有意义。脚本/自带环境的人另有显式开关 PREREQ_FORCE_CONTINUE=1。
+        if (Ask(message, MB_YESNO | MB_WARNING) != IDYES) return UserCancelled;
         return AutoInstallMissing(!hasDotNet, !hasNode);
     }
 
@@ -68,11 +71,16 @@ internal static class Program
 
     /// <summary>继续安装。</summary>
     private const int Continue = 0;
-    /// <summary>ERROR_INSTALL_USEREXIT：MSI 据此干净地报"用户已取消安装"，而不是"程序包有问题"。</summary>
+    /// <summary>ERROR_INSTALL_USEREXIT（用户取消）。
+    /// 【实测纠正】我原先假设"返回 1602 MSI 就会干净地报'用户已取消安装'"——**错了**：真机把
+    /// 检查器嵌进 MSI 跑一遍，点【取消】后 MSI 仍然弹「Windows Installer 程序包有问题」，
+    /// 只是紧接着的向导页会写"由于发生错误，安装向导提前结束。您的系统尚未修改"。
+    /// exe 型自定义动作在 Return="check" 下无法自定义中止文案，要出人话得改成 DLL CA
+    /// （登记在 CHANGELOG 的未做清单）。选 1602 而不是随手非零码，是为了让日志里能看出
+    /// 这是"用户选择退出"而非"程序崩了"。</summary>
     private const int UserCancelled = 1602;
 
     private const uint MB_OK = 0x00000000;
-    private const uint MB_YESNOCANCEL = 0x00000003;
     private const uint MB_YESNO = 0x00000004;
     private const uint MB_RETRYCANCEL = 0x00000005;
     private const uint MB_WARNING = 0x00000030;
