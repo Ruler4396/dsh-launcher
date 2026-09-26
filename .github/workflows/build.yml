@@ -30,7 +30,16 @@ jobs:
     # 预发布 tag（含 '-'，如 -rc.N/-preview）：只由手动 gh release create --prerelease 发布，
     # 自动流水线整体跳过（避免工作流把预发布又当成正式 Release 抢发/覆盖手动产物）。
     if: ${{ !contains(github.ref_name, '-') }}
-    timeout-minutes: 20
+    # 20 → 35 的理由（2026-09-26 实测，不是"为了变绿而放宽"）：
+    #   · 本 job 里 Real-OS 层会走真实 npm/pnpm 安装路径，而**产品代码自己声明的上限**是
+    #     ProcessRunner.cs:242 `PnpmInstallWallClockMs = 600_000`（10 分钟）与 test.ps1:450 钉的
+    #     `timeoutMs: 1200000`（20 分钟）。job 预算只有 20 分钟时，一次合法的慢安装就会把
+    #     整个 job 撞到超时——实测已两次发生（PR #38 首跑、PR #39，均卡在 "Run Real-OS integration
+    #     tests"；两者都只改文档/配置，与产品代码无关）。
+    #   · 正常路径的实测耗时：Real-OS 51s / 75s（master 33829fc 与 PR #32 二轮），静态检查步骤 61–73s，
+    #     test.ps1 快线 31–35s ⇒ 35 分钟 = 产品 20 分钟上限 + 本 job 其它步骤 ~5 分钟 + 一倍余量。
+    #   · 单条断言没被削弱：变的是资源预算，不是判据。
+    timeout-minutes: 35
     runs-on: windows-latest
     env:
       DOTNET_NOLOGO: 'true'
@@ -118,6 +127,11 @@ jobs:
 
       # Stage 2b：运行 Real-OS 集成测试（零 Mock 真实 OS 交互）
       - name: Run Real-OS integration tests
+        # 25 分钟（< job 的 35）是**故意让超时发生在步骤级而不是 job 级**：job 被 cancel 时
+        # 后续步骤全部 skipped，`Upload Real-OS log on failure` 拿不到执行机会 ⇒ 失败完全无日志
+        # （PR #38/#39 两次就是这么变成不可诊断的）。步骤超时会让 job 以失败继续往下走，
+        # realos.log 因此能上传，红灯至少可查。取值 = 产品自述上限 20 分钟 + 5 分钟余量。
+        timeout-minutes: 25
         # filter 字符串的唯一真相源是 scripts/test.ps1 里的 $realOsLayerFilter，这里不再抄第二份
         # （workflow 与脚本各存一份 filter = 迟早漂移，漂移的结果是某条真实用例两层都不跑）。
         # 失败留证(-v minimal + 120 行)与 DSH_FORCE_NPM_SMOKE 也由 test.ps1 负责。
