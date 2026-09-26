@@ -13,6 +13,12 @@ namespace DshWeb.Managers;
 /// DshRuntimeIdentity——严禁散装"版本号字符串"跨模块传递。
 /// 铁律边界：本类绝不触碰 Form / Toast / 标题栏状态——UI 反馈全部由调用方经回调驱动。
 /// </summary>
+// CA1001「拥有可释放字段却不可释放」在本类型上是误报，可逐条核对：_buildCts 的整个生命周期
+// 都在 BuildStagedUpdate 内部——661 行 new，669-670 行 finally 里 Dispose + 置 null；它做成字段
+// 只为了让 TryCancelRunningBuild（678 行）能从外部够到"正在跑的那一次构建"。对象并不拥有这个
+// 资源，实现 IDisposable 反而要新增一条没有任何调用方的 Dispose。
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1001:TypesThatOwnDisposableFieldsShouldBeDisposable",
+    Justification = "_buildCts 在 BuildStagedUpdate 的 finally 内 Dispose（见本文件 669 行）；字段仅为取消入口存在，对象生命周期不持有该资源")]
 public sealed class DshUpdateManager : IDshUpdateManager
 {
     private readonly string _dataDir;
@@ -284,7 +290,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
     }
 
     /// <summary>强杀占用指定端口的 dsh 服务进程（Apply 前清理旧服务）。逻辑自 Program 迁出不变。</summary>
-    private void KillServiceOnPort(int port)
+    private static void KillServiceOnPort(int port)
     {
         try
         {
@@ -486,7 +492,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
 
     /// <summary>[FP1 防线] 应用动作后的物理身份取证：重发现 Identity 与目标版本比对并留痕。
     /// 不一致只记 Warn（启动链的就绪验证与 Outcome 测试会响亮拦截），绝不静默假装成功。</summary>
-    private void LogPostApplyIdentity(string targetVersion)
+    private static void LogPostApplyIdentity(string targetVersion)
     {
         try
         {
@@ -511,7 +517,7 @@ public sealed class DshUpdateManager : IDshUpdateManager
     /// 版本串必须已过 <see cref="ShellLogic.UpdateGuardPolicy.ShouldDowngradeGlobalPackage"/>
     /// 白名单——它直接进 npm 的参数串。
     /// </summary>
-    public bool TryDowngradeGlobalPackageForRollback(string version)
+    public static bool TryDowngradeGlobalPackageForRollback(string version)
     {
         var sources = ProcessRunner.GetNpmRegistrySources();
         return ProcessRunner.TryNpmOverRegistries(

@@ -48,8 +48,9 @@ public sealed class SplashForm : Form
     private readonly Button _confirmNo = new();
     // [issue #28-2] 几何与像素字体随 DPI 重算（ApplyLayout），不再写死物理像素常量
     private ShellLogic.SplashLayout.Geometry _geo;
-    /// <summary>当前生效的布局快照（<c>--ui-selftest</c> 据此断言"文字不撑破控件框"）。</summary>
-    internal ShellLogic.SplashLayout.Geometry Layout => _geo;
+    /// <summary>当前生效的布局快照（<c>--ui-selftest</c> 据此断言"文字不撑破控件框"）。
+    /// 原名 <c>Layout</c> 与 <see cref="Control.Layout"/> 事件同名（CS0108 隐藏），故显式改名。</summary>
+    internal ShellLogic.SplashLayout.Geometry CurrentLayout => _geo;
     private Font? _bodyFont;
     private Font? _confirmTitleFont;
     private TaskCompletionSource<bool>? _confirmTcs;

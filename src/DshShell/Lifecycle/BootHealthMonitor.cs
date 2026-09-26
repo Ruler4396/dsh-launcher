@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Globalization;
+using System.Text.Json;
 
 namespace DshWeb.Lifecycle;
 
@@ -232,9 +233,9 @@ public sealed class BootHealthMonitor : IDisposable
         // 撞上一个"异常弹窗"（issue #28 第 2 点）。
         if (running)
         {
-            Logger.Warn($"[boot-monitor] service exited while healthy (exit code={code?.ToString() ?? "unavailable"}); "
+            Logger.Warn($"[boot-monitor] service exited while healthy (exit code={code?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}); "
                 + "handing over to runtime restart supervision");
-            _trace($"runtime service exit (exit code={code?.ToString() ?? "unavailable"}); supervision handed to composer");
+            _trace($"runtime service exit (exit code={code?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}); supervision handed to composer");
             ServiceExitedWhileRunning?.Invoke(code);
             return;
         }
@@ -247,8 +248,8 @@ public sealed class BootHealthMonitor : IDisposable
             return;
         }
         Report(BootLayer.Process,
-            $"dsh 服务进程异常退出（exit code={code?.ToString() ?? "unavailable"}）",
-            $"pid exit code={code?.ToString() ?? "unavailable"}", ErrorCodes.E2007);
+            $"dsh 服务进程异常退出（exit code={code?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}）",
+            $"pid exit code={code?.ToString(CultureInfo.InvariantCulture) ?? "unavailable"}", ErrorCodes.E2007);
     }
 
     // ---------------- 日志层 / HTTP 层（轮询循环） ----------------
@@ -293,7 +294,7 @@ public sealed class BootHealthMonitor : IDisposable
                     lock (_sync) _logScanOffset = nextOffset;
                     if (body.Length > 0)
                     {
-                        foreach (var line in text.Split('\n'))
+                        foreach (var line in body.Split('\n'))
                         {
                             var trimmed = line.TrimEnd('\r');
                             if (trimmed.Length == 0) continue;
@@ -418,7 +419,7 @@ public sealed class BootHealthMonitor : IDisposable
                         raw = await probeTask;
                     }
                 }
-                _trace($"page probe: round done (rawLen={(raw?.Length.ToString() ?? "null")}{(probeTimedOut ? ", TIMED OUT" : "")})");
+                _trace($"page probe: round done (rawLen={(raw?.Length.ToString(CultureInfo.InvariantCulture) ?? "null")}{(probeTimedOut ? ", TIMED OUT" : "")})");
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)

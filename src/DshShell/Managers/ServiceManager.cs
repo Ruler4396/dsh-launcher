@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace DshWeb.Managers;
 
 /// <summary>
@@ -379,7 +381,7 @@ public sealed class ServiceManager : IServiceManager
     private static void ApplyServiceEnvironment(
         System.Diagnostics.ProcessStartInfo psi, int port, string? logPath)
     {
-        psi.EnvironmentVariables["DSH_PORT"] = port.ToString();
+        psi.EnvironmentVariables["DSH_PORT"] = port.ToString(CultureInfo.InvariantCulture);
         if (!string.IsNullOrWhiteSpace(logPath))
             psi.EnvironmentVariables["DSH_LOG"] = logPath;
     }
@@ -498,8 +500,10 @@ public sealed class ServiceManager : IServiceManager
                 }
             }
         }
-        process.OutputDataReceived += (_, e) => Append(e.Data);
-        process.ErrorDataReceived += (_, e) => Append(e.Data);
+        // e.Data 为 null 表示流已关闭（不是"空行"），必须跳过：Append 的语义是"渲染一行日志证据"，
+        // 把 null 当行写入会让 dropped-line 归因链多出一个不存在的条目。
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) Append(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Append(e.Data); };
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

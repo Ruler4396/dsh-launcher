@@ -19,7 +19,7 @@ internal sealed class WindowChromeController
     /// 加回 WS_THICKFRAME|WS_MINIMIZEBOX|WS_MAXIMIZEBOX|WS_SYSMENU（FormBorderStyle.None
     /// 默认剥掉）；不加 WS_CAPTION（避免 DWM 最大化时预留原生标题栏空间导致外扩）。
     /// </summary>
-    public void ApplyWindowStyle(CreateParams cp)
+    internal static void ApplyWindowStyle(CreateParams cp)
     {
         cp.Style |= Win32Constants.WS_THICKFRAME | Win32Constants.WS_MINIMIZEBOX
             | Win32Constants.WS_MAXIMIZEBOX | Win32Constants.WS_SYSMENU;
@@ -31,7 +31,7 @@ internal sealed class WindowChromeController
     /// 样式覆盖。此处用 SetWindowPos(SWP_FRAMECHANGED) 强推 DWM 立即重新计算非客户区
     ///（重发 WM_NCCALCSIZE），清除该闪影（v0.3.4，矩阵 G3）。
     /// </summary>
-    public void ForceNonClientRedraw(IntPtr hwnd)
+    internal static void ForceNonClientRedraw(IntPtr hwnd)
     {
         try
         {

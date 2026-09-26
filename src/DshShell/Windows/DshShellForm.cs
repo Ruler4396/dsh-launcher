@@ -22,7 +22,6 @@ internal sealed class DshShellForm : Form
     // Step 3 薄壳化：结构体/常量/P- Invoke 已迁入 Win32/NativeMethods.cs；
     // 决策逻辑下沉 WindowChromeController（Chrome/WindowChromeController.cs）。
     // override 只做消息解码 + 转发（铁律 3）。常量引用 Win32Constants 逐位等价。
-    private readonly WindowChromeController _chrome = new();
 
     // 多屏 DPI 修复（G1/G10）：显示器几何/DPI 指标提供者。默认生产实现直连真实 Win32 API；
     // Headless 单测注入内存 Fake（IDisplayMetricsProvider），即可在无多显示器硬件下覆盖
@@ -58,7 +57,7 @@ internal sealed class DshShellForm : Form
             // 不加 WS_CAPTION：避免 DWM 在最大化时预留原生标题栏空间导致窗口外扩。
             // 原生边框观感由 WM_NCCALCSIZE 返回 0 去除，自绘标题栏 + 1px 边框不变。
             var cp = base.CreateParams;
-            _chrome.ApplyWindowStyle(cp);
+            WindowChromeController.ApplyWindowStyle(cp);
             return cp;
         }
     }
@@ -168,7 +167,7 @@ internal sealed class DshShellForm : Form
     internal void ForceNonClientRedraw()
     {
         // Step 3 薄壳：决策/调用转发到 controller（矩阵 G3 闪影清除）
-        _chrome.ForceNonClientRedraw(Handle);
+        WindowChromeController.ForceNonClientRedraw(Handle);
     }
 
     protected override void WndProc(ref Message m)

@@ -57,7 +57,7 @@ public class BootHealthMonitorTests
         handle.Exit(1);
         var verdict = await failedTask;
         Assert.Equal("E2007", verdict.ErrorCode);
-        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Process && e.Detail!.Contains("1"));
+        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Process && e.Detail!.Contains('1'));
     }
 
     [Fact]
@@ -184,7 +184,7 @@ public class BootHealthMonitorTests
         // 2026-08 回归：DOM 文本坏签名降级为 Absent，需连续 AbsentThreshold(3) 轮才判死，
         // 证据不丢（detail 携带 dom-suspect 原文），摘要改为"好符号连续 N 次缺席"。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":false,\"text\":\"Plugin crash: window.__ModuleLoader__ bootstrap facade is missing\",\"err\":\"\"}"));
+            _ => Task.FromResult<string?>("{\"good\":false,\"text\":\"Plugin crash: window.__ModuleLoader__ bootstrap facade is missing\",\"err\":\"\"}"));
         var failedTask = WaitFailedAsync(m);
         m.OnNavigationCompleted();
         var verdict = await failedTask;
@@ -201,7 +201,7 @@ public class BootHealthMonitorTests
     {
         // 抗误报：DOM 坏签名首轮（远不足 AbsentThreshold）必须仍 Pending，绝不误判 E2008。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":false,\"text\":\"only a hidden node says bootstrap facade is missing\",\"err\":\"\"}"));
+            _ => Task.FromResult<string?>("{\"good\":false,\"text\":\"only a hidden node says bootstrap facade is missing\",\"err\":\"\"}"));
         m.Start();
         m.OnNavigationCompleted();
         await Task.Delay(90); // ≪ 3 轮（ProbeIntervalMs=40 → ~2 轮）
@@ -213,7 +213,7 @@ public class BootHealthMonitorTests
     {
         // err 原文坏签名仍一票否决（S22"捕获原文"硬要求，抗误报仅限 DOM 文本层）。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":false,\"text\":\"ok\",\"err\":\"Uncaught: bootstrap facade is missing\"}"));
+            _ => Task.FromResult<string?>("{\"good\":false,\"text\":\"ok\",\"err\":\"Uncaught: bootstrap facade is missing\"}"));
         var failedTask = WaitFailedAsync(m);
         m.OnNavigationCompleted();
         var verdict = await failedTask;
@@ -232,7 +232,7 @@ public class BootHealthMonitorTests
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1", _ =>
         {
             calls++;
-            return Task.FromResult(calls <= 2
+            return Task.FromResult<string?>(calls <= 2
                 ? "{\"good\":false,\"text\":\"loading\",\"err\":\"\"}"
                 : "{\"good\":true,\"text\":\"DeepSeek Harness\",\"err\":\"\"}");
         });
@@ -252,7 +252,7 @@ public class BootHealthMonitorTests
     public async Task PageLayer_AbsentThresholdExceeded_Fails()
     {
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":false,\"text\":\"blank page\",\"err\":\"\"}"));
+            _ => Task.FromResult<string?>("{\"good\":false,\"text\":\"blank page\",\"err\":\"\"}"));
         var failedTask = WaitFailedAsync(m);
         m.OnNavigationCompleted();
         var verdict = await failedTask;
@@ -271,7 +271,7 @@ public class BootHealthMonitorTests
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1", _ =>
         {
             calls++;
-            return Task.FromResult(
+            return Task.FromResult<string?>(
                 "{\"good\":false,\"text\":\"欢迎使用 DeepSeek Harness —— 请先配置你的模型提供方 API Key 后即可开始使用。设置入口在右上角齿轮图标，也可以从这里打开帮助文档与示例。\",\"err\":\"\"}");
         }, trace: t => traces.Add(t));
         var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -296,7 +296,7 @@ public class BootHealthMonitorTests
         // 渲染豁免不削弱慢启动/白屏保护：innerText 低于 RenderedMinTextChars（空白/纯加载页）
         // 仍计票缺席 → E2008。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":false,\"text\":\"Loading...\",\"err\":\"\"}"));
+            _ => Task.FromResult<string?>("{\"good\":false,\"text\":\"Loading...\",\"err\":\"\"}"));
         var failedTask = WaitFailedAsync(m);
         m.OnNavigationCompleted();
         var verdict = await failedTask;
@@ -521,7 +521,10 @@ public class BootHealthMonitorTests
         m.OnNavigationCompleted();
         await Task.Delay(120); // 进入第一轮挂起探针
         var stop = Task.Run(m.Stop);
-        Assert.True(stop.Wait(TimeSpan.FromSeconds(2)), "Stop must not block on a hung probe");
+        // 用 WhenAny + 超时判"Stop 有没有及时返回"，不用 stop.Wait(TimeSpan)：
+        // 后者正是 xUnit1031 要拦的阻塞形态，而这里要观测的恰好是"它会不会阻塞"。
+        await Task.WhenAny(stop, Task.Delay(2000));
+        Assert.True(stop.IsCompleted, "Stop must not block on a hung probe");
     }
 
     [Fact]
@@ -531,12 +534,12 @@ public class BootHealthMonitorTests
         // 但面板页面 ModuleLoader 门面尚在（good=true）——致命面板签名必须一票判死，
         // 证据 dom[ 前缀（→ 插件归因 → 安全模式），而非 HEALTHY 假阳性。
         using var m = new BootHealthMonitor(FastProfile, null, "http://127.0.0.1:1",
-            _ => Task.FromResult("{\"good\":true,\"text\":\"HARNESS Failed to load plugins failed to import loader entry dacd7ad5 (dsh-notification): client-modules missed the module table\",\"err\":\"\"}"),
+            _ => Task.FromResult<string?>("{\"good\":true,\"text\":\"HARNESS Failed to load plugins failed to import loader entry dacd7ad5 (dsh-notification): client-modules missed the module table\",\"err\":\"\"}"),
             httpProbe: _ => true);
         var failedTask = WaitFailedAsync(m);
         m.OnNavigationCompleted();
         var verdict = await failedTask;
         Assert.Equal("E2008", verdict.ErrorCode);
-        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Page && e.Detail!.StartsWith("dom[failed to import loader entry]="));
+        Assert.Contains(verdict.Evidence, e => e.Layer == BootLayer.Page && e.Detail!.StartsWith("dom[failed to import loader entry]=", StringComparison.Ordinal));
     }
 }

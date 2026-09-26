@@ -1,0 +1,43 @@
+<Project>
+
+  <!-- 静态检查（OpenSSF Best Practices `static_analysis` / `warnings_strict`）。
+       为什么不用 CodeQL：它会把未修的发现以公开 code-scanning 告警清单的形式挂在仓库首页，
+       与 .github/SECURITY.md 承诺的"私密报告"通道相矛盾。
+       这里用 SDK 内置的 Microsoft.CodeAnalysis.NetAnalyzers（CA#### 规则集，
+       与编译器 CS#### 警告是两套独立规则；net5+ 不得再显式引用该包，故只写 AnalysisLevel/AnalysisMode）。
+       分两步落地，顺序不可颠倒：先只开规则数警告 → 逐条清 → 最后才打开 TreatWarningsAsErrors。 -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+    <!-- 2026-09-26 打开。顺序是硬约束：先只开规则数出警告（src 70 / Tests 906 / E2E 12 /
+         FolderPickerCa 5），逐条清到 0，才把下面这一行翻成 true。
+         每条警告的处置（真修 / 带证据关闭）登记在 docs/STATIC-ANALYSIS-2026-09-26.md；
+         规则的偏离只有 .editorconfig 里那三条，其余全部真改。 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+    <!-- 依赖 CVE 闸门（OpenSSF `dependency_monitoring` / `static_analysis_common_vulnerabilities`）：
+         NuGet 的 advisory 数据在 restore 阶段以 NU1901..NU1904 报出，配合上面那行 = **有已知漏洞就构建失败**。
+         NuGetAuditMode=all 把**传递**依赖一起算（SDK 默认只查直接引用）。
+         这不是"配了但不知道会不会响"的开关：2026-09-26 用 Newtonsoft.Json 12.0.3 做正对照，
+         在仓外夹具里实测报出 NU1903 + GHSA 链接；本仓 6 个工程用 restore 强制重跑后全部 0 命中。 -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+  </PropertyGroup>
+
+  <!-- MSB3277 的真实成因（2026-09-26 静态检查落地时定位）：Microsoft.Web.WebView2 的
+       build/Common.targets 对**所有** net5+ 消费者无条件加一条
+       `Reference Include=…\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll`。
+       本仓所有工程都是 WinForms/无 UI 控制台，不含任何 WPF 代码（grep `WebView2.Wpf` 全仓 0 命中），
+       而那个 WPF 程序集把 WindowsBase 5.0.0.0 拉进解析闭包，与 SDK 的 WindowsBase 10.0 参考冲突，
+       于是每次构建刷一条 MSB3277（生产工程 1 条 + Tests/E2E 各 1 条，共 66 行日志）。
+       这里按 AssemblyName 精确摘掉该引用：不改变任何运行期行为（没人用它），也不掩盖别的冲突。
+       放在本文件而不是 DshShell.csproj，是因为该包经 buildTransitive 对每个引用 DshShell 的
+       工程重放同一条 Reference，只在一个工程里摘会留下另外两个工程的噪声。 -->
+  <Target Name="DropUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences;ResolveReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.FileName)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

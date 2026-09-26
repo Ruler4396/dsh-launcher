@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Xunit;
 
@@ -32,7 +33,7 @@ public class DshUpdateFlowTests : IAsyncLifetime
         File.WriteAllText(_pendingPath, JsonSerializer.Serialize(new
         {
             version = PendingVersion,
-            at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             failCount = 0,
         }));
         _proc = null;

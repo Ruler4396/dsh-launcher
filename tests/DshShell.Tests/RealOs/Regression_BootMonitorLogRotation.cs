@@ -33,6 +33,7 @@ public class Regression_BootMonitorLogRotation : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
         try { Directory.Delete(_dir, recursive: true); } catch { /* 临时目录清理失败忽略 */ }
     }
 

@@ -3,6 +3,7 @@ using System.Text;
 using DshWeb;
 using DshWeb.Managers;
 using Xunit;
+using System.Globalization;
 
 namespace DshShell.Tests;
 
@@ -25,7 +26,7 @@ public class RealOsProcessTests
     private static bool ForceSmoke =>
         Environment.GetEnvironmentVariable("DSH_FORCE_NPM_SMOKE") == "1";
 
-    private string MakeTempDir() =>
+    private static string MakeTempDir() =>
         Path.Combine(Path.GetTempPath(), "dsh-realos-" + Guid.NewGuid().ToString("N"));
 
     /// <summary>检查字符串是否含"乱码字符"——非法 UTF-8 解码的替换字符（U+FFFD）。</summary>
@@ -178,7 +179,7 @@ public class RealOsProcessTests
                 progress: line =>
                 {
                     var m = System.Text.RegularExpressions.Regex.Match(line, "PROC_PID=(\\d+)");
-                    if (m.Success) capturedPid = int.Parse(m.Groups[1].Value);
+                    if (m.Success) capturedPid = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
                 });
             Assert.False(ok, "引擎应在短超时后返回 false（进程未在 800ms 内退出）");
             Assert.True(capturedPid > 0, "应捕获到引擎启动的进程 PID");

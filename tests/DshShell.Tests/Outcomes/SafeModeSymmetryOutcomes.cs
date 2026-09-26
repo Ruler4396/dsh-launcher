@@ -33,6 +33,7 @@ public class SafeModeSymmetryOutcomes : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
         try { Directory.Delete(_dshHome, recursive: true); } catch { /* 临时目录回收失败不影响结论 */ }
     }
 

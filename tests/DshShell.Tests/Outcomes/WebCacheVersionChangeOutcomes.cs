@@ -306,7 +306,7 @@ public class WebCacheVersionChangeOutcomes
         }
     }
 
-    private static Task NavigateAndWaitAsync(WebView2 web, string url)
+    private static Task<bool> NavigateAndWaitAsync(WebView2 web, string url)
     {
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         void OnCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)

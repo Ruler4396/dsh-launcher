@@ -30,7 +30,7 @@ public class ConfigWaitingStateOutcomes
             logPath: null,
             httpUrl: "http://127.0.0.1:3080",
             // 页面已渲染（good=false = dsh boot 链未完成），无坏签名 → 渲染豁免
-            pageProbe: _ => Task.FromResult(
+            pageProbe: _ => Task.FromResult<string?>(
                 "{\"good\":false,\"text\":\"欢迎使用 DeepSeek Harness：请先配置模型提供方 API Key 后开始使用，设置入口在右上角齿轮图标，也可以查看帮助文档与示例项目。\",\"err\":\"\"}"),
             // 残留 pid：GetProcessById 抛错（用户实测 "进程 attach 失败（pid=4708 不存在）"）
             processHandleFactory: _ => throw new ArgumentException("no process with id 4708"),

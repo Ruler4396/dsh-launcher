@@ -306,7 +306,9 @@ internal sealed class TrayMenuForm : Form
             if (old != IntPtr.Zero) SelectObject(memDc, old);
             if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
             DeleteDC(memDc);
-            ReleaseDC(IntPtr.Zero, screenDc);
+            // CA1806：ReleaseDC 返回 0 = 未归还（屏幕 DC 泄漏，累积到一定程度整机绘制失败），必须留痕。
+            if (ReleaseDC(IntPtr.Zero, screenDc) == 0)
+                Logger.Warn("tray layered paint: ReleaseDC failed (screen DC not returned)");
         }
     }
 

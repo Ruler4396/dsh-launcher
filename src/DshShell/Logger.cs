@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -90,7 +91,7 @@ public static class Logger
     {
         var entry = new Dictionary<string, object?>
         {
-            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+            ["ts"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture),
             ["level"] = level.ToString().ToUpperInvariant(),
             ["pid"] = Environment.ProcessId,
         };

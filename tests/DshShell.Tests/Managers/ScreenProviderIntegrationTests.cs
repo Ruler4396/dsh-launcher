@@ -15,7 +15,11 @@ public class ScreenProviderIntegrationTests : IDisposable
 
     public ScreenProviderIntegrationTests() => _original = Program.ScreenProvider;
 
-    public void Dispose() => Program.ScreenProvider = _original; // 还原，避免污染其他测试
+    public void Dispose()
+    {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
+        Program.ScreenProvider = _original; // 还原，避免污染其他测试
+    }
 
     /// <summary>主屏 4K + 左侧 1080p 副屏（负坐标，物理像素）。</summary>
     private static readonly FakeScreenProvider UhdPlusFhd = new(

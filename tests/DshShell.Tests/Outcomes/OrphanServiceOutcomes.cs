@@ -95,7 +95,6 @@ public class OrphanServiceOutcomes
     public void HealthyPort_SkipStart_NoKill()
     {
         var killCalls = 0;
-        var startCalls = 0;
         var service = new ServiceManager(
             tcpProbe: (_, _) => true,
             httpProbe: (_, _) => true, // HTTP 通 = Healthy

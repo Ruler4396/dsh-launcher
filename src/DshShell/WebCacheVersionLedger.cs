@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -55,7 +56,7 @@ public static class WebCacheVersionLedger
             ShellLogic.FileSystemPolicy.AtomicWrite(_ledgerPath, JsonSerializer.Serialize(new
             {
                 version = currentVersion.Trim(),
-                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             }));
         }
         catch { /* 记录失败：下次启动仍按旧基线决策（至多多清一次，无害；绝不抛） */ }

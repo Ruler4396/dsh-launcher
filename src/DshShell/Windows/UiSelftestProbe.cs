@@ -96,7 +96,7 @@ internal static class UiSelftestProbe
         splash.Show();
         splash.Refresh();
 
-        var g = splash.Layout;
+        var g = splash.CurrentLayout;
         using var gfx = splash.CreateGraphics();
         bool Fits(string text, Font font, Rectangle box)
         {

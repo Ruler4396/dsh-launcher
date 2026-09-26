@@ -48,7 +48,7 @@ internal static class Program
             {
                 try
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(PickedFile));
+                    Directory.CreateDirectory(Path.GetDirectoryName(PickedFile) ?? throw new InvalidOperationException("中转文件路径无目录部分"));
                     // 一次性令牌：CA 侧校验"路径+令牌"配对，防低权限攻击者预置伪造路径。
                     var token = Guid.NewGuid().ToString("N");
                     File.WriteAllText(PickedFile, dlg.FolderName.TrimEnd('\\') + "\\" + Environment.NewLine + token);

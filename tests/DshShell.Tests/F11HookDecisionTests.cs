@@ -10,8 +10,6 @@ namespace DshShell.Tests;
 /// </summary>
 public class F11HookDecisionTests
 {
-    private static readonly IntPtr KeyDown = (IntPtr)0x0100;
-    private static readonly IntPtr SysKeyDown = (IntPtr)0x0104;
     private const uint VK_F11 = 0x7A;
 
     [Theory]

@@ -10,7 +10,7 @@ namespace DshShell.Tests.Managers;
 /// 必须串行执行以防保存/恢复相互踩踏（xUnit 默认按类并行）。
 /// </summary>
 [CollectionDefinition("EnvHygiene")]
-public sealed class EnvHygieneCollection { }
+public sealed class EnvHygieneFixture { }
 
 /// <summary>宿主机环境消毒：开发机 GUI 会话常驻 DSH_WEB_URL（本启动器在跑！）等变量，
 /// 会把组合根推入"外部托管"分支、或用版本钩子覆盖物理发现。Headless 测试一律先清除。</summary>
@@ -68,7 +68,7 @@ public sealed class FakeRuntime : IRuntimeManager
         return Task.FromResult(Result);
     }
 
-    public void PrependToPath(string r) => Prepend = r;
+    public void PrependToPath(string nodeRoot) => Prepend = nodeRoot;
 }
 
 /// <summary>

@@ -289,7 +289,7 @@ public class V030FeaturesTests
     public void BaseUrls_NoDuplicates_WhenCustomEqualsLast()
     {
         var urls = RuntimeResolver.BaseUrls("v24.15.0", "https://m.example.com", "https://m.example.com/").ToList();
-        Assert.Single(urls.Where(u => u == "https://m.example.com"));
+        Assert.Single(urls, u => u == "https://m.example.com");
     }
 
     // ---------- 错误码契约（质量治理 R02 防线：码有专属描述、无重复值） ----------

@@ -238,7 +238,7 @@ public static class RuntimeResolver
         return (null, null);
     }
 
-    private static async Task<bool> VerifySha256Async(string zipPath, string baseUrl, string version)
+    private static async Task<bool> VerifySha256Async(string zipPath, string? baseUrl, string version)
     {
         try
         {
@@ -249,11 +249,11 @@ public static class RuntimeResolver
                 // 校验和优先从官方 nodejs.org 拉取，与 zip 下载源（可能是第三方镜像）解耦——
                 // 避免"镜像被投毒则 zip 与 SHASUMS256 一起被换"的供应链防护失效（E1004）。
                 // 官方拉取失败再回退到镜像（保证可用性，但默认走官方保证可信）。
-                foreach (var sumsUrl in new[]
-                {
-                    $"https://nodejs.org/dist/{version}/SHASUMS256.txt",
-                    baseUrl + "/SHASUMS256.txt",
-                })
+                // baseUrl 可为 null（调用方 DownloadWithFallbackAsync 未记到镜像时）：必须显式跳过，
+                // 否则会拼出 "/SHASUMS256.txt" 这种相对串，异常被下面的 catch 静默吞掉，回退源形同不存在。
+                var sumsUrls = new List<string> { $"https://nodejs.org/dist/{version}/SHASUMS256.txt" };
+                if (baseUrl is not null) sumsUrls.Add(baseUrl + "/SHASUMS256.txt");
+                foreach (var sumsUrl in sumsUrls)
                 {
                     try
                     {

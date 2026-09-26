@@ -117,8 +117,8 @@ namespace DshShell.Tests.Managers;
     [InlineData("EINTEGRITY checksum failed", false)]
     [InlineData("ERESOLVE dependency conflict", false)]
     [InlineData("", false)]
-    [InlineData(null!, false)]
-    public void IsRetryableNpmError_Classifies_RetryableVsFatal(string tail, bool expected)
+    [InlineData(null, false)]
+    public void IsRetryableNpmError_Classifies_RetryableVsFatal(string? tail, bool expected)
     {
         Assert.Equal(expected, ShellLogic.NpmHelpers.IsRetryableNpmError(tail));
     }
@@ -301,8 +301,8 @@ namespace DshShell.Tests.Managers;
     [InlineData("npm ERR! network request to registry failed", false)]
     [InlineData("EACCES permission denied", false)]
     [InlineData("", false)]
-    [InlineData(null!, false)]
-    public void IsNpmNotFoundError_Classifies_EnvironmentMissing(string tail, bool expected)
+    [InlineData(null, false)]
+    public void IsNpmNotFoundError_Classifies_EnvironmentMissing(string? tail, bool expected)
     {
         Assert.Equal(expected, ShellLogic.NpmHelpers.IsNpmNotFoundError(tail));
     }

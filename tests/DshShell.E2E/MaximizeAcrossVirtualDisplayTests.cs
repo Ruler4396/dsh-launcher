@@ -31,6 +31,10 @@ namespace DshShell.E2E;
 /// 无副屏时自动空跑（守卫），不再因缺驱动而失败。
 /// </summary>
 [Trait("Category", "RequiresVirtualDisplay")] // CI 默认按 headless filter 排除；本地有副屏时可显式跑
+// CA1001 关闭（可核对）：_automation 由 xUnit 的 IAsyncLifetime 回收——本类第 73 行
+// DisposeAsync() 内 `_automation?.Dispose();`。分析器不认识 DisposeAsync 是释放钩子。
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Design", "CA1001:TypesThatOwnDisposableFieldsShouldBeDisposable",
+    Justification = "_automation 在 IAsyncLifetime.DisposeAsync（本文件 73 行）内 Dispose")]
 public class MaximizeAcrossVirtualDisplayTests : IAsyncLifetime
 {
     private const string ProcessName = "DshWeb";

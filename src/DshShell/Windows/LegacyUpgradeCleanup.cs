@@ -112,7 +112,8 @@ internal static class LegacyUpgradeCleanup
         try
         {
             dynamic installer = Activator.CreateInstance(
-                Type.GetTypeFromProgID("WindowsInstaller.Installer") ?? throw new InvalidOperationException());
+                Type.GetTypeFromProgID("WindowsInstaller.Installer") ?? throw new InvalidOperationException())
+                ?? throw new InvalidOperationException("WindowsInstaller.Installer 实例化返回 null");
             var localPackage = (string)installer.ProductInfo(productCode, "LocalPackage");
             if (string.IsNullOrWhiteSpace(localPackage) || !File.Exists(localPackage))
                 return null;
@@ -202,7 +203,8 @@ internal static class LegacyUpgradeCleanup
         try
         {
             dynamic shell = Activator.CreateInstance(
-                Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException());
+                Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException())
+                ?? throw new InvalidOperationException("WScript.Shell 实例化返回 null");
             dynamic lnk = shell.CreateShortcut(lnkPath);
             return (string)lnk.TargetPath;
         }

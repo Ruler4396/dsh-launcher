@@ -1,4 +1,5 @@
 using System.Windows.Forms;
+using System.Globalization;
 
 namespace DshWeb.Lifecycle;
 
@@ -102,7 +103,7 @@ internal sealed class ServiceRestartCoordinator
                 // 反复退出（例如插件本身让服务起不来）：静默循环毫无意义，交回用户可见的询问
                 var form = mainFormProvider();
                 var headline = $"dsh 服务在运行中反复退出（已自动重启 {MaxRuntimeRestarts} 次，"
-                    + $"最近退出码 {exitCode?.ToString() ?? "未知"}）。";
+                    + $"最近退出码 {exitCode?.ToString(CultureInfo.InvariantCulture) ?? "未知"}）。";
                 Logger.Warn("[runtime-restart] quiet restart budget exhausted; escalating to visible ask",
                     ErrorCodes.E2007);
                 escalateToUserVisibleAsk(exitCode, headline);
@@ -110,7 +111,7 @@ internal sealed class ServiceRestartCoordinator
             }
 
             _d.SuspendMonitor();
-            _d.Trace($"[runtime-restart] service exit detected (exit code={exitCode?.ToString() ?? "unknown"}); "
+            _d.Trace($"[runtime-restart] service exit detected (exit code={exitCode?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}); "
                 + $"attempt {attempt}/{MaxRuntimeRestarts}");
 
             _ = Task.Run(async () =>

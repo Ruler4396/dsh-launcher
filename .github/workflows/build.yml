@@ -42,6 +42,44 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # ---- 静态检查（OpenSSF Best Practices: static_analysis / static_analysis_fixed / warnings_strict）----
+      # 单独一步的理由：判据要能指出"哪个工具、在哪个环节跑、结果在哪看"，而不是藏在测试脚本里。
+      # 工具 = SDK 内置 Roslyn 分析器（CA#### 规则集，AnalysisMode=Recommended）+ NuGet advisory 审计
+      # （NU1901..1904），两者都在 Directory.Build.props 打开，并经 TreatWarningsAsErrors 变成红灯。
+      # 判读表（哪条警告真修、哪条带证据关闭）在 docs/STATIC-ANALYSIS-2026-09-26.md。
+      # 刻意**不开公开 CodeQL**：它会把未修的发现以公开 code-scanning 清单摊在仓库首页，
+      # 与 .github/SECURITY.md 承诺的私密报告通道相矛盾。
+      - name: Static analysis (Roslyn CA rules + NuGet advisory audit)
+        shell: pwsh
+        run: |
+          dotnet build src/DshShell/DshShell.csproj -c Release -warnaserror --nologo
+          dotnet build tests/DshShell.Tests/DshShell.Tests.csproj -c Release -warnaserror --nologo
+          # CVE 比对：dotnet list 一次只收一个工程，逐个跑并汇总到同一份日志
+          $projects = @(
+            "src/DshShell/DshShell.csproj",
+            "tests/DshShell.Tests/DshShell.Tests.csproj",
+            "tests/DshShell.E2E/DshShell.E2E.csproj",
+            "installer/PrereqCheck/PrereqCheck.csproj",
+            "installer/FolderPicker/FolderPicker.csproj",
+            "installer/FolderPickerCa/FolderPickerCa.csproj")
+          foreach ($p in $projects) {
+            dotnet list $p package --vulnerable --include-transitive | Tee-Object -FilePath vuln.log -Append
+          }
+          # 判据字符串来自实测：有漏洞时输出 "has the following vulnerable packages"，
+          # 无漏洞时输出 "has no vulnerable packages given the current sources"（2026-09-26 用
+          # Newtonsoft.Json 12.0.3 做过正对照，确认这条 pattern 会真的响，不是空闸门）。
+          if (Select-String -Path vuln.log -Pattern 'has the following vulnerable packages' -Quiet) {
+            Write-Output "::error title=vulnerable-packages::dotnet list package --vulnerable 发现已知 CVE，见本步日志"
+            exit 1
+          }
+
+      - name: Upload static analysis log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: static-analysis
+          path: vuln.log
+
       - name: Run tests (unit + script/integration checks, no -Smoke)
         # P1-5：test.ps1 是唯一测试入口（第 1 节内部已跑 dotnet test，此前独立
         # "Run unit tests" 步骤导致单测在 CI 双跑）；含静态断言 + uninstall/-CleanData
