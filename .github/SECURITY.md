@@ -35,3 +35,14 @@
 - **HKCU 开机自启的归属**：自启项写入**当前安装用户**的 HKCU。若用另一个管理员账户通过
   UAC 执行安装/卸载，自启会写入该管理员的 HKCU，原安装用户不会获得开机自启。这是
   per-user 自启的固有语义；如需对特定账户生效，请在该账户下运行安装向导并勾选自启。
+
+## 机械检查与评审记录
+
+- 带日期的安全评审（评审对象/信任边界/结论/缓解四段）：`docs/SECURITY-REVIEW-2026-09-26.md`。
+- 静态检查跑什么、每条警告怎么处置：**不开公开 CodeQL**（公开告警清单与上面的私密报告承诺相矛盾），
+  改用 SDK 内置 Roslyn 分析器（`AnalysisMode=Recommended`）+ NuGet advisory 审计（含传递依赖），
+  两者都由 `Directory.Build.props` 打开并经 `TreatWarningsAsErrors` 变成 CI 红灯；
+  判读表见 `docs/STATIC-ANALYSIS-2026-09-26.md`，CI 步骤在 `.github/workflows/build.yml`。
+- 依赖版本更新由 `.github/dependabot.yml` 提 PR；**Dependabot alerts / security updates
+  是仓库 Settings 里的开关**，配置文件替代不了它们。
+
