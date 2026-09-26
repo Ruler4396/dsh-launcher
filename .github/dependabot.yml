@@ -26,8 +26,18 @@ updates:
         patterns:
           - "Microsoft.*"
 
-  # GitHub Actions：本仓 action 全部 pin 到 commit SHA（供应链卫生，见 build.yml 顶注），
-  # Dependabot 会连 SHA 一起更新；不配它这些 pin 就会永久停在旧版本。
+  # GitHub Actions：本仓 action 全部 pin commit SHA（实测：build.yml 9 条 uses 全为 40 位 SHA、
+  # e2e-multimon 3 条、e2e-test 4 条；唯一例外是 ui-test.yml 的 2 条仍用可变 @v4 标签——已记在
+  # docs/SECURITY-REVIEW-2026-09-26.md 的开放项里，本段不负责修它）。
+  #
+  # 为什么限成"只更 patch"而不是整段删掉：
+  #   · 删段 = 永不再自动改 pin，最贴合"全 SHA pin"的字面，但代价是 action 侧的安全发布
+  #     再也没有任何自动信号（GHSA 确实覆盖 GitHub Actions）；
+  #   · 只更 patch = 保留那条信号，同时拒掉本次实测引起噪音的那一类跨大版本改写
+  #     （#33–#37 全是 4→7 / 4.6.2→7.0.1 / 4→6 / 2.6.2→3.0.3 这种 major/minor 跳）。
+  #   两个选项都**没有机器闸兜底**：实测 scripts/test.ps1 里没有任何扫描 `uses:` 的断言
+  #   （它自己写的"第三方 action 全部 pin commit SHA"是 build.yml 顶注里的约定，不是闸），
+  #   所以口径实际由这条 ignore + 人逐条 review 承担。跨大版本的升级由人主动开。
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -36,3 +46,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
+    ignore:
+      - dependency-names: ["*"]
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
