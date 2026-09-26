@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 修复与维护（2026-09-26 dsh 0.1.7 页面层签名漂移，因果地图修复点16）
+
+- **失败面板又判不死了**：`BootGuard` 的插件致命面板通道（0.1.2 回归新增）默认签名只有
+  `failed to import loader entry`，而 dsh 0.1.7 的未激活面板抛的是
+  `web boot: N entr(y|ies) did not activate`——一个都不匹配，面板页面仍带 ModuleLoader 门面
+  → 实测日志 `HEALTHY: 页面探针确认好符号`（rawLen=186 就是那张面板），无弹窗、无安全模式询问、
+  update-guard 顺手解除回滚保护。默认表增列 `did not activate`（旧签名保留以兼容 ≤0.1.2）。
+  新增 2 条真机原文契约用例；两向验证：真源码 45/45 绿，抹掉新签名恰好这 2 条红。
+  真机端到端未复测（装机 0.5.1 二进制不含本修复，且现场已无面板可判）。
+- **实机处置**：`settingsScope` 服务在 0.1.7 的 283 个 `@deepseek-ai` 包中已 0 命中（官方设置行
+  迁 `remote.settings` + `settingsSchema`），依赖它的 `dsh-web-search-anysearch` 因此永久 pending；
+  已按该 profile 自己的"成对开关"约定把它摘出 `bundles` 并注释 `id: web → searchProvider: anysearch`
+  补丁（备份 `*.bak-20260926-anysearch-off`），搜索回到 deepseek-official，重启后 rawLen=708 真实渲染页。
+
 ### 修复与维护（2026-09-21 全量代码质量审查 B1–B6；逐条判决见 docs/reviews/2026-09-21-quality-review.md）
 
 - **单实例 mutex 句柄随方法返回释放**（Program.cs `using var`）：二实例直入完整启动、E1009 永不触发；

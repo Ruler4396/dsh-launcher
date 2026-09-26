@@ -440,10 +440,14 @@ public static class ShellLogic
             /// 本表在好符号判定**之前**匹配 body 文本，命中即 E2008 一票判死 + dom[ 证据
             /// （→ 插件归因 → 安全模式询问）。默认签名取面板稳定技术文案；DSH_BOOT_SIGNATURES
             /// 的 fatal_panel_signatures 可整体覆盖，跟进 dsh 未来文案变化。
+            /// 第二项是 dsh 0.1.7 起的文案（2026-09-26 实机签名漂移回归）：条目未激活时前端抛
+            /// `web boot: N entr(y|ies) did not activate`，0.1.2 的 import 措辞整个消失——
+            /// 只留第一项会让这类面板重新判不死（实测日志 HEALTHY via 好符号）。
             /// </summary>
             public IReadOnlyList<string> FatalPanelSignatures { get; init; } = new[]
             {
                 "failed to import loader entry",
+                "did not activate",
             };
 
             /// <summary>由 good_symbol 组装的单点页面探针脚本：返回 JSON {good,text,err}。

@@ -790,6 +790,35 @@ PollReadiness 只观测 TCP/HTTP + 启动错误标志（`StartupErrorMarkers` �
 
 ---
 
+## 11. 2026-09-26 [签名漂移第二击]：dsh 0.1.7 失败面板换文案 → 页面层又判不死（修复点16）
+
+实机形态（0.5.1 × dsh 0.1.7-rc.2 × 用户真实插件 dsh-web-search-anysearch）：浏览器半
+`inject: [..., 'settingsScope']`，而 **0.1.7 已经没有 `settingsScope` 这个服务**（该 runtime
+`node_modules/@deepseek-ai` 全部 283 个包全文 0 命中；上一个能用的 0.1.5-rc.2 里到处都在用，
+官方设置行已迁到 `remote.settings` + `settingsSchema`）。服务取不到 → 该 fiber 永远
+`FIBER_PENDING` → 前端抛 `web boot: 1 entry did not activate` + 明细行
+`dsh-web-search-anysearch: pending (waiting for service: settingsScope)`，失败面板替换整个 UI。
+
+壳侧全程无感：统一日志实测 `page probe: round done (rawLen=186)` → `HEALTHY: 页面探针确认好符号`
+→ `[update-guard] confirmed healthy; rollback guard disarmed`。186 字节就是那张面板（面板正文
+约 140 字符 + JSON 包装），正常渲染页实测 708。与 §9 同一结构洞：`__ModuleLoader__.mode==="live"`
+在 loader `create()` 时就置位（早于插件激活），门面活着、应用是死的。
+
+| # | 节点（§5 因果链） | 根因 | 修复 | 回归测试 |
+|---|---|---|---|---|
+| **修复点16** | `BootProfile.FatalPanelSignatures` 默认表 | §9 把面板一票判死钉成了"优先于 good 的独立通道"，但默认表只写 0.1.2 措辞 `failed to import loader entry`；0.1.7 的 `did not activate` 一个不匹配 → 通道在，签名漂了 | 默认表增列 `did not activate`（覆盖 `entr(y\|ies)` 两种单复数形态），保留旧签名兼容 ≤0.1.2；`DSH_BOOT_SIGNATURES.fatal_panel_signatures` 覆盖语义不变 | `BootGuardContractTests.EvaluatePageProbe_PluginFatalPanel_Dsh017ActivationCopy_StillOneVoteKill`（2 例真机原文，含 `dom[did not activate]=` 证据前缀断言）。两向验证：真源码 45/45 绿；抹掉新签名 → 恰好这 2 条红、其余 43 条仍绿 |
+
+**决策权衡**：只增签名、不动判定顺序（面板通道仍排 good 之前）——顺序本身 §9 已修对，这次是纯文案漂移。
+签名取 `did not activate` 而非面板标题 `Failed to load plugins`：前者是 dsh 抛错语句里的稳定技术文案
+（`dsh-app-boot/lib/index.js` 的 CLI 侧 `startupDiagnostic` 同尾），后者是通用英文标题、误伤面更大。
+**身份一致性检查**：本修复点只改默认签名表，不触碰发现层/`DshRuntimeIdentity`/探针脚本形状
+（`{good,text,err}` 与 `BuildProbeScript` 不变），`dom[` 证据前缀 → `VerdictIndicatesPluginInvolvement`
+→ 安全模式询问这条归因链与 §9 完全一致。
+**未实测项**：装机的 0.5.1 二进制不含本修复，且当前 profile 已摘除 anysearch（无面板可判），
+故"真机再撞一次这张面板"未复测；判定层由上面 2 条契约用例两向覆盖。
+
+---
+
 ## 如何使用本地图
 
 ### 修 Bug 流程

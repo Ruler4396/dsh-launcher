@@ -27,6 +27,7 @@
 | 5 | 运行期 boot 错误签名（plugin fatal / MODULE_NOT_FOUND…） | 弱包含，**仅限 `[dsh]` 管道行**（F6） | `ShellLogic.BootGuard.BootErrorMarkers` × `BootHealthMonitor` 日志层 | 低 | 增量扫描 + 壳行跳过（`IsShellAuthoredLogEntry`）+ 管道前缀过滤（`IsServicePipedLogLine`）+ `DSH_BOOT_SIGNATURES` 整表覆盖 | `GoldenBootGuardTests`（含良性 ECONNRESET 管道行不误判样本） |
 | 6 | 前端好符号：`window.__DSH_BOOT__.version` ‖ `__ModuleLoader__.mode==="live"`【标红：dsh 前端内部符号】 | 强（JS 表达式） | `BootGuard.BootProfile.GoodSymbol` | **高（F5）** | Rendered 豁免（innerText≥60）+ AbsentThreshold 计票 + env 整体覆盖 | `BootGuardContractTests.DefaultGoodSymbol_CoversLegacyAndModernBootChains` |
 | 7 | 前端坏签名文案（bootstrap facade is missing / dsh-boot-failed）【标红】 | 弱包含 | `BootProfile.BadSignatures` × `EvaluatePageProbe` | 中 | 改版失效=漏报不误杀；坏签名优先于好符号（S22 教训） | `BootGuardContractTests` 矩阵 |
+| 7b | **插件致命面板文案**（`failed to import loader entry`@0.1.2 / `did not activate`@0.1.7）【标红】 | 弱包含，**优先于好符号一票判死** | `BootProfile.FatalPanelSignatures` × `EvaluatePageProbe` | **高（已实测漂移两次）** | 面板页面必带 ModuleLoader 门面 → good 恒真，此表一漏就永久 HEALTHY；`DSH_BOOT_SIGNATURES.fatal_panel_signatures` 可整表覆盖跟版 | `BootGuardContractTests` 面板 4 例 + 0.1.7 真机原文 2 例（造脏两向验证） |
 | 8 | 前端→壳 postMessage 致命消息关键字【标红】 | 弱包含 ⚠️ 匹配过宽（F16） | `WebViewManager.InitializeAsync` WebMessageReceived | 中 | 失效→仅少一条安全模式触发通道 | 无（缺口） |
 | 9 | `?safe_mode=1` URL 参数（仅 DSH_WEB_URL 外部托管模式） | 强 | `Program` 外部托管安全模式分支 | 低 | dsh 不响应=无操作 | 无（低价值） |
 
@@ -97,3 +98,4 @@
 | 2026-08-28 | #4 启动错误标志：F2 已修复（增量扫描+壳行过滤），哨兵补 PollReadinessTests/GoldenDshLogTests | remediation 分支批次 2 |
 | 2026-08-28 | #3 dsh --version：F3 已修复（首个版本形态行，golden ×2） | remediation 分支批次 3 |
 | 2026-08-28 | #4/#5 错误签名限定 `[dsh]` 管道行（F6）；#14 端口身份账本优先（F4）；整改全部落地（F1-F31，commit 序列见审查留档执行记录） | remediation 分支批次 5-8 |
+| 2026-09-26 | 新增 #7b「插件致命面板文案」独立行：该通道 2026-08-29（修复点14）落地时未登记，本次 dsh 0.1.7 换文案第二次漂移实测（真机日志 `HEALTHY via 好符号`，rawLen=186 即那张面板）。风险列由"中"升为"高（已实测漂移两次）" | docs/SYSTEM_CAUSAL_MAP.md §11 修复点16 |

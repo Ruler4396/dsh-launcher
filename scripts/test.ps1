@@ -799,7 +799,7 @@ if ($unreleasedAnchors.Count -ge 1) {
     }
     $unrelLen = $next - $unreleasedAnchors[0]
 }
-Assert-True ($unrelLen -le 33) "【G7】CHANGELOG [Unreleased] 段 ≤ 33 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
+Assert-True ($unrelLen -le 47) "【G7】CHANGELOG [Unreleased] 段 ≤ 47 行（实测 $unrelLen；定版时必须整段搬进版本标题）"
 # 上限沿革（每次都要写清授权来源，否则"抬上限"会悄悄变成默认动作）：
 #   315 → 400：用户 2026-09-19 明确授权（当时该段被并行会话的 DPI 批次填到 315/315，任何新记录都红）。
 #   400 → 432 → 454：用户 2026-09-20 授权放宽以记本轮 CI 分层整改 + 测试内容审计，两次都按"钉当下
@@ -816,6 +816,9 @@ Assert-True ($unrelLen -le 33) "【G7】CHANGELOG [Unreleased] 段 ≤ 33 行（
 #     下一次定版必须整段搬走并当场收回。
 #   26 → 33：C8 追加批次（真机时序类收口 + CI flaky 装置修）入账；用户同日"临时放宽"授权口径覆盖本批，
 #     仍钉当下实测值、余量 +0。
+#   33 → 47：用户 2026-09-26 在本回合三条出路（抬数 / 压缩条目并删他人入账 / 定版搬段）里显式选"抬到 47、
+#     钉实测值"。入账的是 dsh 0.1.7 页面层签名漂移修复（因果地图修复点16）：新条目 14 行，其中 2 行是
+#     实机 profile 处置留痕。仍余量 +0；下一次定版必须整段搬走并当场收回。
 
 # ---- G8 文档↔代码一致性（防"权威文档毒化后续 agent"）----
 # 实测到的真实危害：docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md 曾**正面命令**"必须使用 cmd.exe /c

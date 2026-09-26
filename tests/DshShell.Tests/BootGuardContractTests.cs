@@ -372,6 +372,26 @@ public class BootGuardContractTests
         Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
     }
 
+    /// <summary>
+    /// 2026-09-26 实机签名漂移回归（dsh 0.1.7-rc.2 × 用户真实插件）：条目未激活时前端抛
+    /// `web boot: N entr(y|ies) did not activate` + 每行 `<id>: pending (waiting for service: X)`，
+    /// 0.1.2 的 "failed to import loader entry" 措辞整个不在。实测统一日志当时判的是
+    /// `HEALTHY: 页面探针确认好符号`——面板文案必须自己命中，否则又是"死页 + 无安全模式"。
+    /// 文本取自真机截图与 dsh-web-frontend 抛错语句原文。
+    /// </summary>
+    [Theory]
+    [InlineData("HARNESS\n\nFailed to load plugins\n\nweb boot: 1 entry did not activate\n"
+        + "dsh-web-search-anysearch: pending (waiting for service: settingsScope)")]
+    [InlineData("HARNESS\n\nFailed to load plugins\n\nweb boot: 2 entries did not activate\n"
+        + "dsh-a: fiber state 3\ndsh-b: pending (waiting for services: slots, remote)")]
+    public void EvaluatePageProbe_PluginFatalPanel_Dsh017ActivationCopy_StillOneVoteKill(string panelText)
+    {
+        var r = Evaluate(ProbeJson(true, panelText, ""));
+        Assert.Equal(ShellLogic.BootGuard.PageProbeKind.BadSignature, r.Kind);
+        // dom[ 前缀 = 插件归因通道（Program.VerdictIndicatesPluginInvolvement 依赖它）
+        Assert.StartsWith("dom[did not activate]=", r.Detail);
+    }
+
     [Fact]
     public void EvaluatePageProbe_FatalPanelSignatures_OverridableViaProfile()
     {
