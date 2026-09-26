@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Win32;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -249,10 +250,12 @@ public static class ShellLogic
             try
             {
                 using var c = new System.Net.Sockets.TcpClient();
-                var isLoopback = host is null or "127.0.0.1" or "localhost" or "::1";
-                var task = isLoopback
-                    ? c.ConnectAsync(System.Net.IPAddress.Loopback, port)
-                    : c.ConnectAsync(host, port);
+                // 直接对 host 做模式判断（而非先存进 bool）：else 分支里编译器才能证明 host 非空。
+                Task task;
+                if (host is null or "127.0.0.1" or "localhost" or "::1")
+                    task = c.ConnectAsync(System.Net.IPAddress.Loopback, port);
+                else
+                    task = c.ConnectAsync(host, port);
                 // [INVARIANT] 300ms hard timeout: loopback connect is ms-level. See ADR-006.
                 return task.Wait(300) && c.Connected;
             }
@@ -272,8 +275,7 @@ public static class ShellLogic
                 // [INVARIANT] 300ms hard timeout (consistent with sync PortOpen). See ADR-006.
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(300));
-                var isLoopback = host is null or "127.0.0.1" or "localhost" or "::1";
-                if (isLoopback)
+                if (host is null or "127.0.0.1" or "localhost" or "::1")
                     await c.ConnectAsync(System.Net.IPAddress.Loopback, port, timeoutCts.Token).ConfigureAwait(false);
                 else
                     await c.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
@@ -628,7 +630,7 @@ public static class ShellLogic
 
         /// <summary>截断过长证据（防 safe-mode-state.json 被整页 DOM 文本撑爆）。</summary>
         internal static string Truncate(string s, int max)
-            => s.Length <= max ? s : s.Substring(0, max) + "…(truncated)";
+            => s.Length <= max ? s : string.Concat(s.AsSpan(0, max), "…(truncated)");
 
         /// <summary>日志层内置签名表（就绪后监控用；与启动期 StartupErrorMarkers 分表，
         /// 避免把启动期的良性告警带进运行期判定）。**专属签名在前**：一行同时命中多条时
@@ -984,9 +986,9 @@ public static class ShellLogic
             {
                 if (int.TryParse(parts[i], out var n)) { nums[i] = n; valid = true; }
             }
-            if (!valid) return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>(), -1, Resolvable: false);
+            if (!valid) return new SemVer(nums, Array.Empty<string>(), -1, Resolvable: false);
             if (parts.Length == 1 && parts[0].Length == 0)
-                return new SemVer(new[] { 0, 0, 0 }, Array.Empty<string>(), -1, Resolvable: false);
+                return new SemVer(nums, Array.Empty<string>(), -1, Resolvable: false);
 
             // dev 构建：把距离尾段从 prerelease 里摘出来（否则会被判成"旧于同名正式版"）
             var devDistance = -1;
@@ -995,7 +997,7 @@ public static class ShellLogic
                 var m = DevBuildTail.Match(pre);
                 if (m.Success)
                 {
-                    devDistance = int.Parse(m.Groups[1].Value);
+                    devDistance = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
                     return new SemVer(nums, Array.Empty<string>(), devDistance, Resolvable: true);
                 }
             }
@@ -2450,7 +2452,7 @@ public static class ShellLogic
         /// 网络/超时类（ETIMEDOUT/ECONNRESET/ECONNREFUSED/ENOTFOUND/EAI_AGAIN/timed out/registry）
         /// → 保留 pending 下次启动重试；其余（权限/包损坏）→ 非重试，调用方应清 pending 防死循环。
         /// 纯函数可单测（UpdateFlowContractTests 锁定契约）。</summary>
-        internal static bool IsRetryableNpmError(string tail)
+        internal static bool IsRetryableNpmError(string? tail)
         {
             if (string.IsNullOrWhiteSpace(tail)) return false;
             return tail.Contains("ETIMEDOUT", StringComparison.OrdinalIgnoreCase)
@@ -2466,7 +2468,7 @@ public static class ShellLogic
         /// 判定 npm 输出是否为"找不到 npm/cmd"类错误（'不是内部或外部命令'/'not recognized'）：
         /// GUI 进程从桌面启动时 PATH 可能不含 Node 目录，`cmd /c npm` 会报该错误——据此在失败
         /// 弹窗中提示"请安装 Node.js 18+"而非笼统"下载失败"。纯函数可单测。</summary>
-        internal static bool IsNpmNotFoundError(string tail)
+        internal static bool IsNpmNotFoundError(string? tail)
         {
             if (string.IsNullOrWhiteSpace(tail)) return false;
             return tail.Contains("不是内部或外部命令", StringComparison.Ordinal)

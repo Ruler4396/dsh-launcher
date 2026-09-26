@@ -11,7 +11,7 @@ namespace DshShell.Tests;
 /// 当前成员：LoggerTests、V030FeaturesTests（WindowStateStore/StagedUpdate 损坏告警测试写 Logger）。
 /// </summary>
 [CollectionDefinition("LoggerState", DisableParallelization = true)]
-public class LoggerStateCollection { }
+public class LoggerStateFixture { }
 
 /// <summary>
 /// 统一日志单测（用户高频：所有运行诊断都依赖 dsh.log 的结构正确、级别过滤合理）。
@@ -36,6 +36,7 @@ public class LoggerTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
         Environment.SetEnvironmentVariable("DSH_LOG_LEVEL", _savedLevel);
         // 任务二：重置 fallback 会话状态 + 清理 fallback 文件（串行集合内，防跨测试污染）
         try { if (File.Exists(Logger.FallbackPath)) File.Delete(Logger.FallbackPath); } catch { }

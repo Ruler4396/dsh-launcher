@@ -25,7 +25,7 @@ public class ServiceRestartCoordinatorRegressionTests
             Trace: _ => { },
             SessionShuttingDown: () => shuttingDown,
             StopService: _ => 0,
-            StartViaIdentity: () => (true, false),
+            StartViaIdentity: () => { _restartCalls++; return (true, false); },
             WaitForFreshToken: _ => { },
             IsReady: () => ready,
             RecordPid: () => { },
@@ -82,6 +82,7 @@ public class ServiceRestartCoordinatorRegressionTests
     {
         var c = Make(ready: false, shuttingDown: true);
         for (var i = 0; i < 6; i++) Pump(c);
+        Assert.Equal(0, _restartCalls); // 本用例注释承诺退出编排期间既不重启也不升级，重启侧计数必须为 0
         Assert.Equal(0, _escalations);
     }
 

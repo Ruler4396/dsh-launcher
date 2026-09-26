@@ -17,6 +17,15 @@ using System.IO;
 using System.Text.RegularExpressions;
 using WixToolset.Dtf.WindowsInstaller;
 
+// CA1016（程序集须标 AssemblyVersion）：本工程 GenerateAssemblyInfo=false
+// （DTF/SfxCA 的 net20 产物，见 FolderPickerCa.csproj），关掉它就没有 AssemblyVersion 特性。
+// 这个 CA 只在单个 MSI 内按 Binary 流解析、不参与任何按版本绑定，补一个与 MSI 版本同源的常量即可。
+[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+
+// CA1050（类型须在有命名空间内）关闭：product.wxs:113-145 按类型名 FolderPickerCa 绑定 4 个
+// CustomAction，改命名空间需同步 wxs 且只能真机装 MSI 才能证明没弄坏卸载清理链。理由登记在
+// docs/STATIC-ANALYSIS-2026-09-26.md。
+#pragma warning disable CA1050
 public static class FolderPickerCa
 {
     private static string PickedFile
@@ -39,9 +48,9 @@ public static class FolderPickerCa
             var full = Path.GetFullPath(path);
             var root = Path.GetPathRoot(full);
             if (string.IsNullOrEmpty(root)) return false;
-            if (!root.EndsWith("\\")) return false;              // 必须是 "C:\" 或 "\\server\share\"
+            if (!root.EndsWith("\\", StringComparison.Ordinal)) return false;              // 必须是 "C:\" 或 "\\server\share\"
             if (full.IndexOf('\0') >= 0) return false;
-            if (full.StartsWith("\\\\")) return false;           // 拒绝 UNC 网络路径（本机安装目标是本地盘）
+            if (full.StartsWith("\\\\", StringComparison.Ordinal)) return false;           // 拒绝 UNC 网络路径（本机安装目标是本地盘）
 
             var lower = full.ToLowerInvariant();
             // 拒绝系统关键目录（精确匹配或位于其下）：%SystemRoot%、Program Files、ProgramData
@@ -300,7 +309,7 @@ public static class FolderPickerCa
     public static ActionResult SetAutoStartFlag(Session session)
     {
         var opt = session["AUTO_START_OPTION"];
-        if (!string.Equals(opt, "1"))
+        if (!string.Equals(opt, "1", StringComparison.Ordinal))
         {
             session.Log("SetAutoStartFlag: AUTO_START_OPTION=[" + (opt ?? "") + "], not '1' — skipping");
             return ActionResult.Success;

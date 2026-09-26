@@ -171,7 +171,7 @@ internal sealed class VersionInfoDialog : Form
         Invalidate();
     }
 
-    private void PlaceRow(ShellLogic.VersionDialogLayout.Geometry g,
+    private static void PlaceRow(ShellLogic.VersionDialogLayout.Geometry g,
         Label name, Label current, Label latest, Label status, int y)
     {
         name.Bounds = new Rectangle(g.ColNameX, y, g.NameW, g.RowHeight);
@@ -241,7 +241,7 @@ internal sealed class VersionInfoDialog : Form
     }
 
     /// <summary>诊断留痕（复用 Program.Trace 语义，便于"版本弹窗显示异常"排查）。</summary>
-    private void Trace(string msg)
+    private static void Trace(string msg)
     {
         try { Logger.Info(msg); } catch { /* 留痕失败不影响弹窗 */ }
     }

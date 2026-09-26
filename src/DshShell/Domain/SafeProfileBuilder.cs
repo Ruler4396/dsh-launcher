@@ -26,6 +26,10 @@ public enum SafeProfileTier
 /// </summary>
 public sealed class SafeProfileBuilder
 {
+    /// <summary>package.json 序列化配置：进程级缓存一份（CA1869——每次 Serialize 新建
+    /// JsonSerializerOptions 会重建元数据缓存，是实测到的分配热点）。</summary>
+    private static readonly JsonSerializerOptions IndentedOptions = new() { WriteIndented = true };
+
     /// <summary>隔离 profile 的名字（--profile 只收 name，无分隔符）。</summary>
     public const string SafeProfileName = ".dsh-safe";
 
@@ -84,10 +88,7 @@ public sealed class SafeProfileBuilder
             // Delete→Move 之间目标 package.json 短暂不存在（观察线程能采到缺失）——profile 缺失
             // 即 dsh 硬失败 exit 1 → E2002，用户连界面都进不去。
             ShellLogic.FileSystemPolicy.AtomicWrite(SafeProfilePackageJson,
-                JsonSerializer.Serialize(manifest, new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                }) + "\n");
+                JsonSerializer.Serialize(manifest, IndentedOptions) + "\n");
             return true;
         }
         catch (Exception ex)

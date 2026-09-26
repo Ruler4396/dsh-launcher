@@ -2,6 +2,7 @@ namespace DshWeb;
 
 using DshWeb.Lifecycle;
 using DshWeb.Managers;
+using System.Globalization;
 
 /// <summary>
 /// 组合根 + 统一启动编排（v0.4.2 收尾）：替换 Program.RunStartupPipelineAsync 旧流水线，
@@ -292,7 +293,7 @@ public sealed class LauncherApp
                 ErrorCodes.E2004, new { port = Port, pid = foreignPid, url = Url });
             LastErrorCode = ErrorCodes.E2004;
             // [F4] Foreign 现含两类：非 node 程序占用 / 账本外的 node（绝不误杀，明确告知用户）。
-            LastErrorDetail = $"端口 {Port} 已被其他程序占用（PID {(foreignPid > 0 ? foreignPid.ToString() : "未知")}），且无 dsh HTTP 响应。请释放该端口后重试；若该端口被您自己的 Node.js 程序占用，请先退出它。";
+            LastErrorDetail = $"端口 {Port} 已被其他程序占用（PID {(foreignPid > 0 ? foreignPid.ToString(CultureInfo.InvariantCulture) : "未知")}），且无 dsh HTTP 响应。请释放该端口后重试；若该端口被您自己的 Node.js 程序占用，请先退出它。";
             _lifecycle.Fire(LifecycleTrigger.Fatal); // → Failed
             return false;
         }
@@ -445,7 +446,7 @@ public sealed class LauncherApp
         return true;
     }
 
-    private bool TryReadTestDelay(out int ms)
+    private static bool TryReadTestDelay(out int ms)
     {
         ms = 0;
         if (Environment.GetEnvironmentVariable("DSH_TEST_SPLASH_DELAY_MS") is { } raw

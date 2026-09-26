@@ -240,10 +240,10 @@ namespace DshShell.Tests.Outcomes;
     /// （用户感知契约：崩溃窗口白屏不超过 10 秒）。Headless 全速执行，实测远小于阈值。
     /// </summary>
     [Fact]
-    public void Crash_Recovery_Reloads_Page()
+    public async Task Crash_Recovery_Reloads_Page()
     {
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
-        Assert.True(app.RunStartupAsync().GetAwaiter().GetResult());
+        Assert.True(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Running, app.State);
 
         var reloadSignals = new List<LifecycleState>();
@@ -272,7 +272,7 @@ namespace DshShell.Tests.Outcomes;
     /// 全部真实 OS 交互（注册表 + 文件系统枚举），零 Mock。
     /// </summary>
     [Fact]
-    public void Zero_Pollution_On_Exit()
+    public async Task Zero_Pollution_On_Exit()
     {
         // ---- 快照三块"禁污区"（先于任何壳行为） ----
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -288,7 +288,7 @@ namespace DshShell.Tests.Outcomes;
 
         // ---- 完整生命周期：启动（Fake 服务链，不起真进程）→ 就绪 → 退出清理 ----
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
-        Assert.True(app.RunStartupAsync().GetAwaiter().GetResult());
+        Assert.True(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Running, app.State);
 
         // 退出编排的服务收尾段（BeginShutdownAsync 后台线程执行的同款调用）

@@ -139,7 +139,7 @@ public sealed class WebViewManager : IWebViewManager
                 attemptsLeft--;
                 trace($"token follow: nav failed (http={e.HttpStatusCode}); "
                     + $"retrying {attemptsLeft} more time(s)");
-                try { web.CoreWebView2.Navigate(urlProvider()); } catch { /* 关闭竞态 */ }
+                try { if (web.CoreWebView2 is { } core) core.Navigate(urlProvider()); } catch { /* 关闭竞态 */ }
                 return;
             }
             if (escalated) return;

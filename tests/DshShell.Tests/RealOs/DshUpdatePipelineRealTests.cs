@@ -89,7 +89,7 @@ public class DshUpdatePipelineRealTests
     /// </summary>
     [Fact]
     [Trait("Category", "RealNet")]
-    public void CrossVersionUpgrade_IdentitySwitchesToNew_ServiceServesHttp200()
+    public async Task CrossVersionUpgrade_IdentitySwitchesToNew_ServiceServesHttp200()
     {
         if (Environment.GetEnvironmentVariable("DSH_FORCE_REALNET") != "1") return;
         var nodeExe = RuntimeResolver.ResolveExisting().NodeExe;
@@ -197,7 +197,7 @@ public class DshUpdatePipelineRealTests
                 try
                 {
                     using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-                    var resp = client.GetAsync($"http://127.0.0.1:{port}/").GetAwaiter().GetResult();
+                    var resp = await client.GetAsync($"http://127.0.0.1:{port}/");
                     if (resp.IsSuccessStatusCode) { ready = true; break; }
                 }
                 catch { /* 未就绪继续等 */ }

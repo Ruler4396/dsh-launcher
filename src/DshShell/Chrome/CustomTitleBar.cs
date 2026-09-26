@@ -57,7 +57,7 @@ internal sealed class CustomTitleBar : Panel
     /// <summary>窗口标题（安全模式时为 "DeepSeek Harness（安全模式）"，ADR-022 Task 4 横幅）。</summary>
     internal volatile string _titleText = "DeepSeek Harness";
     /// <summary>构建进度百分比（0.0 - 1.0），用于绘制整体进度条。</summary>
-    internal volatile float _buildProgressPercent = 0f;
+    internal volatile float _buildProgressPercent;
     /// <summary>脉冲动画定时器（替代 BeginInvoke(Invalidate) 避免无限闪烁）。</summary>
     private System.Windows.Forms.Timer? _marqueeTimer;
 

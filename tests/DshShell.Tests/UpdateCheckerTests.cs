@@ -35,114 +35,114 @@ public class UpdateCheckerTests
     // ---------- launcher 版本拉取（GitHub Releases /latest） ----------
 
     [Fact]
-    public void FetchLatestLauncherVersion_ValidTag_StripsVPrefix()
+    public async Task FetchLatestLauncherVersion_ValidTag_StripsVPrefix()
     {
         var http = Client(new FakeHandler(_ => Json("""{"tag_name":"v0.3.1"}""")));
-        Assert.Equal("0.3.1", UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Equal("0.3.1", await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestLauncherVersion_TagWithoutV_KeptAsIs()
+    public async Task FetchLatestLauncherVersion_TagWithoutV_KeptAsIs()
     {
         var http = Client(new FakeHandler(_ => Json("""{"tag_name":"0.3.1"}""")));
-        Assert.Equal("0.3.1", UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Equal("0.3.1", await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestLauncherVersion_MissingTag_ReturnsNull()
+    public async Task FetchLatestLauncherVersion_MissingTag_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => Json("""{"name":"some release"}""")));
-        Assert.Null(UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestLauncherVersion_HttpError_ReturnsNull()
+    public async Task FetchLatestLauncherVersion_HttpError_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)));
-        Assert.Null(UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestLauncherVersion_InvalidJson_ReturnsNull()
+    public async Task FetchLatestLauncherVersion_InvalidJson_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => Json("{broken")));
-        Assert.Null(UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestLauncherVersion_NetworkException_ReturnsNull()
+    public async Task FetchLatestLauncherVersion_NetworkException_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => throw new HttpRequestException("connection refused")));
-        Assert.Null(UpdateChecker.FetchLatestLauncherVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestLauncherVersionAsync(http));
     }
 
     // ---------- 安全/重要更新判定（Release body 含 SECURITY 或 tag 含 -sec） ----------
 
     [Fact]
-    public void FetchLatestLauncherRelease_BodySaysSecurity_Flagged()
+    public async Task FetchLatestLauncherRelease_BodySaysSecurity_Flagged()
     {
         var http = Client(new FakeHandler(_ =>
             Json("""{"tag_name":"v0.3.1","body":"Fixes a SECURITY vulnerability"}""")));
-        var r = UpdateChecker.FetchLatestLauncherReleaseAsync(http).Result;
+        var r = await UpdateChecker.FetchLatestLauncherReleaseAsync(http);
         Assert.NotNull(r);
         Assert.True(r!.IsSecurity);
         Assert.Equal("0.3.1", r.Version);
     }
 
     [Fact]
-    public void FetchLatestLauncherRelease_TagHasSecSuffix_Flagged()
+    public async Task FetchLatestLauncherRelease_TagHasSecSuffix_Flagged()
     {
         var http = Client(new FakeHandler(_ => Json("""{"tag_name":"v0.3.1-sec","body":"routine"}""")));
-        Assert.True(UpdateChecker.FetchLatestLauncherReleaseAsync(http).Result!.IsSecurity);
+        Assert.True((await UpdateChecker.FetchLatestLauncherReleaseAsync(http))!.IsSecurity);
     }
 
     [Fact]
-    public void FetchLatestLauncherRelease_OrdinaryRelease_NotFlagged()
+    public async Task FetchLatestLauncherRelease_OrdinaryRelease_NotFlagged()
     {
         var http = Client(new FakeHandler(_ =>
             Json("""{"tag_name":"v0.3.1","body":"New features"}""")));
-        Assert.False(UpdateChecker.FetchLatestLauncherReleaseAsync(http).Result!.IsSecurity);
+        Assert.False((await UpdateChecker.FetchLatestLauncherReleaseAsync(http))!.IsSecurity);
     }
 
     [Fact]
-    public void FetchLatestLauncherRelease_NoBody_NotFlagged()
+    public async Task FetchLatestLauncherRelease_NoBody_NotFlagged()
     {
         var http = Client(new FakeHandler(_ => Json("""{"tag_name":"v0.3.1"}""")));
-        Assert.False(UpdateChecker.FetchLatestLauncherReleaseAsync(http).Result!.IsSecurity);
+        Assert.False((await UpdateChecker.FetchLatestLauncherReleaseAsync(http))!.IsSecurity);
     }
 
     [Fact]
-    public void FetchLatestLauncherRelease_MissingVersion_ReturnsNull()
+    public async Task FetchLatestLauncherRelease_MissingVersion_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => Json("""{"body":"SECURITY"}""")));
-        Assert.Null(UpdateChecker.FetchLatestLauncherReleaseAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestLauncherReleaseAsync(http));
     }
 
     // ---------- dsh 版本拉取（npm registry /latest） ----------
 
     [Fact]
-    public void FetchLatestDshVersion_ValidResponse_ReturnsVersion()
+    public async Task FetchLatestDshVersion_ValidResponse_ReturnsVersion()
     {
         var http = Client(new FakeHandler(_ => Json("""{"version":"1.2.3"}""")));
-        Assert.Equal("1.2.3", UpdateChecker.FetchLatestDshVersionAsync(http).Result);
+        Assert.Equal("1.2.3", await UpdateChecker.FetchLatestDshVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestDshVersion_MissingVersion_ReturnsNull()
+    public async Task FetchLatestDshVersion_MissingVersion_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => Json("""{"name":"@deepseek-ai/dsh"}""")));
-        Assert.Null(UpdateChecker.FetchLatestDshVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestDshVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestDshVersion_NotFound_ReturnsNull()
+    public async Task FetchLatestDshVersion_NotFound_ReturnsNull()
     {
         var http = Client(new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        Assert.Null(UpdateChecker.FetchLatestDshVersionAsync(http).Result);
+        Assert.Null(await UpdateChecker.FetchLatestDshVersionAsync(http));
     }
 
     [Fact]
-    public void FetchLatestDshVersion_ScopedPackage_EscapedInUrl()
+    public async Task FetchLatestDshVersion_ScopedPackage_EscapedInUrl()
     {
         string? requested = null;
         var http = Client(new FakeHandler(req =>
@@ -150,7 +150,7 @@ public class UpdateCheckerTests
             requested = req.RequestUri!.ToString();
             return Json("""{"version":"1.2.3"}""");
         }));
-        UpdateChecker.FetchLatestDshVersionAsync(http).GetAwaiter().GetResult();
+        await UpdateChecker.FetchLatestDshVersionAsync(http);
         // Uri.EscapeDataString 会把 @ 也转义成 %40，npm scoped 包名整段转义
         Assert.Contains("%40deepseek-ai%2Fdsh", requested!);
     }

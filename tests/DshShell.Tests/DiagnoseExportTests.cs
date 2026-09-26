@@ -22,6 +22,7 @@ public class DiagnoseExportTests : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
         try { Directory.Delete(_tmp, recursive: true); } catch { }
     }
 

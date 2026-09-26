@@ -27,7 +27,7 @@ namespace DshShell.Tests.Outcomes;
     /// 锁定不变量：WebView 崩溃不得导致 LauncherApp 状态机进入 Failed/ShuttingDown。
     /// </summary>
     [Fact]
-    public void WebViewCrash_DoesNotCrashLauncher_StateStaysRunning()
+    public async Task WebViewCrash_DoesNotCrashLauncher_StateStaysRunning()
     {
         // Given: LauncherApp 处于 Running 状态
         var app = new LauncherApp(new FakeRuntime(), new FakeService { Ready = true });
@@ -35,7 +35,7 @@ namespace DshShell.Tests.Outcomes;
         app.StateChanged += (_, s) => states.Add(s);
 
         // 先驱动到 Running
-        Assert.True(app.RunStartupAsync().GetAwaiter().GetResult());
+        Assert.True(await app.RunStartupAsync());
         Assert.Equal(LifecycleState.Running, app.State);
 
         // When: 模拟 WebView 崩溃

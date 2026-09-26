@@ -1,0 +1,38 @@
+# 依赖漏洞监测（OpenSSF Best Practices `dependency_monitoring`）。
+# 与 Directory.Build.props 里的 NuGetAudit 分工：
+#   · NuGetAudit  = 构建期闸门（有已知 CVE 就 restore 报 NU19xx，配合 TreatWarningsAsErrors 直接红）
+#   · 本文件      = 让 Dependabot 持续比对 advisory 并按需开 PR
+# 注意：**Dependabot alerts / security updates 是仓库 Settings 开关，本文件替代不了它**，
+# 需要仓主在 Settings → Security & analysis 里打开（见 docs/SECURITY-REVIEW-2026-09-26.md 的待办）。
+version: 2
+
+updates:
+  # NuGet：本仓无 .sln，六个工程分散在 src/ installer/ tests/，故 directory 指到仓库根，
+  # 由 Dependabot 自行向下发现工程（GitHub 对 NuGet 的目录语义是"该目录及其子树"）。
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # xunit 三件套一起升，避免只升 runner 不升 API 造成的半套升级
+      xunit:
+        patterns:
+          - "xunit*"
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+
+  # GitHub Actions：本仓 action 全部 pin 到 commit SHA（供应链卫生，见 build.yml 顶注），
+  # Dependabot 会连 SHA 一起更新；不配它这些 pin 就会永久停在旧版本。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

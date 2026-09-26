@@ -287,7 +287,7 @@ internal static class ProcessRunner
             var stderrTask = System.Threading.Tasks.Task.Run(() =>
             {
                 try { errorOutput = p.StandardError.ReadToEnd(); } catch { }
-            });
+            }, CancellationToken.None); // CA2016 显式不转发 ct：进程退出后仍要排空管道，取消读流会丢错误证据
 
             // 逐行解析 stdout 移入后台任务（[审查 N9] 旧版在主线程读到 EOF 才轮到限时等待——
             // 超时兜底失效；现在读流与"等进程退出"并行，同一个墙钟管到底）。
@@ -309,25 +309,27 @@ internal static class ProcessRunner
                     }
                 }
                 catch { /* 流读取中断（进程被杀/流关闭） */ }
-            });
+            }, CancellationToken.None); // CA2016 同上：stdout 是 pnpm 事件流的唯一来源，取消不得截断
 
             // 取消 = 立刻杀整棵进程树（台账第 7 条的正解）；退出后注册句柄随 using 释放。
             using var killOnCancel = ct.Register(() =>
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
             });
-            var exitTask = p.WaitForExitAsync();
-            var winner = System.Threading.Tasks.Task.WhenAny(exitTask, System.Threading.Tasks.Task.Delay(PnpmInstallWallClockMs)).GetAwaiter().GetResult();
+            // CA2016：这里刻意不转发 ct。取消的语义已经由上面的 ct.Register(杀进程树) 承担；
+            // 若把 ct 传给 WaitForExitAsync，取消会变成 OCE 抛出，绕过下面"pnpm install canceled"的归因日志。
+            var exitTask = p.WaitForExitAsync(CancellationToken.None);
+            var winner = System.Threading.Tasks.Task.WhenAny(exitTask, System.Threading.Tasks.Task.Delay(PnpmInstallWallClockMs, CancellationToken.None)).GetAwaiter().GetResult();
             if (winner != exitTask)
             {
                 try { p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
-                try { stdoutTask.Wait(2000); stderrTask.Wait(2000); } catch { /* 观察掉被杀后的流读失败 */ }
+                try { stdoutTask.Wait(2000, CancellationToken.None); stderrTask.Wait(2000, CancellationToken.None); } catch { /* 观察掉被杀后的流读失败 */ }
                 Logger.Warn($"pnpm install timed out after {PnpmInstallWallClockMs / 1000}s wall clock; process tree killed",
                     ErrorCodes.E4001);
                 return false;
             }
             // 进程已退出：双流到 EOF 只是收尾，给有限等待兜底（管道里是有限字节）。
-            try { stdoutTask.Wait(5000); stderrTask.Wait(1000); } catch { /* 进程已退出，流收尾读失败不需观察 */ }
+            try { stdoutTask.Wait(5000, CancellationToken.None); stderrTask.Wait(1000, CancellationToken.None); } catch { /* 进程已退出，流收尾读失败不需观察 */ }
             if (ct.IsCancellationRequested)
             {
                 Logger.Info("pnpm install canceled (process tree killed)");

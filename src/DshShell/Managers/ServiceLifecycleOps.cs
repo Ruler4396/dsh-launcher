@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 
 namespace DshWeb.Managers;
 
@@ -22,7 +23,7 @@ internal static class ServiceLifecycleOps
         {
             var pid = ShellLogic.ProcessManagement.GetProcessIdByPort(port);
             if (pid > 0)
-                ShellLogic.FileSystemPolicy.AtomicWrite(PidFilePath(dataDir, port), pid.ToString());
+                ShellLogic.FileSystemPolicy.AtomicWrite(PidFilePath(dataDir, port), pid.ToString(CultureInfo.InvariantCulture));
         }
         catch (Exception ex)
         {
@@ -58,7 +59,7 @@ internal static class ServiceLifecycleOps
                     && IsReady(port, url))
                 {
                     Logger.Info($"adopted healthy service pid={owner} without ledger (pre-record crash window)");
-                    try { ShellLogic.FileSystemPolicy.AtomicWrite(pidFile, owner.ToString()); }
+                    try { ShellLogic.FileSystemPolicy.AtomicWrite(pidFile, owner.ToString(CultureInfo.InvariantCulture)); }
                     catch (Exception ex) { Logger.Warn($"ledger backfill failed for pid={owner}: {ex.Message}"); }
                     return owner;
                 }

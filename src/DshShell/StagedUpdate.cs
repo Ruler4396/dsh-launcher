@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -32,7 +33,7 @@ public static class StagedUpdate
                 tarball = string.IsNullOrWhiteSpace(tarball) ? null : tarball,
                 prefetched,
                 runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? null : runtimeDir,
-                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 failCount = 0,
             }));
         }
@@ -53,7 +54,7 @@ public static class StagedUpdate
                 tarball = string.IsNullOrWhiteSpace(tarball) ? null : tarball,
                 prefetched,
                 runtimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? null : runtimeDir,
-                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
                 failCount = failCount + 1,
             }));
         }
@@ -178,7 +179,7 @@ public static class StagedUpdate
             ShellLogic.FileSystemPolicy.AtomicWrite(path, System.Text.Json.JsonSerializer.Serialize(new
             {
                 version,
-                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             }));
             Logger.Info($"user skipped dsh update {version}; won't re-prompt until a newer version appears");
         }
@@ -255,7 +256,7 @@ public static class StagedUpdate
             catch (Exception ex) { Logger.Warn($"failed to remove previous backup '{old}': {ex.Message}"); }
         }
 
-        var backup = targetDir + ".old-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var backup = targetDir + ".old-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         Directory.Move(targetDir, backup);
         Logger.Warn($"invalid apply target moved aside (bin={binOk}, versionMatch={verMatch}): {backup}");
         return ShellLogic.StagedApplyPolicy.ExistingTargetAction.ReplaceStale;

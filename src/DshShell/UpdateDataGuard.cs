@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -308,7 +309,7 @@ public static class UpdateDataGuard
                             if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
                             if (File.Exists(target))
                             {
-                                var poisonedCopy = target + ".rollback-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                                var poisonedCopy = target + ".rollback-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
                                 File.Copy(target, poisonedCopy, overwrite: false);
                                 Logger.Warn($"[update-guard] poisoned file kept for forensics: {poisonedCopy}");
                             }
@@ -333,7 +334,7 @@ public static class UpdateDataGuard
                         {
                             if (File.Exists(target))
                             {
-                                var poisonedCopy = target + ".rollback-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                                var poisonedCopy = target + ".rollback-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
                                 File.Copy(target, poisonedCopy, overwrite: false);
                                 Logger.Warn($"[update-guard] poisoned file kept for forensics: {poisonedCopy}");
                             }
@@ -364,7 +365,7 @@ public static class UpdateDataGuard
                 Directory.CreateDirectory(QuarantineRoot);
                 var dest = Path.Combine(QuarantineRoot,
                     "runtimes-" + ShellLogic.UpdateGuardPolicy.SanitizeVersionToken(version)
-                    + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+                    + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture));
                 Directory.Move(runtimeDir, dest);
                 quarantined = dest;
                 Logger.Warn($"[update-guard] runtime v{version} quarantined out of discovery chain: {dest}");

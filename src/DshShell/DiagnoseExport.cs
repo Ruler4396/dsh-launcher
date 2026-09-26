@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Globalization;
 
 namespace DshWeb;
 
@@ -193,7 +194,7 @@ public static class DiagnoseExport
         var sb = new StringBuilder();
         foreach (var kv in counts.OrderByDescending(k => k.Value.Count))
         {
-            sb.AppendLine($"[{kv.Key}] x{kv.Value.Count}  {ErrorCodes.Describe(kv.Key)}");
+            sb.AppendLine(FormattableString.Invariant($"[{kv.Key}] x{kv.Value.Count}  {ErrorCodes.Describe(kv.Key)}"));
             if (!string.IsNullOrWhiteSpace(kv.Value.FirstMsg)) sb.AppendLine("    例: " + Sanitize(kv.Value.FirstMsg));
         }
         return sb.ToString();

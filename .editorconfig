@@ -1,0 +1,38 @@
+root = true
+
+# ============================================================================
+# 静态检查规则的**唯一**偏离清单（OpenSSF Best Practices `static_analysis`）
+# 规则：一条警告要么真修，要么在这里/在代码里带证据地关闭。新增条目必须在
+# docs/STATIC-ANALYSIS-2026-09-26.md 的"规则关闭登记表"里有一行，否则视为绕过。
+# 判据：Directory.Build.props 里 AnalysisMode=Recommended + TreatWarningsAsErrors=true，
+# 因此下面每一条 `silent` 都等价于"这类问题不再有闸"，必须写明为什么。
+# ============================================================================
+
+[*.cs]
+
+# CA1068 "CancellationToken 应为最后一个参数" —— 降级为 silent（IDE 仍显示，构建不报）。
+# 为什么不改：命中的 5 个方法（IServiceManager.PollReadiness / IDshUpdateManager.ApplyPending
+# / HandlePendingAtStartup / ProcessRunner.RunNpmCommand / RunProcessCaptured）都把 ct 放在**第一位**、
+# 后面跟可选测试缝参数（delay/logCheckInterval/serviceExitCodeProbe 等）。把它们移到最后需要
+# 同时改 27 个调用点（实测 grep：PollReadiness 5 + ApplyPending 7 + HandlePendingAtStartup 1
+# + RunNpmCommand 8 + RunProcessCaptured 6），而本类型不是对外发布的库（WinExe 内部接口，
+# NuGet 上没有任何消费方），这条 C# 设计指南在这里换不到任何调用方收益，只换来一次
+# 会碰碎发布分支的大 diff。2026-09-26 决定，责任人：S15 线。
+dotnet_diagnostic.CA1068.severity = silent
+
+# CA1707「标识符不得含下划线」——**只在 tests/ 下**关闭，生产代码仍生效。
+# 为什么：实测 837 处命中（DshShell.Tests 827 + DshShell.E2E 10）全部是测试方法名/类名
+# （如 PollReadiness_ServiceExited_ReturnsServiceExited），即 xUnit/MSTest 三段式命名这条业界
+# 惯例；改成 PascalCase 要重命名 837 个用例标识符，而测试可读性是这些名字唯一的功能——
+# 为了过闸去毁掉断言的可检索性，正是"关规则过门"的反面做法。
+# 生产面判据：src/ 与 installer/ 下 CA1707 仍按 warning 生效（2026-09-26 实测 0 命中，因为本来就没人写 underscores）。
+[tests/**/*.cs]
+dotnet_diagnostic.CA1707.severity = none
+
+# CA1861「常量数组实参改用 static readonly 字段」——**只在 tests/ 下**关闭，生产代码仍生效。
+# 为什么不改：实测 23 处命中全是 `Assert.Equal(new[] { ... }, 实际值)` 这类**断言的期望值字面量**
+# （例：Assert.Equal(new[] { "RollbackRequested", "RollbackFailed" }, _fired)）。该规则的前提是
+# "被调方法会被反复调用且不改实参"，而一条断言在其用例内只执行一次；把它们提到字段上会把期望值
+# 从断言现场搬走，正是测试可读性唯一的功能。生产面（src/ + installer/）该规则一条没关，
+# 命中的 2 处（ShellLogic.cs:987 与 :989 的 new[]{0,0,0}）已真改（改成复用同函数内的 nums）。
+dotnet_diagnostic.CA1861.severity = none

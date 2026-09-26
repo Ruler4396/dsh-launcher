@@ -3,6 +3,7 @@ using DshWeb;
 using DshWeb.Lifecycle;
 using DshWeb.Managers;
 using Xunit;
+using System.Globalization;
 
 namespace DshShell.Tests.Lifecycle;
 
@@ -111,7 +112,7 @@ public class Regression_Issue28_RestartPidLedgerRefresh_RealOs : IDisposable
             System.Threading.Thread.Sleep(50);
         Assert.True(File.Exists(childPidFile), $"{scriptName}: 子进程 pid 未落盘（node 未起来？）");
         Assert.True(ShellLogic.ServiceReadiness.PortOpen("127.0.0.1", port), $"{scriptName}: 端口未监听");
-        var childPid = int.Parse(File.ReadAllText(childPidFile).Trim());
+        var childPid = int.Parse(File.ReadAllText(childPidFile).Trim(), CultureInfo.InvariantCulture);
         return (proc.Id, childPid, port);
     }
 
@@ -133,7 +134,7 @@ public class Regression_Issue28_RestartPidLedgerRefresh_RealOs : IDisposable
 
         ServiceLifecycleOps.RecordServicePid(dataDir, port);
 
-        var ledger = int.Parse(File.ReadAllText(ServiceLifecycleOps.PidFilePath(dataDir, port)).Trim());
+        var ledger = int.Parse(File.ReadAllText(ServiceLifecycleOps.PidFilePath(dataDir, port)).Trim(), CultureInfo.InvariantCulture);
         Assert.Equal(ShellLogic.ProcessManagement.GetProcessIdByPort(port), ledger);
         Assert.Equal(servicePid, ledger);
     }
@@ -156,7 +157,7 @@ public class Regression_Issue28_RestartPidLedgerRefresh_RealOs : IDisposable
         Assert.True(ServiceLifecycleOps.IsProcessAlive(servicePid), "接管路径绝不得杀掉自我重新拉起的服务");
         Assert.True(ServiceLifecycleOps.IsProcessAlive(installChildPid),
             "issue #28-4：接管后插件安装子进程必须存活（旧实现 taskkill /T /F 把它拦腰打断）");
-        var ledger = int.Parse(File.ReadAllText(ServiceLifecycleOps.PidFilePath(dataDir, port)).Trim());
+        var ledger = int.Parse(File.ReadAllText(ServiceLifecycleOps.PidFilePath(dataDir, port)).Trim(), CultureInfo.InvariantCulture);
         Assert.Equal(servicePid, ledger); // 账本随之改指新进程
 
         // 收尾：真的停掉它，验证端口释放
@@ -311,6 +312,7 @@ public class Regression_Issue28_RestartPidLedgerRefresh_RealOs : IDisposable
 
     public void Dispose()
     {
+        GC.SuppressFinalize(this); // CA1816: Dispose 模式要求，勿跳过派生类终结器
         foreach (var p in _spawned)
         {
             try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { /* 已退出 */ }
