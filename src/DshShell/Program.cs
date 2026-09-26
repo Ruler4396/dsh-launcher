@@ -14,7 +14,6 @@ using DshWeb.Windows; // DshShellForm / TrayMenuForm（窗体类已迁出至 Win
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
-using System.Globalization;
 
 namespace DshWeb;
 
@@ -1464,7 +1463,7 @@ internal static class Program
             _ = Task.Run(() => RollbackFlow?.ArmFromPersistedState());
             monitor.Start();
             if (pid > 0) monitor.AttachProcess(pid);
-            Logger.Info($"[boot-monitor] started url={Target.Url} log={UnifiedLogPath} servicePid={(pid > 0 ? pid.ToString(CultureInfo.InvariantCulture) : "n/a")}");
+            Logger.Info($"[boot-monitor] started url={Target.Url} log={UnifiedLogPath} servicePid={(pid > 0 ? pid.ToString(System.Globalization.CultureInfo.InvariantCulture) : "n/a")}");
         }
         catch (Exception ex)
         {
@@ -2057,9 +2056,8 @@ internal static class Program
         try
         {
             var owner = GetMainFormForDialog(); // 实时查 OpenForms：关闭中的窗绝不会拿到，无"用后销毁"窗口
-            if (owner is null) return; // 无主窗（全部门了、只剩托盘）：标题栏标记无处可上，静默跳过
             var mark = type == PendingUpdate.LauncherSecurity ? "（有安全更新）" : "（有更新）";
-            if (owner.Text.Contains(mark, StringComparison.Ordinal)) return;
+            if (owner is null || owner.Text.Contains(mark, StringComparison.Ordinal)) return;
             if (owner is DshWeb.Windows.DshShellForm shell && shell.TitleBar is not null)
             {
                 shell.TitleBar._titleText += mark;
@@ -2382,13 +2380,9 @@ internal static class Program
     /// <summary>把模态错误投递到 UI 线程；窗体已关闭时静默（退出竞态）。</summary>
     private static void PostStagedModal(Form? form, string code, string message)
     {
-        try
-        {
-            // form 为 null（主窗已关，只剩托盘）时不能 BeginInvoke：旧写法把 NRE 吞进 catch，
-            // E4001 这类失败就再也不出现在用户面前。无主窗时直接弹应用级模态。
-            if (form is null) ShowError(code, message, log: false);
-            else form.BeginInvoke(() => ShowError(code, message, log: false));
-        }
+        // form 为 null（主窗已关、只剩托盘）时旧写法把 BeginInvoke 的 NRE 吞进下面的 catch，
+        // E4001 这类失败因此在用户面前整条消失；无主窗时退化成应用级模态。
+        try { if (form is null) ShowError(code, message, log: false); else form.BeginInvoke(() => ShowError(code, message, log: false)); }
         catch (Exception ex) { Logger.Warn("staged update modal could not be shown: " + ex.Message); }
     }
 
@@ -2835,9 +2829,7 @@ internal static class Program
                 Trace($"title bar dark set failed hr=0x{hr:X8} dark={dark}");
             // CA1806：回读失败时 actual 是未初始化值，旧写法把它当事实打进 Trace（诊断误导）。
             var getHr = DwmGetWindowAttribute(form.Handle, 20, out var actual, sizeof(int));
-            Trace(getHr == 0
-                ? $"title bar dark: set dark={dark} hr=0x{hr:X8} actual={actual}"
-                : $"title bar dark: set dark={dark} hr=0x{hr:X8} readback unavailable (get hr=0x{getHr:X8})");
+            Trace(getHr == 0 ? $"title bar dark: set dark={dark} hr=0x{hr:X8} actual={actual}" : $"title bar dark: set dark={dark} hr=0x{hr:X8} readback unavailable (get hr=0x{getHr:X8})");
             // 组合拳：窗口帧重算 + 非客户区重绘 + 系统设置变更广播
             SetWindowPos(form.Handle, IntPtr.Zero, 0, 0, 0, 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -2878,8 +2870,7 @@ internal static class Program
             const int DWMNCRP_ENABLED = 2;
             var policy = DWMNCRP_ENABLED;
             // CA1806：DWM 拒绝启用非客户区渲染策略时不报错就会"阴影莫名没了"，留一行痕迹。
-            var shadowHr = DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, ref policy, sizeof(int));
-            if (shadowHr != 0) Trace($"window shadow hr=0x{shadowHr:X8} hwnd={hwnd:x}");
+            if (DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, ref policy, sizeof(int)) != 0) Trace($"window shadow: DWM hr!=0 hwnd={hwnd:x}");
         }
         catch { /* 阴影失败不影响功能 */ }
     }
