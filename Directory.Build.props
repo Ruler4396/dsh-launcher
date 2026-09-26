@@ -23,12 +23,15 @@
          在仓外夹具里实测报出 NU1903 + GHSA 链接；本仓 6 个工程用 restore 强制重跑后全部 0 命中。 -->
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
-    <!-- 生成可提交的 packages.lock.json。为什么必须：GitHub 的依赖图对 NuGet 只认锁文件，
-         实测本仓 `dependency-graph/sbom` = packages=17 / **relations=0**，于是
-         Dependabot alerts 永远返回 0 条 —— 那是"还没在查"，不是"没有漏洞"。
-         注意这里**故意不开** RestoreLockedMode：那会让任何改了 csproj 却忘了重算锁文件的
-         分支直接构建失败，代价落在并行开发的日常路径上；锁文件在此的职责是"给依赖图喂边"，
-         不是"把版本钉死"（钉版本由 NuGetAudit + Dependabot PR 承担）。 -->
+    <!-- 生成可提交的 packages.lock.json。这里的理由**不是**“依赖图是空的”：
+         实测 GitHub 依赖图早有边，/dependency-graph/sbom 返回 packages=17、
+         **relationships**=17（16 条 DEPENDS_ON + 1 条 DESCRIBES）。此前流传的
+         “relations=0 所以图是空的”是查了不存在的键 relations（真名 relationships）——
+         jq 对 null 取 length 恒为 0，不是图里没边。那个读数连同由它推出的结论已作废。
+         锁文件的实际作用有两个：一是版本确定钉住、restore 可复现，与“全 SHA pin”同一口径；
+         二是让依赖图带上**传递**依赖，而不只是从 csproj 解析出的直接引用。
+         这里**故意不开** RestoreLockedMode：那会让任何改了 csproj 却忘了重算锁文件的分支
+         直接构建失败，代价落在并行开发的日常路径上；钉版本由 NuGetAudit + Dependabot PR 承担。 -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 

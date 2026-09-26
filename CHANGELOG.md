@@ -37,7 +37,7 @@
   当前代码上是否仍成立（F2 的 E1004 归因、F3 弹窗不判端口、09-21 N12 的 settings.json 裸写
   仍在），并标出哪些是本回合已修、哪些是带位置开放。
 - 验证读数：6 工程 `0 Warning(s) / 0 Error(s)`；`dotnet test` **1363 passed / 0 failed**；
-  `dotnet publish` 干净。同日 OpenSSF 项目 14927 达 **passing**（该级 100%，11:04 北京时间），README 挂官方徽章；另补 6 份 `packages.lock.json`（`RestorePackagesWithLockFile`）——此前 GitHub 依赖图 relations=0，Dependabot alerts 的"0 条"是没在查而不是没漏洞。
+  `dotnet publish` 干净。同日 OpenSSF 项目 14927 达 **passing**（该级 100%，11:04 北京时间），README 挂官方徽章；另补 6 份 `packages.lock.json`（`RestorePackagesWithLockFile`），作用是版本可复现 + 让依赖图带上传递依赖。更正一处本条目早先的说法："依赖图 relations=0 所以 alerts 是空转"是查了不存在的键（SPDX 真名 `relationships`，实测 17 条、其中 16 条 DEPENDS_ON），图一直是有边的。
 
 
 ### 修复与维护（2026-09-26 dsh 0.1.7 页面层签名漂移，因果地图修复点16）
