@@ -37,7 +37,7 @@
   当前代码上是否仍成立（F2 的 E1004 归因、F3 弹窗不判端口、09-21 N12 的 settings.json 裸写
   仍在），并标出哪些是本回合已修、哪些是带位置开放。
 - 验证读数：6 工程 `0 Warning(s) / 0 Error(s)`；`dotnet test` **1363 passed / 0 failed**；
-  `dotnet publish` 干净。
+  `dotnet publish` 干净。同日 OpenSSF Best Practices 项目 14927 达 **passing**（该级 100%，2026-09-26 11:04 北京时间），README 与 docs/README.en.md 各挂 1 行官方徽章链接。
 
 
 ### 修复与维护（2026-09-26 dsh 0.1.7 页面层签名漂移，因果地图修复点16）

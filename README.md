@@ -9,6 +9,7 @@
 [![build](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml/badge.svg)](https://github.com/Ruler4396/dsh-launcher/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/Ruler4396/dsh-launcher)](https://github.com/Ruler4396/dsh-launcher/releases)
 [![license](https://img.shields.io/github/license/Ruler4396/dsh-launcher)](LICENSE)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14927/badge)](https://www.bestpractices.dev/projects/14927)
 
 </div>
 
