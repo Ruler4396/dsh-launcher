@@ -4,42 +4,6 @@
 
 ## [Unreleased]
 
-### 静态检查与依赖漏洞监测落地（2026-09-26，OpenSSF Best Practices 线）
-
-- **新增构建期闸门**：`Directory.Build.props` 打开 SDK 内置 Roslyn 分析器
-  （`AnalysisMode=Recommended`）+ `NuGetAudit`（含传递依赖）+ `TreatWarningsAsErrors`。
-  落地顺序是先只开规则数警告（src 70 / Tests 907 / E2E 13 / FolderPickerCa 5），逐条处置完才关门。
-  判读表与新文件 `docs/STATIC-ANALYSIS-2026-09-26.md` 一一对应；**不开公开 CodeQL**
-  （公开告警清单与 `SECURITY.md` 的私密报告承诺矛盾，论证见 `docs/SECURITY-REVIEW-2026-09-26.md` §3）。
-- **静态检查修出的真缺陷**（全部有位置可查）：① `RuntimeResolver.VerifySha256Async` 的校验和回退源
-  在 `baseUrl` 为 null 时拼出畸形相对 URL，异常被吞 → "官方源失败还有回退"这条设计实际静默不存在；
-  ② 安装器提权守卫 `IsSafeInstallPath` 里 3 处（含**拒绝 UNC** 那条）用区域生效的字符串比较，
-  同文件其余 5 处本来就是 Ordinal → 统一收紧；③ `BootHealthMonitor` 日志增量扫描判空用 `body`、
-  遍历却用 `text`；④ 主窗已关时 `PostStagedModal` 的 `BeginInvoke` NRE 被自己的 catch 吞掉，
-  E4001 失败模态在用户面前整条消失；⑤ 4 处 Win32 返回值被丢弃，其中 `DwmGetWindowAttribute`
-  失败时把未初始化的回读值当事实打进 Trace；⑥ 服务输出流关闭（`e.Data == null`）被当日志行送进
-  不可空形参。
-- **测试面**：20 处 xUnit1031 阻塞等待改 `await`（宿主方法同步改 `async Task`——`async void` 用例
-  xUnit 不等待，等于假绿灯），1 处"测的就是会不会阻塞"的用例改写成 `Task.WhenAny` + `IsCompleted`，
-  1 处 `Where` 后 `Single` 改用重载，2 处 Theory 参数改标可空；`_restartCalls` 这个死字段接成
-  `ShuttingDown_AbsorbsSilently` 缺失的重启侧断言（该用例注释一直承诺"既不重启也不升级"）。
-  规则偏离只有 3 条且只作用于 `tests/`（CA1707 837 处用例命名、CA1861 23 处断言字面量），
-  生产面一条不关。
-- **MSB3277 根因修掉**：`Microsoft.Web.WebView2` 的 targets 对所有 net5+ 消费者无条件注入
-  WPF 程序集引用（本仓零 WPF 代码），它把 `WindowsBase 5.0` 拉进解析闭包与 SDK 的 10.0 冲突；
-  按 AssemblyName 精确摘除，三个工程的同类警告一并消失。
-- **依赖漏洞监测**：新增 `.github/dependabot.yml`（NuGet + GitHub Actions，后者本来全 SHA pin
-  所以必须配，否则 pin 会永久停在旧版），`build.yml` 新增 "Static analysis" 步骤并留 `vuln.log` 产物。
-  这条闸不是空闸，有正对照：仓外夹具引用 `Newtonsoft.Json 12.0.3` 报 `NU1903 + GHSA-5crp-9r3c-p9vr`，
-  本仓 6 工程强制重跑 restore 为 0 命中。**Dependabot alerts / security updates 仍需仓主在
-  Settings → Security & analysis 点一次**（账号级开关，配置文件替代不了）。
-- 新增 `docs/SECURITY-REVIEW-2026-09-26.md`：以 09-21 质量审查为底，逐条复核安全项在
-  当前代码上是否仍成立（F2 的 E1004 归因、F3 弹窗不判端口、09-21 N12 的 settings.json 裸写
-  仍在），并标出哪些是本回合已修、哪些是带位置开放。
-- 验证读数：6 工程 `0 Warning(s) / 0 Error(s)`；`dotnet test` **1363 passed / 0 failed**；
-  `dotnet publish` 干净。
-
-
 ### 修复与维护（2026-09-26 dsh 0.1.7 页面层签名漂移，因果地图修复点16）
 
 - **失败面板又判不死了**：`BootGuard` 的插件致命面板通道（0.1.2 回归新增）默认签名只有
