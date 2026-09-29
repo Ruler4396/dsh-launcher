@@ -4,6 +4,9 @@
 #   · 本文件      = 让 Dependabot 持续比对 advisory 并按需开 PR
 # 注意：**Dependabot alerts / security updates 是仓库 Settings 开关，本文件替代不了它**，
 # 需要仓主在 Settings → Security & analysis 里打开（见 docs/SECURITY-REVIEW-2026-09-26.md 的待办）。
+# 2026-09-29 项目停更：下面两个生态的 open-pull-requests-limit 都钉 **0**——Dependabot 仍按
+# advisory 周期比对（"依赖漏洞监测"这条判据的证据链不断），但**永不再自动开 PR**。
+# 机器人留下的最后一个 PR #40（bump actions/download-artifact）已关闭。
 version: 2
 
 updates:
@@ -14,7 +17,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "deps"
     groups:
@@ -43,7 +46,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "ci"
     ignore:
