@@ -1,0 +1,8 @@
+exit=0
+[dsh-launcher] environment check ...
+[OK]   .NET Desktop Runtime 10
+[OK]   WebView2 Runtime
+[OK]   Node.js 18+  (found via C:\Users\<localUser>\AppData\Roaming\fnm\aliases\default\node.exe
+
+All prerequisites satisfied. Run DshWeb.exe now.
+

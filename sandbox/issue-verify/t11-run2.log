@@ -1,0 +1,27 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=20780 port=8317 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary PHYS work=(1920,-193) 2560x1530 dpi=168
+  DEBUG raw windows for pid 20780: 2
+    hwnd=8126822 title=[DshNoticeCard] 445x84 at (1463,984) dpi=96
+    hwnd=6687088 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  main window 1280x840 at (354,120) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (554,136)->(2760,168) title bar -> secondary
+  DEBUG raw windows for pid 20780: 2
+    hwnd=8126822 title=[DshNoticeCard] 445x104 at (1463,964) dpi=96
+    hwnd=6687088 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (2560,152) dpi=168
+  after drag: at (2560,152) size 1280x840 dpi=168; center=(3200,572) on secondary=True fullyInside=True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (1463,964) 445x104 dpi=96
+  rotated card: at (3680,1070) 779x246 dpi=168; inside secondary work=True; expectedW@175%= 700 (ratio 1.11)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  no HTCAPTION found (try 1); probes: 200/16=1 320/16=1 460/16=1 200/28=1 320/28=1 460/28=1 200/44=1 320/44=1 460/44=1 200/60=1 320/60=1 460/60=1 200/80=1 320/80=1 460/80=1 200/100=1 320/100=1 460/100=1
+  maximize attempt: zoomed=False after 1 try(ies)
+  maximized: at (2560,152) 1280x840 dpi=168 vs work (1920,-193) 2560x1530 -> gaps L640 T345 R640 B345
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+[FAIL] T11 :: onSec=True cardFollowed=True zoomed=False maxGaps=640/345/640/345
+  cleanup taskkill /T /F pid=20780 left=0
+
+==== summary ====
+FAIL   T11    onSec=True cardFollowed=True zoomed=False maxGaps=640/345/640/345

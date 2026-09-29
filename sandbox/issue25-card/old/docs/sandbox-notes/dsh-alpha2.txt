@@ -1,0 +1,38 @@
+dsh v0.1.2-alpha.2 沙盒安装（场景：dsh-alpha2）
+==============================================
+安装时间 : 2026-08-31
+来源     : npm registry（npmmirror 镜像）@deepseek-ai/dsh@0.1.2-alpha.2（dist-tag: alpha）
+验证     : dsh --version -> 0.1.2-alpha.2；headless --dump-default-config exit 0
+          dsh web 真机横幅：dsh web: http://127.0.0.1:3099/?token=...（无 token 401 / 带 token 200）
+
+目录布局
+--------
+global\   npm --prefix 隔离安装的 dsh CLI（523 包；node_modules\@deepseek-ai\dsh），
+          global\dsh.cmd / dsh.ps1 二进制 shim（形状同全局安装，但完全隔离）。
+home\     DSH_HOME（隔离）：profile / 会话 / 数据目录。可整体重建：dsh web 首次
+          使用会从随附模板自动初始化。
+staging\  烟雾测试输出（web-out.log 真机横幅 / web-err.log）与临时文件。
+
+如何使用（不污染机器全局环境）
+------------------------------
+PowerShell:
+  $env:DSH_HOME = 'E:\dsh-launcher\sandbox\dsh-alpha2\home'
+  $env:DSH_TELEMETRY_DISABLED = '1'   # alpha.2 默认 FEEDBACK_ONLY 遥测，测试环境务必关
+  & E:\dsh-launcher\sandbox\dsh-alpha2\global\dsh.ps1 --version
+  # 起 web UI（避开 3080，防与 GUI 冲突）：... --port 3099 --no-open
+
+更新/钉版本
+-----------
+  npm install -g --prefix E:\dsh-launcher\sandbox\dsh-alpha2\global @deepseek-ai/dsh@<version> --no-audit --no-fund
+
+注意
+----
+- alpha dist-tag 与 npm latest（0.1.1-rc.2）不同：launcher 的 UpdateChecker 只盯 latest，
+  不会自动提示此 alpha。
+- 0.1.2 预览线的会话遥测出厂为 FEEDBACK_ONLY（feedback/record 时会上传未移交会话前缀到
+  harness-telemetry.deepseeksvc.com），环境变量 DSH_TELEMETRY_DISABLED（任意非空值）是
+  官方文档确认的唯一可靠关闭开关。
+- Node 要求 ^22.19.0 || >=24.0.0（24.0-24.11.1 的 loader 识别问题在 alpha.2 已修复；
+  本机 24.13.1 安全）。
+- 本目录位于统一沙盒根 sandbox/ 下（铁律见 sandbox/README.md 与
+  docs/00-ARCHITECTURE-GUARDRAILS-MANDATORY.md 核心约束六），禁止迁出或另建沙盒。

@@ -1,0 +1,6 @@
+launched msiexec pid=22056 msi=E:/dsh-launcher/sandbox/issue-verify/validate2.msi at 10:06:49
+（本轮约定：什么都不点。若弹出 UAC，只有 UAC 需要同意）
+10:06:51 窗口出现: 22056|Windows Installer
+cleared PREREQ_SIMULATE_MISSING (User scope) at 10:09:41
+收尾：仍有安装进程在跑，按记录 PID 结束
+  msiexec pid=22056 cmd="C:\WINDOWS\System32\msiexec.exe" /i "E:/dsh-launcher/sandbox/issue-verify/validate2.msi"

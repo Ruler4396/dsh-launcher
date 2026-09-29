@@ -1,0 +1,35 @@
+{"ts":"2026-09-18 23:50:36.832","level":"INFO","pid":28732,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 23:50:36.935","level":"INFO","pid":28732,"msg":"start target=http://127.0.0.1:39934 external=True"}
+{"ts":"2026-09-18 23:50:36.937","level":"INFO","pid":28732,"msg":"first instance"}
+{"ts":"2026-09-18 23:50:37.177","level":"INFO","pid":28732,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 23:50:37.179","level":"INFO","pid":28732,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 23:50:37.325","level":"INFO","pid":28732,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 23:50:37.326","level":"INFO","pid":28732,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 23:50:37.334","level":"INFO","pid":28732,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 23:50:37.453","level":"INFO","pid":28732,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-18 23:50:37.455","level":"INFO","pid":28732,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-18 23:50:37.456","level":"INFO","pid":28732,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-18 23:50:37.539","level":"INFO","pid":28732,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-18 23:50:37.540","level":"INFO","pid":28732,"msg":"[boot-monitor] started url=http://127.0.0.1:39934 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-forcetoast\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-18 23:50:37.594","level":"INFO","pid":28732,"msg":"update signal (test hook): dsh:9.9.9"}
+{"ts":"2026-09-18 23:50:37.595","level":"INFO","pid":28732,"msg":"toast step 0: aumid registered"}
+{"ts":"2026-09-18 23:50:37.599","level":"INFO","pid":28732,"msg":"toast step 1: xml document activated"}
+{"ts":"2026-09-18 23:50:37.602","level":"INFO","pid":28732,"msg":"toast step 1b: loadxml ok"}
+{"ts":"2026-09-18 23:50:37.611","level":"INFO","pid":28732,"msg":"toast step 2: notification created"}
+{"ts":"2026-09-18 23:50:37.613","level":"INFO","pid":28732,"msg":"toast step 4a: manager factory ok"}
+{"ts":"2026-09-18 23:50:37.629","level":"INFO","pid":28732,"msg":"toast step 4b: notifier created"}
+{"ts":"2026-09-18 23:50:37.647","level":"INFO","pid":28732,"msg":"toast step 4c: show ok"}
+{"ts":"2026-09-18 23:50:37.647","level":"INFO","pid":28732,"msg":"toast self-test: shown=True"}
+{"ts":"2026-09-18 23:50:37.723","level":"INFO","pid":28732,"msg":"toast step 0: aumid registered"}
+{"ts":"2026-09-18 23:50:37.723","level":"INFO","pid":28732,"msg":"toast step 1: xml document activated"}
+{"ts":"2026-09-18 23:50:37.724","level":"INFO","pid":28732,"msg":"toast step 1b: loadxml ok"}
+{"ts":"2026-09-18 23:50:37.740","level":"INFO","pid":28732,"msg":"toast step 2: notification created"}
+{"ts":"2026-09-18 23:50:37.742","level":"INFO","pid":28732,"msg":"toast step 4a: manager factory ok"}
+{"ts":"2026-09-18 23:50:37.745","level":"INFO","pid":28732,"msg":"toast step 4b: notifier created"}
+{"ts":"2026-09-18 23:50:37.765","level":"INFO","pid":28732,"msg":"toast step 4c: show ok"}
+{"ts":"2026-09-18 23:50:37.767","level":"INFO","pid":28732,"msg":"update toast shown: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 9.9.9\uFF08\u5F53\u524D ?\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+{"ts":"2026-09-18 23:50:37.769","level":"INFO","pid":28732,"msg":"main form shown"}
+{"ts":"2026-09-18 23:50:38.558","level":"INFO","pid":28732,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-18 23:50:38.635","level":"INFO","pid":28732,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39934/"}
+{"ts":"2026-09-18 23:50:38.637","level":"INFO","pid":28732,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-18 23:50:38.643","level":"INFO","pid":28732,"msg":"[boot-monitor] page probe loop started"}

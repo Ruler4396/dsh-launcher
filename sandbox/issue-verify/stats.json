@@ -1,0 +1,70 @@
+[
+  {
+    "total": 4,
+    "weeks": [
+      {
+        "w": 1786233600,
+        "a": 674,
+        "d": 4,
+        "c": 4
+      },
+      {
+        "w": 1786838400,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      },
+      {
+        "w": 1787443200,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      },
+      {
+        "w": 1788048000,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      },
+      {
+        "w": 1788652800,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      },
+      {
+        "w": 1789257600,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      },
+      {
+        "w": 1789862400,
+        "a": 0,
+        "d": 0,
+        "c": 0
+      }
+    ],
+    "author": {
+      "login": "Ruler4396",
+      "id": 110097886,
+      "node_id": "U_kgDOBo_13g",
+      "avatar_url": "https://avatars.githubusercontent.com/u/110097886?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/Ruler4396",
+      "html_url": "https://github.com/Ruler4396",
+      "followers_url": "https://api.github.com/users/Ruler4396/followers",
+      "following_url": "https://api.github.com/users/Ruler4396/following{/other_user}",
+      "gists_url": "https://api.github.com/users/Ruler4396/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/Ruler4396/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/Ruler4396/subscriptions",
+      "organizations_url": "https://api.github.com/users/Ruler4396/orgs",
+      "repos_url": "https://api.github.com/users/Ruler4396/repos",
+      "events_url": "https://api.github.com/users/Ruler4396/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/Ruler4396/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    }
+  }
+]

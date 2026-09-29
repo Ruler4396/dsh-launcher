@@ -1,0 +1,14 @@
+  pid=15476 port=3439 home=E:\dsh-launcher\sandbox\issue-verify\scene-T1\home
+  stage1 hit: HEALTHY
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T1-main.png
+[PASS] T1 :: service HEALTHY; nav 200; proc alive pid=15476; wpnapps modules=0
+    | {"ts":"2026-09-19 22:10:54.164","level":"INFO","pid":15476,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\28216_1789826119608\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 3439 --no-open"}
+    | {"ts":"2026-09-19 22:10:54.165","level":"INFO","pid":15476,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+    | {"ts":"2026-09-19 22:11:00.212","level":"INFO","pid":15476,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+    | {"ts":"2026-09-19 22:11:00.565","level":"INFO","pid":15476,"msg":"display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=1 sameSpace=True"}
+    | {"ts":"2026-09-19 22:11:02.336","level":"INFO","pid":15476,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:3439/"}
+    | {"ts":"2026-09-19 22:11:14.367","level":"INFO","pid":15476,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+  cleanup taskkill /T /F pid=15476 left=0
+
+==== summary ====
+PASS   T1     service HEALTHY; nav 200; proc alive pid=15476; wpnapps modules=0

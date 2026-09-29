@@ -1,0 +1,4 @@
+﻿found=0
+node=
+version=
+candidates=27

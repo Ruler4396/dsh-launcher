@@ -1,0 +1,109 @@
+launched pid=29508 msi=E:\dsh-launcher\sandbox\issue-verify\x86-probe.msi click=cancel at 10:43:47
+10:43:49 窗口: [Qoder CN]
+    子控件: Chrome Legacy Window
+    子控件: Chrome Legacy Window
+10:43:49 窗口: [哔哩哔哩 (゜-゜)つロ 干杯~-bilibili - Google Chrome]
+    子控件: Chrome Legacy Window
+10:43:49 窗口: [微信]
+    子控件: MMUIRenderSubWindowHW
+10:43:49 窗口: [下载]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\Chrome Download
+    子控件: 地址区段工具栏
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: Shell Preview Extension Host
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:43:49 窗口: [设置]
+10:43:49 窗口: [数据究竟向物理信息神经网络揭示了什么.docx [兼容模式] - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据究竟向物理信息神经网络揭示了什么.docx [兼容模式]
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:43:49 窗口: [数据告诉物理信息网络什么.docx - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据告诉物理信息网络什么.docx
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:43:49 窗口: [pinn-final]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\pinn-final
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:43:49 窗口: [TAIL-closure-audit]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\TAIL-closure-audit
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:43:49 窗口: [Microsoft Text Input Application]
+10:43:49 窗口: [PixPin]
+10:43:49 窗口: [Program Manager]
+10:43:51 窗口: [dsh-launcher 安装 - 运行环境检查]
+    子控件: 是(&Y)
+    子控件: 否(&N)
+    子控件: 取消
+    子控件: 检测到缺少以下运行环境：
+
+• .NET Desktop Runtime 10（壳程序运行必需）
+
+【是】自动安装缺失项后继续（winget 静默安装，可能需要几分钟，期间请留意 UAC 确认）
+【否】退出安装，不装本软件（自行装好环境后重开本向导即可）
+【取消】同【否】：什么都不改，直接退出
+    -> 已点击按钮 id=2 (10:43:51)
+10:43:53 窗口: [dsh-launcher 安装程序]
+    子控件: 确定
+    子控件: Windows Installer 程序包有问题。作为安装一部分的程序没有按预期完成。请与你的支持人员或程序包开发商联系。
+    子控件: 信息图标
+cleared env at 10:45:28
+收尾：结束我们启动的 msiexec PID

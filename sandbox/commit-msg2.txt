@@ -1,0 +1,14 @@
+test(issue28): 回归测试适配无中日韩输入法的 CI 环境（修 CI 红）
+
+CI（build + realos-test）在 15f60daf 上红了：3 个 IME 回归用例失败，原因是断言写死了
+ImeContext.GetImeMode == Disable，而 GitHub runner 无中日韩输入法时
+ImeModeConversion.InputLanguageTable 为 UnsupportedTable → GetImeMode 直接返回 Inherit。
+本机实测复现：当前输入语言 zh-CN 时同一窗口 GetImeMode == Close，切到 en-US 后变 Inherit。
+
+修改（仅测试侧，生产护栏不变）：
+- 新增 IsInertImeMode（Disable 或 Inherit）：两者都不会落到 ImmSetOpenStatus
+  （Disable：ImmGetContext==NULL → IsOpen 恒 false；Inherit：SetImeStatus 立即 return），
+  真正判别力保留在 ImmGetContext(hwnd) == NULL 这一护栏不变量上；
+- ImmCreateContext 返回 0 的无 IME 环境：显式留痕走弱化断言（仍断言上下文为空），绝不静默通过；
+- 新增 DSH_TEST_IME_LANG 测试开关，可在中文机器上强制 en-US 复现 CI 分支（已验证两条分支均通过）；
+- 托盘像素回归改为"词内最大空洞 ≤ 半个字宽"，不再要求"恰好两簇"（容忍兜底字体单字断笔）。

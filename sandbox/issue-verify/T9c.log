@@ -1,0 +1,28 @@
+  pid=24820 port=9362 home=E:\dsh-launcher\sandbox\issue-verify\scene-T9\home
+  service: HEALTHY
+  click (1610,136) main window close (X) #1
+  after close: windows visible = 0, host alive = True (Tray mode expects 0 + True)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T9-0-after-close.png
+top-level windows: 22
+Shell_TrayWnd=True NotifyIconOverflowWindow=False
+  opening overflow via [系统升级的通知区域] at 27,861
+  (15 descendants under tray)
+  toolbars recorded: 2
+  opened overflow flyout (attempt 1)
+  opened overflow flyout (attempt 2)
+  opened overflow flyout (attempt 3)
+  sweeping 2 toolbar area(s) for pid 24820 menu 136x60
+  SWEEP HIT: menu owned by pid 24820 appeared after right-click (27,861) in area [系统升级的通知区域]
+  tray-probe rc=0
+  tray menu 136x60 at (68,795) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T9-1-tray-menu.png
+  work area containing the menu: 68,0-1920,1080 ; menu inside = True
+  click (131,820) tray menu 退出 row
+  host exited = True; service port 9362 closed = False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T9-2-after-exit.png
+[PASS] T9 :: tray menu 136x60 inside work area=True; real click on 退出 exited the host; service port closed=False
+  cleanup taskkill /T /F pid=24820 left=0
+  cleanup listener pid=28624 on port 9362
+
+==== summary ====
+PASS   T9     tray menu 136x60 inside work area=True; real click on 退出 exited the host; service port closed=False

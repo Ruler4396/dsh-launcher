@@ -1,0 +1,37 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=5024 port=13697 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary PHYS work=(1920,-193) 2560x1530 dpi=168
+  DEBUG raw windows for pid 5024: 2
+    hwnd=43059136 title=[DshNoticeCard] 445x84 at (1463,984) dpi=96
+    hwnd=3213528 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  main window 1280x840 at (354,120) dpi=96
+  title bar child (primary) 1278x32 at (355,121) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (994,137)->(3200,169) title bar -> secondary
+  DEBUG raw windows for pid 5024: 2
+    hwnd=43059136 title=[DshNoticeCard] 445x104 at (1463,964) dpi=96
+    hwnd=3213528 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  after drag: at (354,120) size 1280x840 dpi=96; center=(994,540) on secondary=False fullyInside=False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (1463,964) 445x104 dpi=96
+  no card window at all in the 75s window
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-stuck.png
+  title bar child 1278x32 at (355,121) dpi=96 -> click (994,137)
+  click (994,137) activate (#1)
+  double-click (994,137) caption -> maximize (#1)
+  maximize attempt: zoomed=True after 1 try(ies)
+  maximized: at (68,0) 1852x1080 dpi=96 vs work (1920,-193) 2560x1530 -> gaps L-1852 T193 R2560 B257
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+  double-click (994,28) caption -> restore
+  drag (1001,137)->(1015,167) title bar -> primary
+  DEBUG raw windows for pid 5024: 1
+    hwnd=3213528 title=[DeepSeek Harness [TEST]（有更新）] 1294x854 at (366,147) dpi=96
+  back: 1294x854 at (366,147) dpi=96; started 1280x840 dpi=96; crossedBack=True; ratchet-free=False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-5-back-on-primary.png
+  shell-side dpi events: 
+[FAIL] T11 :: onSec=False cardFollowed=False zoomed=True maxGaps=-1852/193/2560/257 crossedBack=True roundTrip=False
+  cleanup taskkill /T /F pid=5024 left=0
+
+==== summary ====
+FAIL   T11    onSec=False cardFollowed=False zoomed=True maxGaps=-1852/193/2560/257 crossedBack=True roundTrip=False

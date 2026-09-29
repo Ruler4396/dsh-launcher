@@ -1,0 +1,11 @@
+exit=1
+[dsh-launcher] environment check ...
+[OK]   .NET Desktop Runtime 10
+[OK]   WebView2 Runtime
+[MISSING] Node.js 18+
+          Required by the dsh service; DshWeb.exe will offer a portable Node download.
+          Manual: https://nodejs.org/
+
+Some prerequisites are missing. Install them per the guidance above, then run DshWeb.exe again.
+Still stuck after installing? Run  DshWeb.exe --diagnose  to export a diagnostic package.
+

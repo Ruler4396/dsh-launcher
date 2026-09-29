@@ -1,0 +1,37 @@
+{"ts":"2026-09-19 11:12:48.328","level":"INFO","pid":2636,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-19 11:12:48.416","level":"INFO","pid":2636,"msg":"start target=http://127.0.0.1:39433 external=True"}
+{"ts":"2026-09-19 11:12:48.417","level":"INFO","pid":2636,"msg":"first instance"}
+{"ts":"2026-09-19 11:12:48.692","level":"INFO","pid":2636,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-19 11:12:48.693","level":"INFO","pid":2636,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-19 11:12:48.832","level":"INFO","pid":2636,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-19 11:12:48.833","level":"INFO","pid":2636,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-19 11:12:48.838","level":"INFO","pid":2636,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-19 11:12:48.937","level":"INFO","pid":2636,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-19 11:12:48.940","level":"INFO","pid":2636,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-19 11:12:48.940","level":"INFO","pid":2636,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-19 11:12:49.044","level":"INFO","pid":2636,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-19 11:12:49.044","level":"INFO","pid":2636,"msg":"[boot-monitor] started url=http://127.0.0.1:39433 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-click\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-19 11:12:49.168","level":"INFO","pid":2636,"msg":"main form shown"}
+{"ts":"2026-09-19 11:12:49.195","level":"INFO","pid":2636,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-19 11:12:49.223","level":"INFO","pid":2636,"msg":"notice displayed: dsh \u5DF2\u4EE5\u5B89\u5168\u6A21\u5F0F\u542F\u52A8","ctx":{"kind":"Urgent","ms":25000,"queued":0}}
+{"ts":"2026-09-19 11:12:49.237","level":"INFO","pid":2636,"msg":"safe-mode notice presented: \u7B2C\u4E09\u65B9\u63D2\u4EF6\u5DF2\u4E34\u65F6\u7981\u7528\uFF08\u70B9\u51FB\u53EF\u9000\u51FA\uFF09"}
+{"ts":"2026-09-19 11:12:49.838","level":"INFO","pid":2636,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-19 11:12:49.909","level":"INFO","pid":2636,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39433/"}
+{"ts":"2026-09-19 11:12:49.911","level":"INFO","pid":2636,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-19 11:12:49.916","level":"INFO","pid":2636,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-19 11:12:50.778","level":"INFO","pid":2636,"msg":"update network: launcher check exit=direct version=0.4.5"}
+{"ts":"2026-09-19 11:12:51.077","level":"INFO","pid":2636,"msg":"update network: dsh check ok via registry=https://registry.npmmirror.com exit=direct version=0.1.5-rc.2"}
+{"ts":"2026-09-19 11:12:51.078","level":"INFO","pid":2636,"msg":"dsh update check: latest=0.1.5-rc.2 local=\u003Cnull\u003E"}
+{"ts":"2026-09-19 11:12:51.079","level":"INFO","pid":2636,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting tray balloon"}
+{"ts":"2026-09-19 11:12:51.081","level":"INFO","pid":2636,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+{"ts":"2026-09-19 11:12:51.082","level":"INFO","pid":2636,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+{"ts":"2026-09-19 11:12:58.816","level":"INFO","pid":2636,"msg":"notice displayed: dsh \u6709\u65B0\u7248\u672C","ctx":{"kind":"Info","ms":25000,"queued":0}}
+{"ts":"2026-09-19 11:12:58.822","level":"INFO","pid":2636,"msg":"SAFEMODE: user exited safe mode via notice \u2192 restarting service with normal profile"}
+{"ts":"2026-09-19 11:12:58.826","level":"INFO","pid":2636,"msg":"[boot-monitor] suspended (intentional service restart window)"}
+{"ts":"2026-09-19 11:12:58.827","level":"INFO","pid":2636,"msg":"exit-safe-mode: stopping service"}
+{"ts":"2026-09-19 11:12:58.886","level":"WARN","pid":2636,"msg":"refusing to kill pid=17340: not a dsh (node) service process"}
+{"ts":"2026-09-19 11:12:58.888","level":"INFO","pid":2636,"msg":"DSH_SERVICE_CMD=(null)"}
+{"ts":"2026-09-19 11:12:58.892","level":"ERROR","pid":2636,"code":"E2001","msg":"identity cannot launch directly (source=External, node=null, entry=null)"}
+{"ts":"2026-09-19 11:12:58.893","level":"INFO","pid":2636,"msg":"exit-safe-mode: identity-driven start returned False"}
+{"ts":"2026-09-19 11:12:58.893","level":"ERROR","pid":2636,"code":"E2001","msg":"dsh \u670D\u52A1\u91CD\u542F\u5931\u8D25\uFF08exit-safe-mode\uFF09"}
+{"ts":"2026-09-19 11:12:58.895","level":"ERROR","pid":2636,"code":"E2001","msg":"exit safe mode incomplete: \u65E0\u6CD5\u4EE5\u6B63\u5E38\u914D\u7F6E\u62C9\u8D77 dsh \u670D\u52A1\uFF08E2001\uFF09\u3002"}

@@ -1,0 +1,9 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=7224 port=3907 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  cleanup taskkill /T /F pid=7224 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 profile now declares a third-party bundle (dependencies only, so dsh still boots)
+  pid=2084 port=4009 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step3 service attached: pid= (from the shell's own log line)
+[FAIL] T14 :: cannot find the attached service pid
+  cleanup taskkill /T /F pid=2084 left=0

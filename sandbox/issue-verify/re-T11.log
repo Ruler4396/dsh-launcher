@@ -1,0 +1,30 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=16220 port=11042 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary PHYS work=(1920,-193) 2560x1530 dpi=168
+  DEBUG raw windows for pid 16220: 2
+    hwnd=5704008 title=[DshNoticeCard] 445x84 at (1463,984) dpi=96
+    hwnd=13110246 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  main window 1280x840 at (354,120) dpi=96
+  title bar child (primary) 1278x32 at (355,121) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (994,137)->(3200,169) title bar -> secondary
+  DEBUG raw windows for pid 16220: 2
+    hwnd=5704008 title=[DshNoticeCard] 445x104 at (1463,964) dpi=96
+    hwnd=13110246 title=[DeepSeek Harness [TEST]（有更新）] 2450x1530 at (3023,-177) dpi=168
+  after drag: at (3023,-177) size 2450x1530 dpi=168; center=(4248,588) on secondary=True fullyInside=False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (1463,964) 445x104 dpi=96
+  rotated card: at (3680,1070) 779x246 dpi=168; inside secondary work=True; expectedW@175%= 700 (ratio 1.11)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  title bar child 2448x56 at (3024,-176) dpi=168 -> click (4248,-148)
+  click (4248,-148) activate (#1)
+  double-click (4248,-148) caption -> maximize (#1)
+  maximize attempt: zoomed=True after 1 try(ies)
+  maximized: at (1920,-193) 2560x1530 dpi=168 vs work (1920,-193) 2560x1530 -> gaps L0 T0 R0 B0
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+[PASS] T11 :: drag to secondary -> rotated notice re-placed inside that monitor work area -> maximize == that rcWork (<=2px)
+  cleanup taskkill /T /F pid=16220 left=0
+
+==== summary ====
+PASS   T11    drag to secondary -> rotated notice re-placed inside that monitor work area -> maximize == that rcWork (<=2px)

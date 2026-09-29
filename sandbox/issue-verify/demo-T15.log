@@ -1,0 +1,40 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=21972 port=13491 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  cleanup taskkill /T /F pid=21972 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 broken bundle written into dsh.profile.bundles (crashes dsh before readiness)
+  pid=27204 port=13586 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step3 startup verdict: service readiness failed
+[E2010] dsh 服务进程在就绪前已退出，启动失败（详见统一日志中的进程输出与退出码）。
+dsh 服务未能就绪。
+
+dsh 服务进程在就绪前已退出（退出码 1），启动失败。
+
+日志尾部：
+  [16:51:49.334] [dsh]     at Array.map (<anonymous>)
+  [16:51:49.334] [dsh]     at loadProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:859:25)
+  [16:51:49.335] [dsh]     at prepareProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:162:18)
+  [16:51:49.335] [dsh]     at composeProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:187:18)
+  [16:51:49.336] [dsh]     at runProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:234:25)
+  [16:51:49.336] [dsh]     at file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/bin.js:130:9
+  [16:51:49.337] [dsh]     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+  [16:51:49.339] [dsh] Node.js v24.21.0
+  {"ts":"2026-09-20 16:51:49.342","level":"INFO","pid":27204,"msg":"service process exited (code=1)"}
+  {"ts":"2026-09-20 16:51:49.423","level":"INFO","pid":27204,"msg":"poll: service process exited before ready (code=1), failing fast"}
+  {"ts":"2026-09-20 16:51:49.424","level":"INFO","pid":27204,"msg":"lifecycle: WaitingForReadiness --ReadinessTimedOut--\u003E ShuttingDown"}
+  {"ts":"2026-09-20 16:51:49.425","level":"ERROR","pid":27204,"code":"E2002","msg":"service readiness failed: service-exited"}
+
+完整日志：E:\dsh-launcher\sandbox\issue-verify\scene-T15\home\dsh-launcher\dsh.log
+  no dialog [DeepSeek Harness - 启动异常] within 60s
+[FAIL] T15 :: NO safe-mode ask on a pre-readiness plugin crash (defect G still open)
+    | {"ts":"2026-09-20 16:51:49.099","level":"INFO","pid":27204,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\19068_1789891024642\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 13586 --no-open"}
+    | [16:51:49.329] [dsh] file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:862
+    | [16:51:49.333] [dsh]     at file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:862:34
+    | [16:51:49.334] [dsh]     at loadProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:859:25)
+    | [16:51:49.335] [dsh]     at prepareProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:162:18)
+    | [16:51:49.335] [dsh]     at composeProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:187:18)
+    | [16:51:49.336] [dsh]     at runProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:234:25)
+    | [16:51:49.336] [dsh]     at file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/bin.js:130:9
+    | {"ts":"2026-09-20 16:51:49.425","level":"ERROR","pid":27204,"code":"E2002","msg":"service readiness failed: service-exited"}
+    | {"ts":"2026-09-20 16:51:49.777","level":"ERROR","pid":27204,"code":"E2010","msg":"dsh \u670D\u52A1\u672A\u80FD\u5C31\u7EEA\u3002\n\ndsh \u670D\u52A1\u8FDB\u7A0B\u5728\u5C31\u7EEA\u524D\u5DF2\u9000\u51FA\uFF08\u9000\u51FA\u7801 1\uFF09\uFF0C\u542F\u52A8\u5931\u8D25\u3002\n\n\u65E5\u5FD7\u5C3E\u90E8\uFF1A\n  [16:51:49.334] [dsh]     at Array.map (\u003Canonymous\u003E)\n  [16:51:49.334] [dsh]     at loadProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js:859:25)\n  [16:51:49.335] [dsh]     at prepareProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:162:18)\n  [16:51:49.335] [dsh]     at composeProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:187:18)\n  [16:51:49.336] [dsh]     at runProfile (file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/profile-boot-BTzzdrGY.js:234:25)\n  [16:51:49.336] [dsh]     at file:///C:/Users/<localUser>/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node_modules/@deepseek-ai/dsh/lib/bin.js:130:9\n  [16:51:49.337] [dsh]     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n  [16:51:49.339] [dsh] Node.js v24.21.0\n  {\u0022ts\u0022:\u00222026-09-20 16:51:49.342\u0022,\u0022level\u0022:\u0022INFO\u0022,\u0022pid\u0022:27204,\u0022msg\u0022:\u0022service process exited (code=1)\u0022}\n  {\u0022ts\u0022:\u00222026-09-20 16:51:49.423\u0022,\u0022level\u0022:\u0022INFO\u0022,\u0022pid\u0022:27204,\u0022msg\u0022:\u0022poll: service process exited before ready (code=1), failing fast\u0022}\n  {\u0022ts\u0022:\u00222026-09-20 16:51:49.424\u0022,\u0022level\u0022:\u0022INFO\u0022,\u0022pid\u0022:27204,\u0022msg\u0022:\u0022lifecycle: WaitingForReadiness --ReadinessTimedOut--\\u003E ShuttingDown\u0022}\n  {\u0022ts\u0022:\u00222026-09-20 16:51:49.425\u0022,\u0022level\u0022:\u0022ERROR\u0022,\u0022pid\u0022:27204,\u0022code\u0022:\u0022E2002\u0022,\u0022msg\u0022:\u0022service readiness failed: service-exited\u0022}\n\n\u5B8C\u6574\u65E5\u5FD7\uFF1AE:\\dsh-launcher\\sandbox\\issue-verify\\scene-T15\\home\\dsh-launcher\\dsh.log"}
+  cleanup taskkill /T /F pid=27204 left=0

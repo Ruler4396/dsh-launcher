@@ -1,0 +1,37 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=2636 port=11718 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary PHYS work=(1920,-193) 2560x1530 dpi=168
+  DEBUG raw windows for pid 2636: 2
+    hwnd=6097298 title=[DshNoticeCard] 445x84 at (1463,984) dpi=96
+    hwnd=40831478 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  main window 1280x840 at (354,120) dpi=96
+  title bar child (primary) 1278x32 at (355,121) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (994,137)->(3200,169) title bar -> secondary
+  DEBUG raw windows for pid 2636: 2
+    hwnd=6097298 title=[DshNoticeCard] 445x104 at (1463,964) dpi=96
+    hwnd=40831478 title=[DeepSeek Harness [TEST]（有更新）] 2240x1470 at (3023,-117) dpi=168
+  after drag: at (3023,-117) size 2240x1470 dpi=168; center=(4143,618) on secondary=True fullyInside=False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (1463,964) 445x104 dpi=96
+  rotated card: at (3680,1070) 779x246 dpi=168; inside secondary work=True; expectedW@175%= 700 (ratio 1.11)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  title bar child 2238x56 at (3024,-116) dpi=168 -> click (4143,-88)
+  click (4143,-88) activate (#1)
+  double-click (4143,-88) caption -> maximize (#1)
+  maximize attempt: zoomed=True after 1 try(ies)
+  maximized: at (1920,-193) 2560x1530 dpi=168 vs work (1920,-193) 2560x1530 -> gaps L0 T0 R0 B0
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+  double-click (3200,-165) caption -> restore
+  drag (4154,-89)->(994,-178) title bar -> primary
+  DEBUG raw windows for pid 2636: 2
+    hwnd=6097298 title=[DshNoticeCard] 779x246 at (3680,1070) dpi=168
+    hwnd=40831478 title=[DeepSeek Harness [TEST]（有更新）] 1280x765 at (1920,-193) dpi=168
+  back on primary: 1280x765 at (1920,-193) dpi=168; started 1280x840; ratchet-free=False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-5-back-on-primary.png
+[FAIL] T11 :: onSec=True cardFollowed=True zoomed=True maxGaps=0/0/0/0 roundTrip=False
+  cleanup taskkill /T /F pid=2636 left=0
+
+==== summary ====
+FAIL   T11    onSec=True cardFollowed=True zoomed=True maxGaps=0/0/0/0 roundTrip=False

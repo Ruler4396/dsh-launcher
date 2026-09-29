@@ -1,0 +1,22 @@
+  pid=23880 port=6881 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary: \\.\DISPLAY2 bounds={X=1920,Y=-193,Width=1463,Height=914} work={X=1920,Y=-193,Width=1463,Height=874}
+  DEBUG raw windows for pid 23880: 2
+    hwnd=1378650 title=[DshNoticeCard] 445x84 at (1463,984)
+    hwnd=14093562 title=[DeepSeek Harness [TEST]£¨ÓÐ¸üÐÂ£©] 1280x840 at (354,120)
+  main window 1280x840 at (354,120) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (554,136)->(2652,-133) title bar -> secondary
+  after drag: at (,) size x dpi=; on secondary = False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (2926,566)
+  rotated card: at (2926,566) 445x103 dpi=168; inside secondary work = True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  double-click (200,16) title bar -> maximize
+  maximized: at (,) x vs work {X=1920,Y=-193,Width=1463,Height=874} -> gaps L-1920 T193 R3383 B681
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+[FAIL] T11 :: onSec=False cardFollowed=True maxGaps=-1920/193/3383/681
+  cleanup taskkill /T /F pid=23880 left=0
+
+==== summary ====
+FAIL   T11    onSec=False cardFollowed=True maxGaps=-1920/193/3383/681

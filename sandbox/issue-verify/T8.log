@@ -1,0 +1,13 @@
+  pid=22416 port=5789 home=E:\dsh-launcher\sandbox\issue-verify\scene-T8\home
+  window 1280x840 at (172,104) dpi=96
+  badge rect from production paint: (329,105)-(396,137)
+  click (362,121) version badge
+  dialog 520x188 at (552,430) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T8-1-version-dialog.png
+  expected from pure function at dpi 96: 520x188 ; actual 520x188 -> True
+  click (1048,446) dialog close (X)
+[PASS] T8 :: badge click -> dialog sized by pure function for its own DPI -> closed via X -> host alive
+  cleanup taskkill /T /F pid=22416 left=0
+
+==== summary ====
+PASS   T8     badge click -> dialog sized by pure function for its own DPI -> closed via X -> host alive

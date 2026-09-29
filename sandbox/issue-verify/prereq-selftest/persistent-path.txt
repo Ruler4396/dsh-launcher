@@ -1,0 +1,4 @@
+﻿found=1
+node=C:\Users\<localUser>\AppData\Roaming\fnm\aliases\default\node.exe
+version=v24.21.0
+candidates=29

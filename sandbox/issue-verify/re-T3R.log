@@ -1,0 +1,34 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=2276 port=9261 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3R\home
+  service: HEALTHY ; local=0.1.2-rc.1
+  click (1685,997) update card
+  dialog [dsh ¸üÐÂ] 368x179 at (817,482)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3R-1-ask.png
+  Enter (default button) hwnd=10881480 fg=9832818
+  dialog answered = True
+  build: update success notification
+  cleanup taskkill /T /F pid=2276 left=0
+  staging after build: runtime-build-0.1.5-rc.2
+  pid=23540 port=9412 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3R\home
+  apply hit: [Apply] Identity verified
+  first service line: service start via identity
+  launch line: {"ts":"2026-09-20 11:55:46.883","level":"INFO","pid":23540,"msg":"service start via identity: node.exe \u0022E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3R\\home\\dsh-launcher\\runtimes\\0.1.5-rc.2\\node_modules\\@deepseek-ai\
+  readiness: HEALTHY
+    | {"ts":"2026-09-20 11:55:45.999","level":"INFO","pid":23540,"msg":"[update-guard] pre-apply snapshot created for v0.1.5-rc.2: pre-0.1.5-rc.2-20260920-035545 (1 file(s) captured)"}
+    | {"ts":"2026-09-20 11:55:46.003","level":"INFO","pid":23540,"msg":"[Apply] Executing: Directory.Move(E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3R\\home\\dsh-launcher\\staging\\runtime-build-0.1.5-rc.2, E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3R\\home\\dsh-launcher\\runtimes\\0.1.5-rc.2)"}
+    | {"ts":"2026-09-20 11:55:46.047","level":"INFO","pid":23540,"msg":"[Apply] Result: atomic swap success (prepare=ProceedFresh), Duration=41ms, target=E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3R\\home\\dsh-launcher\\runtimes\\0.1.5-rc.2"}
+    | {"ts":"2026-09-20 11:55:46.053","level":"INFO","pid":23540,"msg":"[update-guard] rollback guard armed for v0.1.5-rc.2"}
+    | {"ts":"2026-09-20 11:55:46.055","level":"INFO","pid":23540,"msg":"[Apply] Cleanup: pending after apply = null (expected null)"}
+    | {"ts":"2026-09-20 11:55:46.058","level":"INFO","pid":23540,"msg":"[Apply] Identity verified: running version == target (0.1.5-rc.2)","ctx":{"source":"SelfContained","entry":"E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3R\\home\\dsh-launcher\\runtimes\\0.1.5-rc.2\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js"}}
+    | {"ts":"2026-09-20 11:55:46.884","level":"INFO","pid":23540,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+    | {"ts":"2026-09-20 11:55:57.720","level":"INFO","pid":23540,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+    | {"ts":"2026-09-20 11:56:11.874","level":"INFO","pid":23540,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+    | {"ts":"2026-09-20 11:56:11.878","level":"INFO","pid":23540,"msg":"[update-guard] update v0.1.5-rc.2 confirmed healthy; rollback guard disarmed"}
+  runtimes dir: 0.1.5-rc.2
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3R-2-after-real-apply.png
+  post-apply notice verdict: update notice suppressed: up-to-date
+[PASS] T3R :: real apply installed 0.1.5-rc.2 (SelfContained), service booted HEALTHY on it, and the same signal no longer claims an update is available
+  cleanup taskkill /T /F pid=23540 left=0
+
+==== summary ====
+PASS   T3R    real apply installed 0.1.5-rc.2 (SelfContained), service booted HEALTHY on it, and the same signal no longer claims an update is available

@@ -1,0 +1,63 @@
+>> publishing shell app...
+  正在确定要还原的项目…
+  已还原 E:\dsh-launcher\src\DshShell\DshShell.csproj (用时 335 毫秒)。
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\SplashForm.cs(52,47): warning CS0108: “SplashForm.Layout”隐藏继承的成员“Control.Layout”。如果是有意隐藏，请使用关键字 new。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\RuntimeResolver.cs(116,51): warning CS8604: “Task<bool> RuntimeResolver.VerifySha256Async(string zipPath, string baseUrl, string version)”中的形参“baseUrl”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\WebViewManager.cs(142,23): warning CS8602: 解引用可能出现空引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(501,56): warning CS8604: “void Append(string line)”中的形参“line”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(502,55): warning CS8604: “void Append(string line)”中的形参“line”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Lifecycle\BootHealthMonitor.cs(296,46): warning CS8602: 解引用可能出现空引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(255,38): warning CS8604: “Task TcpClient.ConnectAsync(string host, int port)”中的形参“host”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(279,42): warning CS8604: “ValueTask TcpClient.ConnectAsync(string host, int port, CancellationToken cancellationToken)”中的形参“host”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(102,33): warning CS8600: 将 null 文本或可能的 null 值转换为不可为 null 类型。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(104,40): warning CS8602: 解引用可能出现空引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(192,29): warning CS8600: 将 null 文本或可能的 null 值转换为不可为 null 类型。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(194,27): warning CS8602: 解引用可能出现空引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2048,17): warning CS8602: 解引用可能出现空引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2088,60): warning CS8604: “void Program.DownloadDshUpdateStaged(Form form, string latest)”中的形参“form”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2361,61): warning CS8604: “bool NpmHelpers.IsNpmNotFoundError(string tail)”中的形参“tail”可能传入 null 引用实参。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+  DshShell -> E:\dsh-launcher\src\DshShell\bin\Release\net10.0-windows\win-x64\DshWeb.dll
+  DshShell -> E:\dsh-launcher\.publish-tmp\
+>> assembling release folder...
+>> publishing folder picker...
+  正在确定要还原的项目…
+  已还原 E:\dsh-launcher\installer\FolderPicker\FolderPicker.csproj (用时 358 毫秒)。
+E:\dsh-launcher\installer\FolderPicker\Program.cs(51,47): warning CS8604: “DirectoryInfo Directory.CreateDirectory(string path)”中的形参“path”可能传入 null 引用实参。 [E:\dsh-launcher\installer\FolderPicker\FolderPicker.csproj]
+  FolderPicker -> E:\dsh-launcher\installer\FolderPicker\bin\Release\net10.0-windows\win-x64\FolderPicker.dll
+  FolderPicker -> E:\dsh-launcher\installer\FolderPicker\out\
+>> publishing prereq checker...
+  正在确定要还原的项目…
+  已还原 E:\dsh-launcher\installer\PrereqCheck\PrereqCheck.csproj (用时 407 毫秒)。
+  PrereqCheck -> E:\dsh-launcher\installer\PrereqCheck\bin\Release\net10.0-windows\win-x64\PrereqCheck.dll
+  Generating native code
+  PrereqCheck -> E:\dsh-launcher\installer\PrereqCheck\out\
+   PrereqCheck.exe = 1.97 MB (Native AOT, �������������)
+>> building folder picker CA...
+  正在确定要还原的项目…
+  已还原 E:\dsh-launcher\installer\FolderPickerCa\FolderPickerCa.csproj (用时 7.26 秒)。
+  FolderPickerCa -> E:\dsh-launcher\installer\FolderPickerCa\bin\x64\Release\net20\FolderPickerCa.dll
+
+已成功生成。
+    0 个警告
+    0 个错误
+
+已用时间 00:00:10.40
+>> building MSI installer...
+>> packaging zip...
+>> writing checksums...
+>> done:
+    E:\dsh-launcher\dist\dsh-launcher-windows-0.5.2.zip
+    E:\dsh-launcher\dist\dsh-launcher-0.5.2.msi
+    E:\dsh-launcher\dist\SHA256SUMS.txt
+pwsh_exit=0

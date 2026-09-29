@@ -1,0 +1,5 @@
+[31;1mException: [0mE:\dsh-launcher\sandbox\issue-verify\verify-prereq-dialog.ps1:6[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m   6 | [0m if (-not (Test-Path $exe)) { [36;1mthrow "√ª”–ππΩ®£∫$exe"[0m }[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                              ~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1m√ª”–ππΩ®£∫E:\dsh-launcher\installer\PrereqCheck\bin\Release\net10.0-windows\PrereqCheck.exe[0m

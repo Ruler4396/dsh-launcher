@@ -1,0 +1,28 @@
+  pid=20080 port=3641 home=E:\dsh-launcher\sandbox\issue-verify\scene-T2\home
+  card hwnd=2362550 445x84 at (1463,984) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T2-1-shown.png
+  hover (1685,1026) card centre (pause)
+[E2004] dsh 服务不可用（端口无 HTTP 响应）。
+页面加载失败。
+
+请确认 http://127.0.0.1:3641 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。
+
+统一日志：E:\dsh-launcher\sandbox\issue-verify\scene-T2\home\dsh-launcher\dsh.log
+  after 17s of hovering: cards visible = 1 (expect 1: pause works)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T2-2-hovering.png
+  after leaving: cards now = 1
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T2-3-rotated.png
+[PASS] T2 :: hover paused (17s>15s lifetime); duplicate suppressed; presented=3
+  hoverLogSeen=False resumeLogSeen=False
+    | {"ts":"2026-09-19 22:12:44.033","level":"INFO","pid":20080,"msg":"dsh update 9.9.9 available (local=0.1.2-rc.1); prompting update notice"}
+    | {"ts":"2026-09-19 22:12:44.155","level":"INFO","pid":20080,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+    | {"ts":"2026-09-19 22:12:44.167","level":"INFO","pid":20080,"msg":"notice card self-test: presented=True"}
+    | {"ts":"2026-09-19 22:12:44.168","level":"INFO","pid":20080,"msg":"notice suppressed as duplicate (within cooldown)","ctx":{"title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","cooldownSeconds":60,"sinceAcceptedSeconds":0}}
+    | {"ts":"2026-09-19 22:12:44.230","level":"INFO","pid":20080,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 9.9.9\uFF08\u5F53\u524D 0.1.2-rc.1\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+    | {"ts":"2026-09-19 22:12:44.232","level":"INFO","pid":20080,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+    | {"ts":"2026-09-19 22:12:59.238","level":"INFO","pid":20080,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":1,"w":445,"h":104,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+    | {"ts":"2026-09-19 22:13:14.373","level":"INFO","pid":20080,"msg":"notice displayed: dsh \u6709\u65B0\u7248\u672C","ctx":{"kind":"Info","ms":25000,"queued":0,"w":445,"h":142,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+  cleanup taskkill /T /F pid=20080 left=0
+
+==== summary ====
+PASS   T2     hover paused (17s>15s lifetime); duplicate suppressed; presented=3

@@ -1,0 +1,101 @@
+launched pid=16916 msi=E:\dsh-launcher\sandbox\issue-verify\aot-checker.msi click=cancel at 10:32:35
+10:32:37 窗口: [dsh-launcher 安装程序]
+    子控件: 下一步(&N)
+    子控件: 取消
+    子控件: WixUI_Bmp_Dialog
+    子控件: 上一步(&B)
+    子控件: 安装向导将在计算机上安装 dsh-launcher。单击“下一步”继续，或单击“取消”退出安装向导。
+    子控件: 欢迎使用 dsh-launcher 安装向导
+    子控件: 安装向导将更新您计算机上的 dsh-launcher。单击“下一步”继续或单击“取消”退出安装向导。
+10:32:37 窗口: [Qoder CN]
+    子控件: Chrome Legacy Window
+    子控件: Chrome Legacy Window
+10:32:37 窗口: [哔哩哔哩 (゜-゜)つロ 干杯~-bilibili - Google Chrome]
+    子控件: Chrome Legacy Window
+10:32:37 窗口: [微信]
+    子控件: MMUIRenderSubWindowHW
+10:32:37 窗口: [下载]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\Chrome Download
+    子控件: 地址区段工具栏
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: Shell Preview Extension Host
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:32:37 窗口: [设置]
+10:32:37 窗口: [数据究竟向物理信息神经网络揭示了什么.docx [兼容模式] - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据究竟向物理信息神经网络揭示了什么.docx [兼容模式]
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:32:37 窗口: [数据告诉物理信息网络什么.docx - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据告诉物理信息网络什么.docx
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:32:37 窗口: [pinn-final]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\pinn-final
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:32:37 窗口: [TAIL-closure-audit]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\TAIL-closure-audit
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:32:37 窗口: [Microsoft Text Input Application]
+10:32:37 窗口: [PixPin]
+10:32:37 窗口: [Program Manager]
+cleared env at 10:34:36
+收尾：结束我们启动的 msiexec PID

@@ -1,0 +1,43 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=25676 port=1642 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  cleanup taskkill /T /F pid=25676 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 broken bundle written into dsh.profile.bundles (crashes dsh before readiness)
+  pid=26804 port=1704 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step3 startup verdict: service readiness failed
+  dialog [DeepSeek Harness - 启动异常] 490x243 at (756,450)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-1-startup-ask.png
+  Enter (default button) hwnd=9308560 fg=4981410
+  dialog survived Enter -> real click on IDYES rect (with retry + BM_CLICK fallback)
+clicked id=6 at (1079,659) in dialog [DeepSeek Harness - 启动异常] pid=26804
+  dialog still open -> second physical click
+  still open -> PostMessage BM_CLICK to the button
+[E2010] dsh 服务进程在就绪前已退出，启动失败（详见统一日志中的进程输出与退出码）。
+已启用安全模式。
+
+关闭本提示后重新打开 dsh-launcher，将以安全模式启动（第三方插件临时禁用，仅保留 dsh 核心功能）。启动后通知卡上可随时退出安全模式。
+  after BM_CLICK, dialog alive = False
+dialog alive at exit = False
+  dialog answered = True
+  no dialog [DeepSeek Harness] within 30s
+  step4 info dialog=False; host exited=True; safe-mode.json={
+  "active": true,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; .dsh-safe built=True
+  pid=17920 port=1745 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step5 reopened: readiness=HEALTHY; safe start=service start via identity (SAFE profile); sticky card=True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-in-safe-mode.png
+  click (1686,1048) sticky card action row
+  step6 back to normal: exit=exit-safe-mode: identity-driven start returned True; HEALTHY count=2; flag={
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; normal starts=3
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-4-back-to-normal.png
+[PASS] T15 :: pre-readiness plugin crash now offers safe mode -> armed .dsh-safe -> relaunch runs in safe mode (HEALTHY + sticky card) -> plugin removed -> real click exits back to normal profile
+  cleanup taskkill /T /F pid=17920 left=0
+  cleanup taskkill /T /F pid=26804 left=0
+
+==== summary ====
+PASS   T15    pre-readiness plugin crash now offers safe mode -> armed .dsh-safe -> relaunch runs in safe mode (HEALTHY + sticky card) -> plugin removed -> real click exits back to normal profile

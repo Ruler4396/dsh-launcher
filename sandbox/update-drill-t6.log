@@ -1,0 +1,9 @@
+== dsh ¸üÐÂÓ¦ÓÃÁ´Â·ÑÝÁ· ==
+±»²â exe: E:/dsh-launcher/src/DshShell/bin/Debug/net10.0-windows/DshWeb.exe
+[FAIL] È«¾Ö dsh °ü´æÔÚ£¨Ö»¶Á¸´ÖÆÔ´£©
+       C:\Users\<localUser>\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh ²»´æÔÚ¡ª¡ª±¾»úÎ´È«¾Ö°²×° dsh
+[31;1mCopy-Item: [0mE:\dsh-launcher\scripts\update-drill.ps1:66[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  66 | [0m [36;1mCopy-Item (Join-Path $srcPkg '*') $pkgDest -Recurse -Force[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mÕÒ²»µ½Â·¾¶¡°C:\Users\<localUser>\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh¡±£¬ÒòÎª¸ÃÂ·¾¶²»´æÔÚ¡£[0m

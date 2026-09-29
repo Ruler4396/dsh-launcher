@@ -1,0 +1,39 @@
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* v0.5.0 build · 35517888701
+Triggered via push less than a minute ago
+
+JOBS
+* build (ID 106096799445)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  * Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Run tests (unit + script/integration checks, no -Smoke)
+  * Upload test log on failure
+  * Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* v0.5.0 build · 35517888701
+Triggered via push about 1 minute ago
+
+JOBS
+* build (ID 106096799445)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Run tests (unit + script/integration checks, no -Smoke)
+  * Upload test log on failure
+  * Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+failed to get run: HTTP 502: 502 Bad Gateway (https://api.github.com/repos/Ruler4396/dsh-launcher/actions/runs/35517888701?exclude_pull_requests=true)

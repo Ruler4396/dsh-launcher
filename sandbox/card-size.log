@@ -1,0 +1,8 @@
+pid=12832 port=2577 home=E:\dsh-launcher\sandbox\issue25-card\home-size
+CARD dpi=96 w=413 h=77 at=(1496,992)
+     workarea-ish virtual screen = 1920x1080 at (0,0)
+screenshot -> E:\dsh-launcher\sandbox\issue25-card\staging\card-big2-125256.png
+cleanup: left=0
+---- in-process geometry (dsh.log) ----
+{"ts":"2026-09-19 12:53:00.226","level":"INFO","pid":12832,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":413,"h":77,"dpi":96}}
+{"ts":"2026-09-19 12:53:00.241","level":"INFO","pid":12832,"msg":"notice card self-test: presented=True"}

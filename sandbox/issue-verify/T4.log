@@ -1,0 +1,20 @@
+  pid=26904 port=5155 home=E:\dsh-launcher\sandbox\issue-verify\scene-T4\home
+  stage1: nav completed
+  dialog [DeepSeek Harness - Æô¶¯Òì³£] 457x211 at (774,466)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T4-1-ask-dialog.png
+  Enter (default button) hwnd=15142438 fg=4918044
+  dialog answered = True
+  after-accept hit: navigating to safe mode URL
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T4-2-after-accept.png
+    | {"ts":"2026-09-19 22:28:40.606","level":"ERROR","pid":26904,"code":"E1008","msg":"plugin crash detected via webview message: {\u0022pluginFatal\u0022:true,\u0022source\u0022:\u0022verify-T4\u0022,\u0022message\u0022:\u0022plugin crash simulated for issue verification\u0022}","ctx":{"source":"webview-message"}}
+    | {"ts":"2026-09-19 22:28:41.470","level":"INFO","pid":26904,"msg":"safe-mode ask answered: yes"}
+    | {"ts":"2026-09-19 22:28:41.471","level":"INFO","pid":26904,"msg":"navigating to safe mode URL: http://127.0.0.1:5155?safe_mode=1"}
+    | {"ts":"2026-09-19 22:28:41.567","level":"INFO","pid":26904,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:5155/?safe_mode=1"}
+    | {"ts":"2026-09-19 22:28:43.058","level":"ERROR","pid":26904,"code":"E1008","msg":"plugin crash detected via webview message: {\u0022pluginFatal\u0022:true,\u0022source\u0022:\u0022verify-T4\u0022,\u0022message\u0022:\u0022plugin crash simulated for issue verification\u0022}","ctx":{"source":"webview-message"}}
+    | {"ts":"2026-09-19 22:28:43.059","level":"INFO","pid":26904,"msg":"safe-mode ask suppressed: already asked this session"}
+[PASS] T4 :: page pluginFatal -> E1008 detected -> ask dialog -> real click Yes -> safe-mode URL navigated
+  cleanup taskkill /T /F pid=26904 left=0
+  cleanup listener pid=22228 on port 5155
+
+==== summary ====
+PASS   T4     page pluginFatal -> E1008 detected -> ask dialog -> real click Yes -> safe-mode URL navigated

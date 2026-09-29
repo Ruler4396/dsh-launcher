@@ -1,0 +1,98 @@
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)的测试运行
+总共 1 个测试文件与指定模式相匹配。
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.12)
+[xUnit.net 00:00:00.14]   Discovering: DshShell.Tests
+[xUnit.net 00:00:00.42]   Discovered:  DshShell.Tests
+[xUnit.net 00:00:00.42]   Starting:    DshShell.Tests
+[xUnit.net 00:00:00.76]     DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It [FAIL]
+[xUnit.net 00:00:00.76]       通知卡片直角 + 强调条对齐 抛异常：System.NullReferenceException: Object reference not set to an instance of an object.
+[xUnit.net 00:00:00.76]          at DshShell.Tests.Regression_NoticeCardSquareAccent.<RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It>b__2_0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 78
+[xUnit.net 00:00:00.76]          at DshShell.Tests.Regression_NoticeCardSquareAccent.<>c__DisplayClass6_0.<RunSta>b__0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 109
+[xUnit.net 00:00:00.76]       Stack Trace:
+[xUnit.net 00:00:00.77]         E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs(117,0): at DshShell.Tests.Regression_NoticeCardSquareAccent.RunSta(Action body, String what, Int32 timeoutSeconds)
+[xUnit.net 00:00:00.77]         E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs(33,0): at DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It()
+[xUnit.net 00:00:00.77]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.77]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.77]       Output:
+[xUnit.net 00:00:00.77]         card 445x122 dpi=96 accent=Color [A=255, R=216, G=30, B=6] border=Color [A=255, R=209, G=213, B=219]
+  失败 DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It [272 ms]
+  错误消息:
+   通知卡片直角 + 强调条对齐 抛异常：System.NullReferenceException: Object reference not set to an instance of an object.
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.<RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It>b__2_0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 78
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.<>c__DisplayClass6_0.<RunSta>b__0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 109
+  堆栈跟踪:
+     at DshShell.Tests.Regression_NoticeCardSquareAccent.RunSta(Action body, String what, Int32 timeoutSeconds) in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 117
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 33
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  标准输出消息:
+ card 445x122 dpi=96 accent=Color [A=255, R=216, G=30, B=6] border=Color [A=255, R=209, G=213, B=219]
+
+
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.PlaceAtBottomRight_AnchorsToWorkAreaCornerWithMargin [5 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_SectionsHaveExactlyOneGap_NoOverlapNoSeam(dpi: 96) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_SectionsHaveExactlyOneGap_NoOverlapNoSeam(dpi: 192) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_SectionsHaveExactlyOneGap_NoOverlapNoSeam(dpi: 144) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_UnknownDpi_FallsBackTo1x(dpi: 0) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_UnknownDpi_FallsBackTo1x(dpi: -1) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.EmSizes_ScaleOnceWithDpi(dpi: 192) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.EmSizes_ScaleOnceWithDpi(dpi: 144) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.EmSizes_ScaleOnceWithDpi(dpi: 120) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.PlaceAtBottomRight_FitsBothDimensions_StillAnchorsBottomRight [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_AccentBarSpansFullHeight_AndTextYieldsToIt(dpi: 96) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_AccentBarSpansFullHeight_AndTextYieldsToIt(dpi: 192) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: 0, expectedMs: 0) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: 600, expectedMs: 120000) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: 1, expectedMs: 3000) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: 25, expectedMs: 25000) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: 120, expectedMs: 120000) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: -1, expectedMs: 0) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_ResolveExpiryMs(seconds: -1000, expectedMs: 0) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_TitleYieldsWidthToCloseButton [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_WarningCueOnlyForUrgent(kind: Info, expected: False) [2 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_WarningCueOnlyForUrgent(kind: Urgent, expected: True) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.PlaceAtBottomRight_RespectsNonOriginWorkArea [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.PlaceAtBottomRight_TinyWorkArea_ClampsInside [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_AccentBar_IsFlushLeftAndSpansFullHeight(dpi: 192) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_AccentBar_IsFlushLeftAndSpansFullHeight(dpi: 144) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_AccentBar_IsFlushLeftAndSpansFullHeight(dpi: 96) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_ProminenceFloorAt96dpi [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_ScalesLinearlyWithDpi(dpi: 120, s: 1.25) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_ScalesLinearlyWithDpi(dpi: 144, s: 1.5) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_ScalesLinearlyWithDpi(dpi: 192, s: 2) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Geometry_ScalesLinearlyWithDpi(dpi: 96, s: 1) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_HeightNeverClipsCloseButton [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.MeasureWidths_AreTheWidthsPlaceUses [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.NoticePolicy_InfiniteTimeSpan_IsSticky [< 1 ms]
+[xUnit.net 00:00:00.84]   Finished:    DshShell.Tests
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_WithoutAction_LeavesNoTrailingGap(dpi: 96) [< 1 ms]
+  已通过 DshShell.Tests.NoticeCardLayoutContractTests.Place_WithoutAction_LeavesNoTrailingGap(dpi: 192) [< 1 ms]
+
+测试运行失败。
+测试总数: 38
+     通过数: 37
+     失败数: 1
+总时间: 1.5982 秒

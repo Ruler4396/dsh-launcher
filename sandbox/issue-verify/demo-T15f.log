@@ -1,0 +1,28 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=12184 port=8307 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  cleanup taskkill /T /F pid=12184 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 broken bundle written into dsh.profile.bundles (crashes dsh before readiness)
+  pid=1108 port=8379 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step3 startup verdict: service readiness failed
+  dialog [DeepSeek Harness - 启动异常] 492x227 at (756,458)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-1-startup-ask.png
+  Enter (default button) hwnd=2754924 fg=2754924
+  dialog answered = True
+  step4 same-process recovery: armed=SAFEMODE: armed at startup safeStart=service start via identity (SAFE profile) ready=HEALTHY card=True extraAsk=0 exited=False title=DeepSeek Harness（安全模式）（有更新）
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-2-in-safe-mode.png
+  click (1686,946) card BODY (must NOT trigger the action)
+  step5a body click: leaked=False; 'click ignored' log lines=1
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-after-body-click.png
+  click (1686,1048) sticky card action row
+  step6 back to normal: exit=exit-safe-mode: identity-driven start returned True; HEALTHY count=2; flag={
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; normal starts=3
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-back-to-normal.png
+[PASS] T15 :: pre-readiness plugin crash asks once -> same run restarts on .dsh-safe (HEALTHY + sticky card, no receipt dialog, process alive) -> plugin removed -> real click exits back to normal profile
+  cleanup taskkill /T /F pid=1108 left=0
+
+==== summary ====
+PASS   T15    pre-readiness plugin crash asks once -> same run restarts on .dsh-safe (HEALTHY + sticky card, no receipt dialog, process alive) -> plugin removed -> real click exits back to normal profile

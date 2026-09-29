@@ -1,0 +1,10 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=9880 port=4225 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3\home
+  service: HEALTHY
+[FAIL] T3 :: update notice card never appeared
+    | {"ts":"2026-09-20 11:33:13.872","level":"INFO","pid":9880,"msg":"update signal (test hook): dsh:0.1.5-rc.2"}
+    | {"ts":"2026-09-20 11:33:13.972","level":"INFO","pid":9880,"msg":"update network: launcher check attempting exit=direct"}
+    | {"ts":"2026-09-20 11:33:15.326","level":"INFO","pid":9880,"msg":"update network: launcher check exit=direct version=0.4.5"}
+    | {"ts":"2026-09-20 11:33:15.345","level":"INFO","pid":9880,"msg":"dsh update check: latest=0.1.5-rc.2 local=0.1.2-rc.1 (remote from test hook)"}
+    | {"ts":"2026-09-20 11:33:15.348","level":"INFO","pid":9880,"msg":"dsh update notice suppressed: skipped-by-user"}
+  cleanup taskkill /T /F pid=9880 left=0

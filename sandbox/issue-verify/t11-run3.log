@@ -1,0 +1,6 @@
+[31;1mAdd-Type: [0mE:\dsh-launcher\sandbox\issue-verify\lib.ps1:15[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  15 | [0m [36;1mAdd-Type @"[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m ~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1m(21,73): error CS0246: Œ¥ƒ‹’“µΩ¿‡–ÕªÚ√¸√˚ø’º‰√˚°∞Pt°±( «∑Ò»±…Ÿ using ÷∏¡ÓªÚ≥Ã–ÚºØ“˝”√?)   [DllImport("user32.dll")] public static extern[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m[31;1m[36;1m     | [31;1mIntPtr WindowFromPoint(Pt p);                                                                         ^[0m

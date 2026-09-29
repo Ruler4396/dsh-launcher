@@ -1,0 +1,2 @@
+6fd67f7b5357f100a1ad82c2b3349b0a0a0952342f66a4e176ad67586800c13a  dsh-launcher-windows-0.4.0.zip
+f3ced627b04ad404d833eb58209b6ed9a0bbad541beefc03d7de6becdb816c7e  dsh-launcher-0.4.0.msi

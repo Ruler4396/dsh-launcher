@@ -1,0 +1,28 @@
+{"ts":"2026-09-18 23:52:06.967","level":"INFO","pid":25832,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 23:52:07.109","level":"INFO","pid":25832,"msg":"start target=http://127.0.0.1:39901 external=True"}
+{"ts":"2026-09-18 23:52:07.113","level":"INFO","pid":25832,"msg":"first instance"}
+{"ts":"2026-09-18 23:52:07.408","level":"INFO","pid":25832,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 23:52:07.409","level":"INFO","pid":25832,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 23:52:07.587","level":"INFO","pid":25832,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 23:52:07.588","level":"INFO","pid":25832,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 23:52:07.597","level":"INFO","pid":25832,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 23:52:07.713","level":"INFO","pid":25832,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-18 23:52:07.716","level":"INFO","pid":25832,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-18 23:52:07.717","level":"INFO","pid":25832,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-18 23:52:07.848","level":"INFO","pid":25832,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-18 23:52:07.849","level":"INFO","pid":25832,"msg":"[boot-monitor] started url=http://127.0.0.1:39901 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-safemode\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-18 23:52:08.010","level":"INFO","pid":25832,"msg":"main form shown"}
+{"ts":"2026-09-18 23:52:08.016","level":"WARN","pid":25832,"msg":"system toast suppressed on Windows 10 (WPN crash guard, issue #25); caller fallback chain (tray balloon / title dwell) will take over"}
+{"ts":"2026-09-18 23:52:08.017","level":"WARN","pid":25832,"msg":"safe-mode notice toast unavailable; falling back to modal exit prompt"}
+{"ts":"2026-09-18 23:52:08.046","level":"INFO","pid":25832,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-18 23:52:08.830","level":"INFO","pid":25832,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-18 23:52:08.921","level":"INFO","pid":25832,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39901/"}
+{"ts":"2026-09-18 23:52:08.923","level":"INFO","pid":25832,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-18 23:52:08.928","level":"INFO","pid":25832,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-18 23:52:09.139","level":"INFO","pid":25832,"msg":"update network: launcher check exit=direct version=0.4.5"}
+{"ts":"2026-09-18 23:52:09.371","level":"INFO","pid":25832,"msg":"update network: dsh check ok via registry=https://registry.npmmirror.com exit=direct version=0.1.5-rc.2"}
+{"ts":"2026-09-18 23:52:09.373","level":"INFO","pid":25832,"msg":"dsh update check: latest=0.1.5-rc.2 local=\u003Cnull\u003E"}
+{"ts":"2026-09-18 23:52:09.374","level":"INFO","pid":25832,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting tray balloon"}
+{"ts":"2026-09-18 23:52:09.376","level":"WARN","pid":25832,"msg":"system toast suppressed on Windows 10 (WPN crash guard, issue #25); caller fallback chain (tray balloon / title dwell) will take over"}
+{"ts":"2026-09-18 23:52:09.376","level":"WARN","pid":25832,"msg":"update toast unavailable; falling back to tray balloon / title dwell"}
+{"ts":"2026-09-18 23:52:09.377","level":"INFO","pid":25832,"msg":"update notice pinned to title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}

@@ -1,0 +1,3 @@
+ALTS: ['100']
+LINKS: ['https://github.com/100']
+SEGLEN: 1088

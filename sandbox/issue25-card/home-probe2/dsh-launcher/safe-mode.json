@@ -1,0 +1,19 @@
+{
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 1,
+  "lastFailure": {
+    "utc": "2026-09-18T15:32:51.6470776Z",
+    "code": "E2008",
+    "summary": "\u597D\u7B26\u53F7\u8FDE\u7EED 5 \u6B21\u7F3A\u5E2D\uFF08\u9608\u503C 5\uFF09",
+    "layers": [
+      {
+        "layer": "Page",
+        "summary": "\u597D\u7B26\u53F7\u8FDE\u7EED 5 \u6B21\u7F3A\u5E2D\uFF08\u9608\u503C 5\uFF09",
+        "detail": "good symbol absent",
+        "code": "E2008",
+        "utc": "2026-09-18T15:32:51.6470043Z"
+      }
+    ]
+  }
+}

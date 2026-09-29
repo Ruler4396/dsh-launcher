@@ -1,0 +1,40 @@
+scene=[E:\dsh-launcher\sandbox\issue25-card] exe=[E:/dsh-launcher/src/DshShell/bin/Debug/net10.0-windows/DshWeb.exe] home=[E:\dsh-launcher\sandbox\issue25-card\home-e2e]
+起步时 .dsh-safe 存在=False（应为 False：这正是触发 ensure 重建的前置条件）
+pid=29332 port=2602  port 独立、DSH_HOME 隔离
+阶段1 命中: rebuilt before launch
+ensure 后 .dsh-safe/package.json 存在=True
+卡片窗口数=1（等待 -54 秒内）
+截图 -> E:\dsh-launcher\sandbox\issue25-card\staging\e2e-1-sticky.png
+35 秒后卡片窗口数=1（sticky 应为 1）
+已点击卡片 (1685,977)
+退出动作命中: SAFEMODE: user exited safe mode via notice
+重启结果命中: exit-safe-mode: identity-driven start returned True
+截图 -> E:\dsh-launcher\sandbox\issue25-card\staging\e2e-3-after-exit.png
+safe-mode.json = {
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}
+
+---- 关键日志 ----
+{"ts":"2026-09-19 20:22:06.832","level":"INFO","pid":29332,"msg":"SAFEMODE: sticky profile missing \u2192 rebuilt before launch"}
+{"ts":"2026-09-19 20:22:06.833","level":"INFO","pid":29332,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-19 20:22:07.448","level":"INFO","pid":29332,"msg":"DSH_SERVICE_CMD=(null)"}
+{"ts":"2026-09-19 20:22:07.501","level":"INFO","pid":29332,"msg":"service start via identity (SAFE profile): node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\27052_1789793273340\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 --profile .dsh-safe --host 127.0.0.1 --port 2602 --no-open"}
+{"ts":"2026-09-19 20:22:07.502","level":"INFO","pid":29332,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-19 20:22:12.419","level":"INFO","pid":29332,"msg":"service token url observed (web trust fence): http://127.0.0.1:2602/?token=MmfwwBFNarYwsp1q4XlmA6wcg3iezzobEaV1eezRO58"}
+{"ts":"2026-09-19 20:22:12.984","level":"INFO","pid":29332,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-19 20:22:13.168","level":"INFO","pid":29332,"msg":"[boot-monitor] started url=http://127.0.0.1:2602 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-e2e\\dsh-launcher\\dsh.log servicePid=7172"}
+{"ts":"2026-09-19 20:22:13.711","level":"INFO","pid":29332,"msg":"notice displayed: dsh \u5DF2\u4EE5\u5B89\u5168\u6A21\u5F0F\u542F\u52A8","ctx":{"kind":"Urgent","ms":0,"queued":0,"w":445,"h":182,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+{"ts":"2026-09-19 20:22:13.723","level":"INFO","pid":29332,"msg":"safe-mode notice presented: \u7B2C\u4E09\u65B9\u63D2\u4EF6\u5DF2\u4E34\u65F6\u7981\u7528\uFF08\u70B9\u51FB\u53EF\u9000\u51FA\uFF09"}
+{"ts":"2026-09-19 20:22:49.825","level":"INFO","pid":29332,"msg":"SAFEMODE: user exited safe mode via notice \u2192 restarting service with normal profile"}
+{"ts":"2026-09-19 20:22:49.831","level":"INFO","pid":29332,"msg":"[boot-monitor] suspended (intentional service restart window)"}
+{"ts":"2026-09-19 20:22:49.833","level":"INFO","pid":29332,"msg":"lifecycle: Running --RestartRequested--\u003E RestartingService"}
+{"ts":"2026-09-19 20:22:49.834","level":"INFO","pid":29332,"msg":"exit-safe-mode: stopping service"}
+{"ts":"2026-09-19 20:22:51.262","level":"INFO","pid":29332,"msg":"service process exited (code=1)"}
+{"ts":"2026-09-19 20:22:51.365","level":"INFO","pid":29332,"msg":"DSH_SERVICE_CMD=(null)"}
+{"ts":"2026-09-19 20:22:51.410","level":"INFO","pid":29332,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\27052_1789793273340\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 2602 --no-open"}
+{"ts":"2026-09-19 20:22:51.410","level":"INFO","pid":29332,"msg":"service start via identity"}
+{"ts":"2026-09-19 20:22:51.411","level":"INFO","pid":29332,"msg":"exit-safe-mode: identity-driven start returned True"}
+
+清理：按 pid=29332 taskkill /T /F，剩余=0

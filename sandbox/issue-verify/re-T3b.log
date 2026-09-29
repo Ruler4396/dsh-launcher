@@ -1,0 +1,43 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=8532 port=8260 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3\home
+  service: HEALTHY
+  update card 445x142 at (1463,926)
+  card 文案: 检测到 0.1.5-rc.2 / 当前 0.1.2-rc.1
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-1-update-card.png
+  click (1685,997) update card centre
+  ask dialog title=[dsh 更新] 368x179
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-2-ask-dialog.png
+  Enter (default button) hwnd=28118106 fg=28118106
+  build verdict needle: update success notification
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-3-after-build.png
+    | {"ts":"2026-09-20 11:48:44.605","level":"INFO","pid":8532,"msg":"update network: launcher check exit=direct version=0.4.5"}
+    | {"ts":"2026-09-20 11:48:44.620","level":"INFO","pid":8532,"msg":"dsh update check: latest=0.1.5-rc.2 local=0.1.2-rc.1 (remote from test hook)"}
+    | {"ts":"2026-09-20 11:48:44.622","level":"INFO","pid":8532,"msg":"dsh update 0.1.5-rc.2 available (local=0.1.2-rc.1); prompting update notice"}
+    | {"ts":"2026-09-20 11:48:44.679","level":"INFO","pid":8532,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D 0.1.2-rc.1\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+    | {"ts":"2026-09-20 11:48:44.682","level":"INFO","pid":8532,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+    | {"ts":"2026-09-20 11:48:58.368","level":"INFO","pid":8532,"msg":"staged update flow started: v0.1.5-rc.2"}
+    | {"ts":"2026-09-20 11:49:01.024","level":"INFO","pid":8532,"msg":"building dsh runtime with npm"}
+    | {"ts":"2026-09-20 11:49:46.806","level":"INFO","pid":8532,"msg":"staged update validated: v0.1.5-rc.2 bin=lib\\bin.js"}
+    | {"ts":"2026-09-20 11:49:46.813","level":"INFO","pid":8532,"msg":"dsh runtime build complete: 0.1.5-rc.2","ctx":{"tool":"npm","bin":"lib\\bin.js","buildDir":"E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3\\home\\dsh-launcher\\staging\\runtime-build-0.1.5-rc.2"}}
+    | {"ts":"2026-09-20 11:49:46.815","level":"INFO","pid":8532,"msg":"update success notification: card=True; dwell=12000ms"}
+[PASS] T3a :: click -> ask -> real staged download/build succeeded (ready notice)
+  cleanup taskkill /T /F pid=8532 left=0
+  pid=18336 port=8479 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3\home
+  restart hit: fake apply
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-5-applied.png
+    | {"ts":"2026-09-20 11:49:51.505","level":"INFO","pid":18336,"msg":"[update-guard] pre-apply snapshot created for v0.1.5-rc.2: pre-0.1.5-rc.2-20260920-034951 (1 file(s) captured)"}
+    | {"ts":"2026-09-20 11:49:51.507","level":"INFO","pid":18336,"msg":"[Apply] Result: fake apply (test hook), pending cleared"}
+    | {"ts":"2026-09-20 11:49:55.812","level":"INFO","pid":18336,"msg":"update signal (test hook): dsh:0.1.5-rc.2"}
+    | {"ts":"2026-09-20 11:49:55.917","level":"INFO","pid":18336,"msg":"update network: launcher check attempting exit=direct"}
+    | {"ts":"2026-09-20 11:49:57.011","level":"INFO","pid":18336,"msg":"update network: launcher check exit=direct version=0.4.5"}
+    | {"ts":"2026-09-20 11:49:57.022","level":"INFO","pid":18336,"msg":"dsh update check: latest=0.1.5-rc.2 local=0.1.2-rc.1 (remote from test hook)"}
+    | {"ts":"2026-09-20 11:49:57.024","level":"INFO","pid":18336,"msg":"dsh update 0.1.5-rc.2 available (local=0.1.2-rc.1); prompting update notice"}
+    | {"ts":"2026-09-20 11:49:57.075","level":"INFO","pid":18336,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D 0.1.2-rc.1\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+    | {"ts":"2026-09-20 11:49:57.077","level":"INFO","pid":18336,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+    | {"ts":"2026-09-20 11:50:09.213","level":"INFO","pid":18336,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+[PASS] T3b :: restart detected pending -> apply decision ran -> pending cleared
+  cleanup taskkill /T /F pid=18336 left=0
+
+==== summary ====
+PASS   T3a    click -> ask -> real staged download/build succeeded (ready notice)
+PASS   T3b    restart detected pending -> apply decision ran -> pending cleared

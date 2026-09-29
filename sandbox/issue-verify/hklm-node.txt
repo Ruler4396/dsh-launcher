@@ -1,0 +1,13 @@
+
+[32;1mInstallPath  : [0mD:\node\
+[32;1mVersion      : [0m24.13.1
+[32;1mPSPath       : [0mMicrosoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Node.js
+[32;1mPSParentPath : [0mMicrosoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE
+[32;1mPSChildName  : [0mNode.js
+[32;1mPSDrive      : [0mHKLM
+[32;1mPSProvider   : [0mMicrosoft.PowerShell.Core\Registry
+
+InstallPath exists? False
+fnm alias dir: True
+alias default -> C:\Users\<localUser>\AppData\Roaming\fnm\aliases\lts-latest
+alias lts-latest -> C:\Users\<localUser>\AppData\Roaming\fnm\node-versions\v24.21.0\installation

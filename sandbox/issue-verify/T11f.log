@@ -1,0 +1,8 @@
+  pid=20224 port=6567 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary: \\.\DISPLAY2 bounds={X=1920,Y=-193,Width=1463,Height=914} work={X=1920,Y=-193,Width=1463,Height=874}
+  DEBUG raw windows for pid 20224: 0
+[FAIL] T11 :: main window never appeared within 120s
+    | {"ts":"2026-09-20 08:15:23.153","level":"INFO","pid":20224,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+    | {"ts":"2026-09-20 08:15:27.452","level":"INFO","pid":20224,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+    | {"ts":"2026-09-20 08:15:41.911","level":"INFO","pid":20224,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+  cleanup taskkill /T /F pid=20224 left=0

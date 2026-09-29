@@ -1,0 +1,39 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=19244 port=8650 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary PHYS work=(1920,-193) 2560x1530 dpi=168
+  DEBUG raw windows for pid 19244: 2
+    hwnd=9047378 title=[DshNoticeCard] 445x84 at (1463,984) dpi=96
+    hwnd=2427234 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (354,120) dpi=96
+  main window 1280x840 at (354,120) dpi=96
+  title bar child (primary) 1278x32 at (355,121) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (994,137)->(3200,169) title bar -> secondary
+  DEBUG raw windows for pid 19244: 2
+    hwnd=9047378 title=[DshNoticeCard] 445x104 at (1463,964) dpi=96
+    hwnd=2427234 title=[DeepSeek Harness [TEST]（有更新）] 1280x840 at (2560,152) dpi=168
+  after drag: at (2560,152) size 1280x840 dpi=168; center=(3200,572) on secondary=True fullyInside=True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card right after drag: at (1463,964) 445x104 dpi=96
+  rotated card: at (3680,1070) 779x246 dpi=168; inside secondary work=True; expectedW@175%= 700 (ratio 1.11)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  title bar child 1278x56 at (2561,153) dpi=168 -> click (3200,181)
+  click (3200,181) activate (#1)
+  double-click (3200,181) caption -> maximize (#1)
+  still not zoomed after try 1: 1280x840 at (2560,152) iconic=False
+  title bar child 1278x56 at (2561,153) dpi=168 -> click (3200,181)
+  click (3200,181) activate (#2)
+  double-click (3200,181) caption -> maximize (#2)
+  still not zoomed after try 2: 1280x840 at (2560,152) iconic=False
+  title bar child 1278x56 at (2561,153) dpi=168 -> click (3200,181)
+  click (3200,181) activate (#3)
+  double-click (3200,181) caption -> maximize (#3)
+  still not zoomed after try 3: 1280x840 at (2560,152) iconic=False
+  maximize attempt: zoomed=False after 3 try(ies)
+  maximized: at (2560,152) 1280x840 dpi=168 vs work (1920,-193) 2560x1530 -> gaps L640 T345 R640 B345
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=2 sameSpace=True
+[FAIL] T11 :: onSec=True cardFollowed=True zoomed=False maxGaps=640/345/640/345
+  cleanup taskkill /T /F pid=19244 left=0
+
+==== summary ====
+FAIL   T11    onSec=True cardFollowed=True zoomed=False maxGaps=640/345/640/345

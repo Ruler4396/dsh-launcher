@@ -1,0 +1,75 @@
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)的测试运行
+总共 1 个测试文件与指定模式相匹配。
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.12)
+[xUnit.net 00:00:00.12]   Discovering: DshShell.Tests
+[xUnit.net 00:00:00.35]   Discovered:  DshShell.Tests
+[xUnit.net 00:00:00.36]   Starting:    DshShell.Tests
+  已通过 DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_BuiltShellAssembly_ExposesNoWpnEntryPoint [13 ms]
+[xUnit.net 00:00:03.89]     DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps [FAIL]
+[xUnit.net 00:00:03.89]       Assert.Contains() Failure: Sub-string not found
+[xUnit.net 00:00:03.89]       String:    "{"ts":"2026-09-20 20:23:23.593","level":""···
+[xUnit.net 00:00:03.89]       Not found: "notice suppressed as duplicate"
+[xUnit.net 00:00:03.89]       Stack Trace:
+[xUnit.net 00:00:03.89]         E:\dsh-launcher\tests\DshShell.Tests\Regression_Issue25_WpnToastGuard.RealOs.cs(241,0): at DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps()
+[xUnit.net 00:00:03.89]         --- End of stack trace from previous location ---
+[xUnit.net 00:00:03.89]       Output:
+[xUnit.net 00:00:03.89]         started pid=15920 port=4302
+[xUnit.net 00:00:03.89]         alive=True after 45s
+[xUnit.net 00:00:03.89]         ---- dsh.log (notice lines) ----
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:24.336","level":"INFO","pid":15920,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:24.346","level":"INFO","pid":15920,"msg":"notice card self-test: presented=True"}
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:24.349","level":"INFO","pid":15920,"msg":"notice already on screen; request is a no-op","ctx":{"Title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","explicitRequest":false}}
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:25.733","level":"INFO","pid":15920,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting update notice"}
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:25.736","level":"INFO","pid":15920,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+[xUnit.net 00:00:03.89]         {"ts":"2026-09-20 20:23:25.737","level":"INFO","pid":15920,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+  失败 DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps [3 s]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "{"ts":"2026-09-20 20:23:23.593","level":""···
+Not found: "notice suppressed as duplicate"
+  堆栈跟踪:
+     at DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps() in E:\dsh-launcher\tests\DshShell.Tests\Regression_Issue25_WpnToastGuard.RealOs.cs:line 241
+--- End of stack trace from previous location ---
+  标准输出消息:
+ started pid=15920 port=4302
+ alive=True after 45s
+ ---- dsh.log (notice lines) ----
+ {"ts":"2026-09-20 20:23:24.336","level":"INFO","pid":15920,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+ {"ts":"2026-09-20 20:23:24.346","level":"INFO","pid":15920,"msg":"notice card self-test: presented=True"}
+ {"ts":"2026-09-20 20:23:24.349","level":"INFO","pid":15920,"msg":"notice already on screen; request is a no-op","ctx":{"Title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","explicitRequest":false}}
+ {"ts":"2026-09-20 20:23:25.733","level":"INFO","pid":15920,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting update notice"}
+ {"ts":"2026-09-20 20:23:25.736","level":"INFO","pid":15920,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+ {"ts":"2026-09-20 20:23:25.737","level":"INFO","pid":15920,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+
+
+[xUnit.net 00:00:03.92]   Finished:    DshShell.Tests
+  已通过 DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.ShellSource_HasNoSystemToastReference [11 ms]
+
+测试运行失败。
+测试总数: 3
+     通过数: 2
+     失败数: 1
+总时间: 4.6092 秒

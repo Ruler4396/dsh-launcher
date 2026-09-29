@@ -1,0 +1,30 @@
+== 会话 1：期望自动回滚 ==
+[ OK ] 武装（跨会话）
+[ OK ] 停服先于数据还原（防目录锁）
+[ OK ] 回滚事务确实执行
+[ OK ] 坏运行时被移出发现链
+[ OK ] 回滚历史留痕
+[ OK ] 受保护文件按字节还原
+[ OK ] 旧版服务重新起来
+[ OK ] E4003 对用户可见（含回滚结果）
+== 会话 2：武装标记应已被一次性消费（不得再次回滚） ==
+[FAIL] 第二次启动仍触发回滚（一次性消费失效）
+== DRILL: FAIL (1 项) ；现场保留在 E:\dsh-launcher\sandbox\update-rollback\rb-212004 ==
+回滚相关日志片段：
+  {"ts":"2026-09-19 21:20:06.054","level":"INFO","pid":24136,"msg":"service start via identity: node.exe \u0022E:\\dsh-launcher\\sandbox\\update-rollback\\rb-2120
+  {"ts":"2026-09-19 21:20:06.801","level":"INFO","pid":24136,"msg":"[boot-monitor] started url=http://127.0.0.1:12320 log=E:\\dsh-launcher\\sandbox\\update-rollba
+  {"ts":"2026-09-19 21:20:06.805","level":"INFO","pid":24136,"msg":"[update-guard] rollback guard armed (cross-session) for v9.9.9-drill-bad"}
+  {"ts":"2026-09-19 21:20:10.834","level":"ERROR","pid":24136,"code":"E4003","msg":"[update-rollback] update v9.9.9-drill-bad failed boot self-check [E2008]; roll
+  {"ts":"2026-09-19 21:20:10.844","level":"INFO","pid":24136,"msg":"[update-rollback] stopping service before data rollback"}
+  {"ts":"2026-09-19 21:20:11.080","level":"INFO","pid":24136,"msg":"boot-monitor: diagnostic package written: E:\\dsh-launcher\\sandbox\\update-rollback\\rb-21200
+  {"ts":"2026-09-19 21:20:12.403","level":"INFO","pid":24136,"msg":"[update-rollback] rolling back pre-update shared data"}
+  {"ts":"2026-09-19 21:20:12.409","level":"WARN","pid":24136,"msg":"[update-guard] poisoned file kept for forensics: E:\\dsh-launcher\\sandbox\\update-rollback\\r
+  {"ts":"2026-09-19 21:20:12.414","level":"WARN","pid":24136,"msg":"[update-guard] runtime v9.9.9-drill-bad quarantined out of discovery chain: E:\\dsh-launcher\\
+  {"ts":"2026-09-19 21:20:12.419","level":"ERROR","pid":24136,"code":"E4003","msg":"[update-guard] rollback finished for v9.9.9-drill-bad: restored=1 file(s), qua
+  {"ts":"2026-09-19 21:20:12.422","level":"INFO","pid":24136,"msg":"update-rollback: stopping service"}
+  {"ts":"2026-09-19 21:20:12.574","level":"INFO","pid":24136,"msg":"service start via identity: node.exe \u0022E:\\dsh-launcher\\sandbox\\update-rollback\\rb-2120
+  {"ts":"2026-09-19 21:20:12.577","level":"INFO","pid":24136,"msg":"update-rollback: identity-driven start returned True"}
+  {"ts":"2026-09-19 21:20:27.722","level":"INFO","pid":24136,"msg":"[update-rollback] completed for v9.9.9-drill-bad; service restored on previous version"}
+  [E4003] dsh 更新启动自检失败，已自动回滚：更新前配置数据已还原、新版本运行时已隔离，服务正以旧版本重启。
+  如需排查新版问题，请携带统一日志与 update-guard\rollback-history.jsonl 反馈。
+EXIT=2

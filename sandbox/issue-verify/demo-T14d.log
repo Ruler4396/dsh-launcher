@@ -1,0 +1,31 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=21912 port=8307 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  cleanup taskkill /T /F pid=21912 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 profile now declares a third-party bundle (dependencies only, so dsh still boots)
+  pid=4716 port=8375 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step3 service attached: pid=4384 (from the shell's own log line)
+成功: 已终止 PID 18660 (属于 PID 4384 子进程)的进程。
+成功: 已终止 PID 4384 (属于 PID 4716 子进程)的进程。
+  step4 killed the service process (stands in for the plugin crashing node)
+  dialog [DeepSeek Harness - 启动异常] 487x259 at (758,442)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-1-safe-ask.png
+  Enter (default button) hwnd=11798898 fg=30280794
+  dialog answered = True
+  step5 ladder: SAFEMODE: activated / SafeModeEntered
+  step6 same session: safe-mode.json={"active":true,"tier":1,"consecutiveBootFailures":1,"lastFailure":{"utc":"2026-09-20T05:15:59.8261382Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:15:59.8260367Z"}]}}; title=[DeepSeek Harness（安全模式）]
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-2-in-safe-mode.png
+[FAIL] T14 :: safe mode not reached (verify=SAFEMODE: activated flag={"active":true,"tier":1,"consecutiveBootFailures":1,"lastFailure":{"utc":"2026-09-20T05:15:59.8261382Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:15:59.8260367Z"}]}})
+    | {"ts":"2026-09-20 13:15:29.761","level":"INFO","pid":21912,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+    | {"ts":"2026-09-20 13:15:33.919","level":"INFO","pid":21912,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+    | {"ts":"2026-09-20 13:15:53.685","level":"INFO","pid":4716,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+    | {"ts":"2026-09-20 13:15:57.189","level":"INFO","pid":4716,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+    | {"ts":"2026-09-20 13:15:59.827","level":"ERROR","pid":4716,"code":"E2007","msg":"[boot-monitor] FAILED layer=Process: dsh \u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exit code=1\uFF09 | pid exit code=1"}
+    | {"ts":"2026-09-20 13:16:01.150","level":"INFO","pid":4716,"msg":"SAFEMODE(bg): building tier Tier1KeepDeepSeekCore"}
+    | {"ts":"2026-09-20 13:16:01.152","level":"INFO","pid":4716,"msg":"lifecycle: Running --SafeModeEntryRequested--\u003E EnteringSafeMode"}
+    | {"ts":"2026-09-20 13:16:01.183","level":"INFO","pid":4716,"msg":"SAFEMODE: activated tier Tier1KeepDeepSeekCore, safe profile=E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T14\\home\\profiles\\.dsh-safe"}
+    | {"ts":"2026-09-20 13:16:01.184","level":"INFO","pid":4716,"msg":"SAFEMODE(bg): stopping service"}
+    | {"ts":"2026-09-20 13:16:01.294","level":"INFO","pid":4716,"msg":"SAFEMODE(bg): StopShellService returned"}
+    | {"ts":"2026-09-20 13:16:10.967","level":"INFO","pid":4716,"msg":"SAFEMODE: verification OK (ready \u002B crash signature absent)"}
+    | {"ts":"2026-09-20 13:16:10.975","level":"INFO","pid":4716,"msg":"lifecycle: EnteringSafeMode --SafeModeEntered--\u003E Running"}
+  cleanup taskkill /T /F pid=4716 left=0

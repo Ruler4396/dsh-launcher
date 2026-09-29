@@ -1,0 +1,6 @@
+== 会话 1：期望自动回滚 ==
+DRILL-ERROR: 不能对值为 Null 的表达式调用方法。
+位于 Start-Session，E:\dsh-launcher\sandbox\update-rollback\rollback-e2e-drill.ps1: 行 106
+位于 <ScriptBlock>，E:\dsh-launcher\sandbox\update-rollback\rollback-e2e-drill.ps1: 行 136
+现场保留在 E:\dsh-launcher\sandbox\update-rollback\rb-211755 ；已启动 PID 见 E:\dsh-launcher\sandbox\update-rollback\rb-211755\launched-pids.txt
+EXIT=3

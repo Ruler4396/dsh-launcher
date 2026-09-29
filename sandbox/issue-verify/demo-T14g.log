@@ -1,0 +1,68 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=16736 port=14095 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  cleanup taskkill /T /F pid=16736 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 profile now declares a third-party bundle (dependencies only, so dsh still boots)
+  pid=29908 port=14195 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step3 service attached: pid=17392 (from the shell's own log line)
+成功: 已终止 PID 30680 (属于 PID 17392 子进程)的进程。
+成功: 已终止 PID 17392 (属于 PID 29908 子进程)的进程。
+  step4 killed the service process (stands in for the plugin crashing node)
+  dialog [DeepSeek Harness - 启动异常] 487x259 at (758,442)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-1-safe-ask.png
+  Enter (default button) hwnd=16714154 fg=16714154
+  dialog answered = True
+  step5a waiting state on enter: waiting state shown
+  step5 ladder: SAFEMODE: verification OK / SafeModeEntered
+  step6 same session: safe-mode.json={
+  "active": true,
+  "tier": 1,
+  "consecutiveBootFailures": 1,
+  "lastFailure": {
+    "utc": "2026-09-20T11:57:04.5726541Z",
+    "code": "E2007",
+    "summary": "dsh \u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exit code=1\uFF09",
+    "layers": [
+      {
+        "layer": "Process",
+        "summary": "dsh \u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exit code=1\uFF09",
+        "detail": "pid exit code=1",
+        "code": "E2007",
+        "utc": "2026-09-20T11:57:04.5725581Z"
+      }
+    ]
+  }
+}; title=[DeepSeek Harness（安全模式）]
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-2-in-safe-mode.png
+  cleanup taskkill /T /F pid=29908 left=0
+  step7 third-party declaration removed: gone=True
+  pid=15936 port=14314 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step8 after restart: readiness=HEALTHY; sticky card=True; safe start=service start via identity (SAFE profile); flag={"active":true,"tier":1,"consecutiveBootFailures":0,"lastFailure":{"utc":"2026-09-20T11:57:04.5726541Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T11:57:04.5725581Z"}]}}
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-3-sticky-card.png
+  click (1686,1048) sticky card action row
+  step9 exit result: exit-safe-mode: identity-driven start returned True
+  step10 back to normal: HEALTHY count=2; title=[DeepSeek Harness]; cards left=0; safe-mode.json={
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 0,
+  "lastFailure": {
+    "utc": "2026-09-20T11:57:04.5726541Z",
+    "code": "E2007",
+    "summary": "dsh \u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exit code=1\uFF09",
+    "layers": [
+      {
+        "layer": "Process",
+        "summary": "dsh \u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exit code=1\uFF09",
+        "detail": "pid exit code=1",
+        "code": "E2007",
+        "utc": "2026-09-20T11:57:04.5725581Z"
+      }
+    ]
+  }
+}; normal-profile starts=3
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-4-back-to-normal.png
+[PASS] T14 :: runtime plugin crash -> E2007 ask -> ladder enters .dsh-safe (verified, title banner) -> restart shows sticky card -> plugin removed -> real click exits safe mode -> normal profile running, banner gone
+  cleanup taskkill /T /F pid=15936 left=0
+
+==== summary ====
+PASS   T14    runtime plugin crash -> E2007 ask -> ladder enters .dsh-safe (verified, title banner) -> restart shows sticky card -> plugin removed -> real click exits safe mode -> normal profile running, banner gone

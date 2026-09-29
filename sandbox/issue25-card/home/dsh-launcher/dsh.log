@@ -1,0 +1,64 @@
+{"ts":"2026-09-18 22:32:50.599","level":"INFO","pid":19484,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 22:32:50.710","level":"INFO","pid":19484,"msg":"start target=http://127.0.0.1:39877 external=True"}
+{"ts":"2026-09-18 22:32:50.712","level":"INFO","pid":19484,"msg":"first instance"}
+{"ts":"2026-09-18 22:32:50.960","level":"INFO","pid":19484,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 22:32:50.961","level":"INFO","pid":19484,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 22:32:51.109","level":"INFO","pid":19484,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 22:32:51.109","level":"INFO","pid":19484,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 22:32:51.115","level":"INFO","pid":19484,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 22:34:10.047","level":"INFO","pid":29656,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 22:34:10.233","level":"INFO","pid":29656,"msg":"start target=http://127.0.0.1:39877 external=True"}
+{"ts":"2026-09-18 22:34:10.240","level":"INFO","pid":29656,"msg":"first instance"}
+{"ts":"2026-09-18 22:34:10.948","level":"INFO","pid":29656,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 22:34:10.949","level":"INFO","pid":29656,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 22:34:11.149","level":"INFO","pid":29656,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 22:34:11.150","level":"INFO","pid":29656,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 22:34:11.159","level":"INFO","pid":29656,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 22:34:11.338","level":"INFO","pid":29656,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-18 22:34:11.341","level":"INFO","pid":29656,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-18 22:34:11.342","level":"INFO","pid":29656,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-18 22:34:11.519","level":"INFO","pid":29656,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-18 22:34:11.520","level":"INFO","pid":29656,"msg":"[boot-monitor] started url=http://127.0.0.1:39877 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-18 22:34:11.688","level":"INFO","pid":29656,"msg":"notice card self-test: presented=True"}
+{"ts":"2026-09-18 22:34:11.765","level":"INFO","pid":29656,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-18 22:34:11.816","level":"INFO","pid":29656,"msg":"main form shown"}
+{"ts":"2026-09-18 22:34:12.700","level":"INFO","pid":29656,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-18 22:34:12.788","level":"INFO","pid":29656,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39877/"}
+{"ts":"2026-09-18 22:34:12.790","level":"INFO","pid":29656,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-18 22:34:12.797","level":"INFO","pid":29656,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-18 22:34:13.385","level":"INFO","pid":29656,"msg":"update network: launcher check exit=direct version=0.4.5"}
+{"ts":"2026-09-18 22:34:13.700","level":"INFO","pid":29656,"msg":"update network: dsh check ok via registry=https://registry.npmmirror.com exit=direct version=0.1.5-rc.2"}
+{"ts":"2026-09-18 22:34:13.701","level":"INFO","pid":29656,"msg":"dsh update check: latest=0.1.5-rc.2 local=\u003Cnull\u003E"}
+{"ts":"2026-09-18 22:34:13.702","level":"INFO","pid":29656,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting tray balloon"}
+{"ts":"2026-09-18 22:34:13.704","level":"INFO","pid":29656,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+{"ts":"2026-09-18 22:34:13.705","level":"INFO","pid":29656,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+{"ts":"2026-09-18 22:37:52.950","level":"INFO","pid":21252,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 22:37:53.041","level":"INFO","pid":21252,"msg":"start target=http://127.0.0.1:39879 external=True"}
+{"ts":"2026-09-18 22:37:53.043","level":"INFO","pid":21252,"msg":"first instance"}
+{"ts":"2026-09-18 22:37:53.289","level":"INFO","pid":21252,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 22:37:53.290","level":"INFO","pid":21252,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 22:37:53.422","level":"INFO","pid":21252,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 22:37:53.423","level":"INFO","pid":21252,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 22:37:53.429","level":"INFO","pid":21252,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 22:37:53.497","level":"INFO","pid":21252,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-18 22:37:53.499","level":"INFO","pid":21252,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-18 22:37:53.500","level":"INFO","pid":21252,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-18 22:37:53.619","level":"INFO","pid":21252,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-18 22:37:53.619","level":"INFO","pid":21252,"msg":"[boot-monitor] started url=http://127.0.0.1:39879 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-18 22:37:53.669","level":"INFO","pid":21252,"msg":"update signal (test hook): launcher:9.9.9"}
+{"ts":"2026-09-18 22:37:53.756","level":"INFO","pid":21252,"msg":"main form shown"}
+{"ts":"2026-09-18 22:37:54.018","level":"INFO","pid":21252,"msg":"update notice presented: dsh-launcher \u5B89\u5168\u66F4\u65B0 / \u68C0\u6D4B\u5230\u91CD\u8981\u5B89\u5168\u66F4\u65B0 9.9.9\uFF08\u5F53\u524D 0.4.5-10-g60a811f4\uFF09\u3002\u70B9\u51FB\u67E5\u770B\u4E0B\u8F7D\u3002 \u5982\u6709\u4E25\u91CD\u6F0F\u6D1E\u8BF7\u5C3D\u5FEB\u66F4\u65B0\u3002"}
+{"ts":"2026-09-18 22:37:54.020","level":"INFO","pid":21252,"msg":"update notice state marked on title bar: \uFF08\u6709\u5B89\u5168\u66F4\u65B0\uFF09"}
+{"ts":"2026-09-18 22:37:54.351","level":"INFO","pid":21252,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-18 22:37:54.394","level":"INFO","pid":21252,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39879/"}
+{"ts":"2026-09-18 22:37:54.396","level":"INFO","pid":21252,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-18 22:37:54.399","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-18 22:38:06.412","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 22:38:06.421","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: round done (rawLen=46)"}
+{"ts":"2026-09-18 22:38:06.423","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: good symbol absent (1/5)"}
+{"ts":"2026-09-18 22:38:08.433","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 22:38:08.435","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: round done (rawLen=46)"}
+{"ts":"2026-09-18 22:38:08.436","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: good symbol absent (2/5)"}
+{"ts":"2026-09-18 22:38:10.444","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 22:38:10.446","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: round done (rawLen=46)"}
+{"ts":"2026-09-18 22:38:10.447","level":"INFO","pid":21252,"msg":"[boot-monitor] page probe: good symbol absent (3/5)"}

@@ -1,0 +1,11 @@
+
+
+GET / HTTP/1.1
+GET / HTTP/1.1
+GET /perm-before?value=default HTTP/1.1
+GET /perm-asked?value=denied&after=denied HTTP/1.1
+GET /notify-constructed?ok=1&perm=denied HTTP/1.1
+GET /favicon.ico HTTP/1.1
+GET / HTTP/1.1
+GET / HTTP/1.1
+GET / HTTP/1.1

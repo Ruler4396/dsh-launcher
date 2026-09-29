@@ -1,0 +1,18 @@
+  pid=27192 port=9505 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary: \\.\DISPLAY2 bounds={X=1920,Y=-193,Width=1463,Height=914} work={X=1920,Y=-193,Width=1463,Height=874}
+  main window 1280x840 at (354,120) dpi=96
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-1-before-drag.png
+  drag (554,136)->(2652,-133) title bar -> secondary
+  after drag: at (,) size x dpi=; fully on secondary = False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-2-after-drag.png
+  card 445x142 at (1463,926) dpi=96; inside secondary work = False
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-3-card-on-secondary.png
+  double-click (200,16) title bar -> maximize
+  maximized: at (,) x vs work {X=1920,Y=-193,Width=1463,Height=874} -> gaps 5303/874 px
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T11-4-maximized-secondary.png
+  
+[FAIL] T11 :: onSec=False cardInWork=False maxGaps=5303/874
+  cleanup taskkill /T /F pid=27192 left=0
+
+==== summary ====
+FAIL   T11    onSec=False cardInWork=False maxGaps=5303/874

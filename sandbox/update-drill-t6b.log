@@ -1,0 +1,12 @@
+== dsh 更新应用链路演练 ==
+被测 exe: E:/dsh-launcher/src/DshShell/bin/Debug/net10.0-windows/DshWeb.exe
+[ OK ] 全局 dsh 包存在（只读复制源）
+种子运行时(副本): D:\Temp\dsh-drill-20260919-202939\home\dsh-launcher\runtimes\0.0.0-drill-old
+已启动 PID=17700 port=35365
+[FAIL] 服务在新运行时上就绪（HTTP 200 @ 35365）
+[ OK ] 原子切换产物存在 runtimes\0.0.0-drill-new
+[ OK ] pending-update.json 已清除
+[ OK ] 统一日志含原子切换成功证据
+[ OK ] 日志无 E4002 应用失败记录
+
+共 1 项失败——详见上方 [FAIL] 与演练目录日志。

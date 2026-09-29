@@ -1,0 +1,57 @@
+{"ts":"2026-09-19 20:22:05.818","level":"INFO","pid":29332,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-19 20:22:05.906","level":"INFO","pid":29332,"msg":"start target=http://127.0.0.1:2602 external=False"}
+{"ts":"2026-09-19 20:22:05.909","level":"INFO","pid":29332,"msg":"first instance"}
+{"ts":"2026-09-19 20:22:06.421","level":"INFO","pid":29332,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-19 20:22:06.422","level":"INFO","pid":29332,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-19 20:22:06.832","level":"INFO","pid":29332,"msg":"SAFEMODE: sticky profile missing \u2192 rebuilt before launch"}
+{"ts":"2026-09-19 20:22:06.833","level":"INFO","pid":29332,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-19 20:22:07.448","level":"INFO","pid":29332,"msg":"DSH_SERVICE_CMD=(null)"}
+{"ts":"2026-09-19 20:22:07.501","level":"INFO","pid":29332,"msg":"service start via identity (SAFE profile): node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\27052_1789793273340\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 --profile .dsh-safe --host 127.0.0.1 --port 2602 --no-open"}
+{"ts":"2026-09-19 20:22:07.502","level":"INFO","pid":29332,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-19 20:22:07.519","level":"INFO","pid":29332,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-19 20:22:12.419","level":"INFO","pid":29332,"msg":"service token url observed (web trust fence): http://127.0.0.1:2602/?token=MmfwwBFNarYwsp1q4XlmA6wcg3iezzobEaV1eezRO58"}
+[20:22:12.421] [dsh] dsh web: http://127.0.0.1:2602/?token=MmfwwBFNarYwsp1q4XlmA6wcg3iezzobEaV1eezRO58
+{"ts":"2026-09-19 20:22:12.982","level":"INFO","pid":29332,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-19 20:22:12.984","level":"INFO","pid":29332,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-19 20:22:12.985","level":"INFO","pid":29332,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-19 20:22:13.167","level":"INFO","pid":29332,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-19 20:22:13.168","level":"INFO","pid":29332,"msg":"[boot-monitor] started url=http://127.0.0.1:2602 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-e2e\\dsh-launcher\\dsh.log servicePid=7172"}
+{"ts":"2026-09-19 20:22:13.171","level":"INFO","pid":29332,"msg":"[boot-monitor] process layer attached pid=7172"}
+{"ts":"2026-09-19 20:22:13.311","level":"INFO","pid":29332,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-19 20:22:13.354","level":"INFO","pid":29332,"msg":"main form shown"}
+{"ts":"2026-09-19 20:22:13.357","level":"INFO","pid":29332,"msg":"display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=1 sameSpace=True"}
+{"ts":"2026-09-19 20:22:13.711","level":"INFO","pid":29332,"msg":"notice displayed: dsh \u5DF2\u4EE5\u5B89\u5168\u6A21\u5F0F\u542F\u52A8","ctx":{"kind":"Urgent","ms":0,"queued":0,"w":445,"h":182,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+{"ts":"2026-09-19 20:22:13.723","level":"INFO","pid":29332,"msg":"safe-mode notice presented: \u7B2C\u4E09\u65B9\u63D2\u4EF6\u5DF2\u4E34\u65F6\u7981\u7528\uFF08\u70B9\u51FB\u53EF\u9000\u51FA\uFF09"}
+{"ts":"2026-09-19 20:22:14.175","level":"INFO","pid":29332,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=0.1.2-rc.1 clear=False"}
+{"ts":"2026-09-19 20:22:14.773","level":"INFO","pid":29332,"msg":"update network: launcher check exit=direct version=0.4.5"}
+{"ts":"2026-09-19 20:22:15.076","level":"INFO","pid":29332,"msg":"update network: dsh check ok via registry=https://registry.npmmirror.com exit=direct version=0.1.5-rc.2"}
+{"ts":"2026-09-19 20:22:15.090","level":"INFO","pid":29332,"msg":"dsh update check: latest=0.1.5-rc.2 local=0.1.2-rc.1"}
+{"ts":"2026-09-19 20:22:15.093","level":"INFO","pid":29332,"msg":"dsh update notice suppressed: skipped-by-user"}
+{"ts":"2026-09-19 20:22:15.102","level":"INFO","pid":29332,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:2602/"}
+{"ts":"2026-09-19 20:22:15.104","level":"INFO","pid":29332,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-19 20:22:15.110","level":"INFO","pid":29332,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-19 20:22:27.120","level":"INFO","pid":29332,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-19 20:22:27.126","level":"INFO","pid":29332,"msg":"[boot-monitor] page probe: round done (rawLen=345)"}
+{"ts":"2026-09-19 20:22:27.128","level":"INFO","pid":29332,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+{"ts":"2026-09-19 20:22:49.825","level":"INFO","pid":29332,"msg":"SAFEMODE: user exited safe mode via notice \u2192 restarting service with normal profile"}
+{"ts":"2026-09-19 20:22:49.831","level":"INFO","pid":29332,"msg":"[boot-monitor] suspended (intentional service restart window)"}
+{"ts":"2026-09-19 20:22:49.833","level":"INFO","pid":29332,"msg":"lifecycle: Running --RestartRequested--\u003E RestartingService"}
+{"ts":"2026-09-19 20:22:49.834","level":"INFO","pid":29332,"msg":"exit-safe-mode: stopping service"}
+{"ts":"2026-09-19 20:22:51.262","level":"INFO","pid":29332,"msg":"service process exited (code=1)"}
+{"ts":"2026-09-19 20:22:51.365","level":"INFO","pid":29332,"msg":"DSH_SERVICE_CMD=(null)"}
+{"ts":"2026-09-19 20:22:51.410","level":"INFO","pid":29332,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\27052_1789793273340\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 2602 --no-open"}
+{"ts":"2026-09-19 20:22:51.410","level":"INFO","pid":29332,"msg":"service start via identity"}
+{"ts":"2026-09-19 20:22:51.411","level":"INFO","pid":29332,"msg":"exit-safe-mode: identity-driven start returned True"}
+{"ts":"2026-09-19 20:22:54.835","level":"INFO","pid":29332,"msg":"service token url observed (web trust fence): http://127.0.0.1:2602/?token=Mo_fBXpyouIrMXcr3U_4FkkAz2Ysba3-EGiY-wcxU_Y"}
+{"ts":"2026-09-19 20:22:54.835","level":"INFO","pid":29332,"msg":"token follow: fresh token, queuing navigation on UI thread"}
+[20:22:54.836] [dsh] dsh web: http://127.0.0.1:2602/?token=Mo_fBXpyouIrMXcr3U_4FkkAz2Ysba3-EGiY-wcxU_Y
+{"ts":"2026-09-19 20:22:54.837","level":"INFO","pid":29332,"msg":"token follow: navigating main web to http://127.0.0.1:2602/?token=Mo_fBXpyouIrMXcr3U_4FkkAz2Ysba3-EGiY-wcxU_Y"}
+{"ts":"2026-09-19 20:22:54.890","level":"INFO","pid":29332,"msg":"token wait: fresh token observed"}
+{"ts":"2026-09-19 20:22:54.921","level":"INFO","pid":29332,"msg":"[boot-monitor] resumed after service restart"}
+{"ts":"2026-09-19 20:22:54.922","level":"INFO","pid":29332,"msg":"lifecycle: RestartingService --RestartCompleted--\u003E Running"}
+{"ts":"2026-09-19 20:22:54.927","level":"INFO","pid":29332,"msg":"token follow: navigating main web to http://127.0.0.1:2602/?token=Mo_fBXpyouIrMXcr3U_4FkkAz2Ysba3-EGiY-wcxU_Y"}
+{"ts":"2026-09-19 20:22:54.928","level":"INFO","pid":29332,"msg":"[boot-monitor] process layer attached pid=13196"}
+{"ts":"2026-09-19 20:22:54.961","level":"INFO","pid":29332,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:2602/"}
+{"ts":"2026-09-19 20:22:54.962","level":"INFO","pid":29332,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-19 20:22:54.963","level":"INFO","pid":29332,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-19 20:22:55.478","level":"INFO","pid":29332,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:2602/"}

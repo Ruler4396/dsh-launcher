@@ -1,0 +1,13 @@
+fix(installer): AOT 声明收进 csproj 单点，修掉 CI 上的 NETSDK1102
+
+上一次 dispatch 的打包步骤红了：`error NETSDK1102: Optimizing assemblies for size is not
+supported for the selected publish configuration. Please ensure that you are publishing a
+self-contained app`（来自 Microsoft.NET.ILLink.targets）。
+
+根因是同一个开关写在两处且互相打架：命令行传 `-p:PublishAot=true`，而 csproj 里还留着
+`<SelfContained>false</SelfContained>` + `<PublishSingleFile>true</PublishSingleFile>`。
+PublishAot 隐含自包含，但被 csproj 的 false 顶回去，裁剪器于是判定"这不是自包含发布"。
+
+改成 csproj 单点声明 `<PublishAot>true</PublishAot>` 并删掉那两行；build-release.ps1 不再传
+AOT 开关，只保留"产物小于 1MB 即判定 AOT 没生效、构建失败"的体积闸。
+本机 `dotnet build` 0 错误；AOT 产物仍需 CI 验证（本机无 MSVC 工具链）。

@@ -1,0 +1,40 @@
+  pid=29788 port=3959 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3\home
+  service: HEALTHY
+  update card 445x142 at (1463,926)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-1-update-card.png
+  click (1685,997) update card centre
+  ask dialog title=[dsh ¸üĞÂ] 368x179
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-2-ask-dialog.png
+  Enter (default button) hwnd=1707174 fg=12061248
+  build verdict needle: update success notification
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-3-after-build.png
+    | {"ts":"2026-09-19 22:15:18.483","level":"INFO","pid":29788,"msg":"update signal (test hook): dsh:0.1.5-rc.2"}
+    | {"ts":"2026-09-19 22:15:18.493","level":"INFO","pid":29788,"msg":"dsh update 0.1.5-rc.2 available (local=0.1.2-rc.1); prompting update notice"}
+    | {"ts":"2026-09-19 22:15:18.635","level":"INFO","pid":29788,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D 0.1.2-rc.1\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+    | {"ts":"2026-09-19 22:15:18.638","level":"INFO","pid":29788,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+    | {"ts":"2026-09-19 22:15:34.422","level":"INFO","pid":29788,"msg":"staged update flow started: v0.1.5-rc.2"}
+    | {"ts":"2026-09-19 22:15:36.368","level":"INFO","pid":29788,"msg":"building dsh runtime with npm"}
+    | {"ts":"2026-09-19 22:16:35.163","level":"INFO","pid":29788,"msg":"staged update validated: v0.1.5-rc.2 bin=lib\\bin.js"}
+    | {"ts":"2026-09-19 22:16:35.170","level":"INFO","pid":29788,"msg":"dsh runtime build complete: 0.1.5-rc.2","ctx":{"tool":"npm","bin":"lib\\bin.js","buildDir":"E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3\\home\\dsh-launcher\\staging\\runtime-build-0.1.5-rc.2"}}
+    | {"ts":"2026-09-19 22:16:35.173","level":"INFO","pid":29788,"msg":"update success notification: card=True; dwell=12000ms"}
+[PASS] T3a :: click -> ask -> real staged download/build succeeded (ready notice)
+  cleanup taskkill /T /F pid=29788 left=0
+  pid=20988 port=4318 home=E:\dsh-launcher\sandbox\issue-verify\scene-T3\home
+  restart hit: pending
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T3-5-applied.png
+    | {"ts":"2026-09-19 22:16:35.163","level":"INFO","pid":29788,"msg":"staged update validated: v0.1.5-rc.2 bin=lib\\bin.js"}
+    | {"ts":"2026-09-19 22:16:35.173","level":"INFO","pid":29788,"msg":"update success notification: card=True; dwell=12000ms"}
+    | {"ts":"2026-09-19 22:16:39.848","level":"INFO","pid":20988,"msg":"[Apply] Start: pending exists, target version=0.1.5-rc.2, runtimeDir=E:\\dsh-launcher\\sandbox\\issue-verify\\scene-T3\\home\\dsh-launcher\\staging\\runtime-build-0.1.5-rc.2, port=4318"}
+    | {"ts":"2026-09-19 22:16:40.181","level":"INFO","pid":20988,"msg":"[update-guard] pre-apply snapshot created for v0.1.5-rc.2: pre-0.1.5-rc.2-20260919-141640 (1 file(s) captured)"}
+    | {"ts":"2026-09-19 22:16:40.184","level":"INFO","pid":20988,"msg":"[Apply] Result: fake apply (test hook), pending cleared"}
+    | {"ts":"2026-09-19 22:16:45.817","level":"INFO","pid":20988,"msg":"update signal (test hook): dsh:0.1.5-rc.2"}
+    | {"ts":"2026-09-19 22:16:45.829","level":"INFO","pid":20988,"msg":"dsh update 0.1.5-rc.2 available (local=0.1.2-rc.1); prompting update notice"}
+    | {"ts":"2026-09-19 22:16:45.969","level":"INFO","pid":20988,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D 0.1.2-rc.1\uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+    | {"ts":"2026-09-19 22:16:45.971","level":"INFO","pid":20988,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+    | {"ts":"2026-09-19 22:16:59.658","level":"INFO","pid":20988,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+[PASS] T3b :: restart detected pending -> apply decision ran -> pending cleared
+  cleanup taskkill /T /F pid=20988 left=0
+
+==== summary ====
+PASS   T3a    click -> ask -> real staged download/build succeeded (ready notice)
+PASS   T3b    restart detected pending -> apply decision ran -> pending cleared

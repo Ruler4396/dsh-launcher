@@ -1,0 +1,4 @@
+﻿found=1
+node=C:\Users\<localUser>\AppData\Local\fnm_multishells\19068_1789891024642\node.exe
+version=v24.21.0
+candidates=41

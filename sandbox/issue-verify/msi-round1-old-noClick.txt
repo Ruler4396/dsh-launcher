@@ -1,0 +1,98 @@
+launched pid=29536 msi=E:/dsh-launcher/sandbox/issue-verify/validate2.msi click=none at 10:12:21
+10:12:23 窗口: [Windows Installer]
+    子控件: 确定
+10:12:23 窗口: [Qoder CN]
+    子控件: Chrome Legacy Window
+    子控件: Chrome Legacy Window
+10:12:23 窗口: [微信]
+    子控件: MMUIRenderSubWindowHW
+10:12:23 窗口: [Weixin]
+10:12:23 窗口: [图片和视频]
+    子控件: MMUIRenderSubWindowHW
+10:12:23 窗口: [哔哩哔哩 (゜-゜)つロ 干杯~-bilibili - Google Chrome]
+    子控件: Chrome Legacy Window
+10:12:23 窗口: [下载]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\Chrome Download
+    子控件: 地址区段工具栏
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: Shell Preview Extension Host
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:12:23 窗口: [设置]
+10:12:23 窗口: [数据究竟向物理信息神经网络揭示了什么.docx [兼容模式] - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据究竟向物理信息神经网络揭示了什么.docx [兼容模式]
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:12:23 窗口: [数据告诉物理信息网络什么.docx - Word]
+    子控件: MsoDockRight
+    子控件: MsoDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: MsoDockBottom
+    子控件: 状态栏
+    子控件: 状态栏
+    子控件: MsoDockLeft
+    子控件: 数据告诉物理信息网络什么.docx
+    子控件: Microsoft Word 文档
+    子控件: 垂直
+    子控件: Microsoft Word 文档
+    子控件: 水平
+10:12:23 窗口: [pinn-final]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\pinn-final
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:12:23 窗口: [TAIL-closure-audit]
+    子控件: UIRibbonDockLeft
+    子控件: UIRibbonDockRight
+    子控件: UIRibbonDockTop
+    子控件: Ribbon
+    子控件: Ribbon
+    子控件: UIRibbonDockBottom
+    子控件: 导航按钮
+    子控件: 向上一级区段工具栏
+    子控件: 地址: D:\TAIL-closure-audit
+    子控件: 地址区段工具栏
+    子控件: Shell Preview Extension Host
+    子控件: 命名空间树状控制项
+    子控件: 命名空间树状控制项
+    子控件: 树视图
+    子控件: ShellView
+    子控件: UIRibbonWorkPane
+10:12:23 窗口: [Microsoft Text Input Application]
+10:12:23 窗口: [PixPin]
+10:12:23 窗口: [Program Manager]
+10:13:42 msiexec 退出 exit=1619
+cleared env at 10:13:46

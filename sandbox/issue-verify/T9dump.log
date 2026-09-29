@@ -1,0 +1,25 @@
+  pid=14868 port=7576 home=E:\dsh-launcher\sandbox\issue-verify\scene-T9\home
+  service: HEALTHY
+  click (1610,136) close (X) #1
+  windows after close = 0; host alive = True
+top-level windows: 22
+Shell_TrayWnd=True NotifyIconOverflowWindow=False
+  ALL[tray] name=[开始] class=Start ctl=ControlType.Pane rect=0,0 68x40
+  ALL[tray] name=[] class=ReBarWindow32 ctl=ControlType.Pane rect=0,38 68x811
+  ALL[tray] name=[运行中的应用程序] class=MSTaskSwWClass ctl=ControlType.Pane rect=0,40 68x809
+  ALL[tray] name=[运行中的应用程序] class=MSTaskListWClass ctl=ControlType.Pane rect=0,40 68x809
+  ALL[tray] name=[] class=TrayNotifyWnd ctl=ControlType.Pane rect=0,849 68x231
+  ALL[tray] name=[] class=Button ctl=ControlType.Pane rect=39,849 24x24
+  ALL[tray] name=[系统升级的通知区域] class=ToolbarWindow32 ctl=ControlType.Pane rect=15,849 24x24
+  ALL[tray] name=[] class=SysPager ctl=ControlType.Pane rect=15,873 48x48
+  ALL[tray] name=[用户提示通知区域] class=ToolbarWindow32 ctl=ControlType.Pane rect=15,873 48x48
+  ALL[tray] name=[任务栏输入指示] class=TrayInputIndicatorWClass ctl=ControlType.Pane rect=0,921 68x34
+  ALL[tray] name=[] class=IMEModeButton ctl=ControlType.Pane rect=5,921 22x34
+  ALL[tray] name=[] class=InputIndicatorButton ctl=ControlType.Pane rect=27,921 36x34
+  ALL[tray] name=[系统时钟, 22:51:23, ?星期六, ?2026/?9/?19] class=TrayClockWClass ctl=ControlType.Pane rect=0,967 68x57
+  ALL[tray] name=[操作中心，4 个新通知] class=TrayButton ctl=ControlType.Pane rect=0,1035 68x40
+  ALL[tray] name=[] class=TrayShowDesktopButtonWClass ctl=ControlType.Pane rect=0,1075 68x5
+  (15 descendants under tray)
+NO TRAY ICON FOUND for hint [dsh]
+  probe rc=3
+  cleanup taskkill /T /F pid=14868 left=0

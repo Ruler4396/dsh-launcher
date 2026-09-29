@@ -1,0 +1,19 @@
+len=36
+security-hits=0
+
+---HEAD---
+## [0.5.1] - 2026-09-20
+
+**常规维护更新，不是安全公告**：本次不发应用内推送（启动器只对正文里带那个全大写英文标记的
+Release 弹提示），装上与否由你自己决定；但如果你用 **fnm / nvm / volta / scoop / chocolatey**
+管 Node，v0.5.0 那个 MSI 会对着你机器上真实可用的 node 报"缺少 Node.js 18+"并拒绝安装——
+这一版就是修它。
+
+### 修复
+
+- **MSI 前置检查对着 fnm/nvm/volta 装的 node 说"你没有 Node.js"（v0.5.0 发布当晚本机实测）**：
+  用户在有 node v24.21.0 的机器上被 `dsh-launcher 安装 - 缺少运行环境` 弹窗拦下。旧
+  `PrereqCheck.DetectNode` 只有两条判据——进程 PATH 里找 `node.exe`、以及
+  `HKLM\SOFTWARE\Node.js\InstallPath` 存在即放行。版本管理器装的 node **两条都不满足**：
+  fnm 是**每个 shell 会话**用 `fnm env` 注入一个 `fnm_multishells\<pid>_<ts>` 软链目录，
+  持久 PATH（注册表里那份，也正是 msiexec 看到的那份）里

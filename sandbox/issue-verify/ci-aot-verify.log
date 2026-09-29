@@ -1,0 +1,186 @@
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* master build · 35551006841
+Triggered via workflow_dispatch less than a minute ago
+
+JOBS
+* build (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  * Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Run tests (unit + script/integration checks, no -Smoke)
+  * Upload test log on failure
+  * Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* master build · 35551006841
+Triggered via workflow_dispatch about 1 minute ago
+
+JOBS
+* build (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Run tests (unit + script/integration checks, no -Smoke)
+  * Upload test log on failure
+  * Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* master build · 35551006841
+Triggered via workflow_dispatch about 1 minute ago
+
+JOBS
+* build (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Run tests (unit + script/integration checks, no -Smoke)
+  * Upload test log on failure
+  * Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* master build · 35551006841
+Triggered via workflow_dispatch about 2 minutes ago
+
+JOBS
+* build (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Run tests (unit + script/integration checks, no -Smoke)
+  - Upload test log on failure
+  ✓ Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* master build · 35551006841
+Triggered via workflow_dispatch about 3 minutes ago
+
+JOBS
+* build (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Run tests (unit + script/integration checks, no -Smoke)
+  - Upload test log on failure
+  ✓ Ensure Node.js (real environment, never skip)
+  ✓ Run Real-OS integration tests
+  - Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+X master build · 35551006841
+Triggered via workflow_dispatch about 4 minutes ago
+
+JOBS
+X build in 3m33s (ID 106185631014)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Run tests (unit + script/integration checks, no -Smoke)
+  - Upload test log on failure
+  ✓ Ensure Node.js (real environment, never skip)
+  ✓ Run Real-OS integration tests
+  - Upload Real-OS log on failure
+  X Build release package (zip + msi + checksums)
+  - Upload release artifacts
+  - Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Complete job
+- release (ID 106186162639)
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build: .github#4
+
+X Process completed with exit code 1.
+build: .github#63
+
+X Optimizing assemblies for size is not supported for the selected publish configuration. Please ensure that you are publishing a self-contained app.
+build: .github#214
+
+! Possible null reference argument for parameter 'form' in 'void Program.DownloadDshUpdateStaged(Form form, string latest)'.
+build: src/DshShell/Program.cs#2088
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Program.cs#2048
+
+! Possible null reference argument for parameter 'baseUrl' in 'Task<bool> RuntimeResolver.VerifySha256Async(string zipPath, string baseUrl, string version)'.
+build: src/DshShell/RuntimeResolver.cs#116
+
+! Possible null reference argument for parameter 'host' in 'ValueTask TcpClient.ConnectAsync(string host, int port, CancellationToken cancellationToken)'.
+build: src/DshShell/ShellLogic.cs#279
+
+! Possible null reference argument for parameter 'host' in 'Task TcpClient.ConnectAsync(string host, int port)'.
+build: src/DshShell/ShellLogic.cs#255
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#194
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#192
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#104
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#102
+
+! 'SplashForm.Layout' hides inherited member 'Control.Layout'. Use the new keyword if hiding was intended.
+build: src/DshShell/Windows/SplashForm.cs#52
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Lifecycle/BootHealthMonitor.cs#296
+
+! Possible null reference argument for parameter 'host' in 'ValueTask TcpClient.ConnectAsync(string host, int port, CancellationToken cancellationToken)'.
+build: src/DshShell/ShellLogic.cs#279
+
+! Possible null reference argument for parameter 'host' in 'Task TcpClient.ConnectAsync(string host, int port)'.
+build: src/DshShell/ShellLogic.cs#255
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Managers/WebViewManager.cs#142
+
+! Possible null reference argument for parameter 'baseUrl' in 'Task<bool> RuntimeResolver.VerifySha256Async(string zipPath, string baseUrl, string version)'.
+build: src/DshShell/RuntimeResolver.cs#116
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#194
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#192
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#104
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#102
+
+! 'SplashForm.Layout' hides inherited member 'Control.Layout'. Use the new keyword if hiding was intended.
+build: src/DshShell/Windows/SplashForm.cs#52
+
+watch_exit=1

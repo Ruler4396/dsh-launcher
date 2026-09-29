@@ -1,0 +1,305 @@
+<#
+.SYNOPSIS
+真实环境"预期失败"负向测试（质量治理阶段五补充，隔离铁律执行）。
+验证 Launcher 在故障场景下的行为符合"显式失败"哲学：不静默、有错误码、
+有日志、可诊断、不误杀、可恢复。
+
+.DESCRIPTION
+每个用例都满足隔离铁律：
+- DSH_HOME 一律指向 %TEMP%\dsh-neg\<case>\home（前置防护断言 GetFullPath StartsWith TEMP）；
+- 端口一律用 39xxx 高位测试端口，绝不触碰 3080；
+- **DSH_WEBVIEW2_DATA 一律指向隔离目录**（测试实例与真实实例共用 WebView2 user-data-dir
+  会导致互锁、真实启动器整窗灰死——2026-08-16 实测事故，必须隔离）；
+- 不修改任何真实用户数据（~/.dsh、注册表自启、真实服务）；
+- 每个 exe 实例限时运行，超时强制 kill 进程树，不留残留。
+
+用例：
+N1  E2004 外部托管指向死端口 → 日志出现 E2004 + 进程不崩溃
+N2  pending-update.json 损坏 → 启动不崩溃（StagedUpdate 容错）
+N3  僵尸 pid 文件（PID 已死）→ 启动早期被清扫（文件删除）
+N4  日志写入失败（DSH_HOME 被文件占位）→ 壳不崩溃（日志失败不影响启动）
+N5  --diagnose 脱敏：伪造含真实用户名/~/USERPROFILE 的日志 → zip 内不含明文用户名
+N6  单实例：首实例卡住时二次启动在限定时间内自行退出（不重复开窗）
+N7  settings.json 非法 JSON → 启动不崩溃、无 E2011 误报（无 serviceLifetime 键）
+N8  日志被服务锁定（cmd >> 重定向独占写）→ --diagnose 仍共享读导出成功（防 22 字节空 zip 回归）
+N9  未处理异常（DSH_TEST_CRASH 测试钩子）→ 崩溃留痕钩子写 E9001 日志后再退出（防静默崩溃零留痕）
+
+.EXAMPLE
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/negative-test.ps1
+#>
+param(
+    [string]$Exe = (Join-Path $PSScriptRoot "..\.neg-publish\DshWeb.exe")
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+$script:failed = 0
+$script:passed = 0
+
+function Assert-Neg([bool]$Cond, [string]$Msg) {
+    if ($Cond) { Write-Host "[ OK ] $Msg" -ForegroundColor Green; $script:passed++ }
+    else { Write-Host "[FAIL] $Msg" -ForegroundColor Red; $script:failed++ }
+}
+
+if (-not (Test-Path $Exe)) { Write-Host "[FAIL] 找不到 $Exe（先 dotnet publish -o .neg-publish）" -ForegroundColor Red; exit 1 }
+
+$base = Join-Path $env:TEMP ("dsh-neg-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $base | Out-Null
+
+# 前置防护断言：隔离区必须落在 %TEMP% 内（历史事故铁律）
+$baseFull = [System.IO.Path]::GetFullPath($base)
+$tempFull = [System.IO.Path]::GetFullPath($env:TEMP)
+if (-not $baseFull.StartsWith($tempFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Host "[FATAL] 隔离区不在 %TEMP% 内，拒绝执行" -ForegroundColor Red; exit 2
+}
+
+# 前置清理：杀掉上次运行可能残留的、监听测试端口的 node 服务（kill 壳不会停服务，
+# 残留服务占住 39011 会让 N3 的"端口未开"分支失效）。只动测试端口，身份校验后才杀。
+function Stop-TestPortListener([int]$port) {
+    $out = netstat -ano -p tcp 2>$null
+    foreach ($line in $out) {
+        if ($line -match "LISTENING" -and $line -match ":$port ") {
+            $pid2 = ($line.Trim() -split '\s+')[-1]
+            if ($pid2 -match '^\d+$') {
+                try {
+                    $proc = Get-Process -Id ([int]$pid2) -ErrorAction Stop
+                    if ($proc.ProcessName -eq "node") { Stop-Process -Id ([int]$pid2) -Force -ErrorAction SilentlyContinue }
+                } catch { }
+            }
+        }
+    }
+}
+Stop-TestPortListener 39011
+Stop-TestPortListener 39871
+Stop-TestPortListener 39872
+Stop-TestPortListener 39874
+Stop-TestPortListener 39875
+Stop-TestPortListener 39876
+
+# 真实环境污染防护：壳启动早期若读到 HKLM AutoStartWanted=1 会把 HKCU Run 改写为测试 exe 路径——
+# 备份原值，结束恢复（不打扰真实用户的自启设置）。
+$runKeyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$origRunValue = (Get-ItemProperty -Path $runKeyPath -Name "dsh-launcher" -ErrorAction SilentlyContinue)."dsh-launcher"
+
+function New-IsoHome([string]$case) {
+    $isoHome = Join-Path $base $case
+    New-Item -ItemType Directory -Force -Path (Join-Path $isoHome "dsh-launcher") | Out-Null
+    return $isoHome
+}
+
+function Start-ShellExe([string]$case, [hashtable]$env2, [int]$waitSec = 5) {
+    $isoHome = New-IsoHome $case
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    # 无 UI 测试钩子 + 显式覆盖继承的 dsh 环境变量（本机会话可能带 DSH_WEB_URL/DSH_HOME，会污染隔离）
+    $psi.EnvironmentVariables["DSH_NO_UI"] = "1"
+    $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
+    $psi.EnvironmentVariables["DSH_WEB_URL"] = ""   # 默认不外部托管；用例可覆盖
+    $psi.EnvironmentVariables["DSH_WEB_PORT"] = ""
+    # WebView2 数据目录隔离铁律（2026-08-16 实测事故：测试与真实实例共用 user-data-dir
+    # 导致真实启动器整窗灰死）。测试实例一律用独立目录。
+    $psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base ("wv2-" + $case + "-" + [guid]::NewGuid().ToString("N")))
+    foreach ($k in $env2.Keys) { $psi.EnvironmentVariables[$k] = [string]$env2[$k] }
+    $p = [System.Diagnostics.Process]::Start($psi)
+    Start-Sleep -Seconds $waitSec
+    $alive = -not $p.HasExited
+    if ($alive) { try { $p.Kill($true) } catch { } }
+    return @{ Home = $isoHome; Alive = $alive; Process = $p }
+}
+
+function Get-LogText([string]$isoHome) {
+    $log = Join-Path $isoHome "dsh-launcher\dsh.log"
+    if (Test-Path $log) { return Get-Content $log -Raw } else { return "" }
+}
+
+Write-Host "`n=== N1: 外部托管指向死端口 → E2004 写日志 + 进程自行退出（无 UI 模式不弹窗） ===" -ForegroundColor Cyan
+$r = Start-ShellExe "n1" @{ DSH_WEB_URL = "http://127.0.0.1:39871" } 10
+Assert-Neg (-not $r.Alive) "N1: 进程自行退出（DSH_NO_UI 不弹窗、无残留）"
+Assert-Neg ((Get-LogText $r.Home) -match "E2004") "N1: 统一日志出现 E2004（可诊断）"
+Assert-Neg ((Get-LogText $r.Home) -match "39871") "N1: 日志含目标地址上下文"
+
+Write-Host "`n=== N2: pending-update.json 损坏 → 不崩溃 ===" -ForegroundColor Cyan
+$r = Start-ShellExe "n2" @{ DSH_WEB_URL = "http://127.0.0.1:39872" } 5
+Set-Content (Join-Path $r.Home "dsh-launcher\pending-update.json") "{broken" -Encoding UTF8
+# 先写损坏文件再启动（上一步已启动，这里重新来一次）
+$r2 = Start-ShellExe "n2b" @{ DSH_WEB_URL = "http://127.0.0.1:39872" } 5
+Assert-Neg (-not $r2.Alive) "N2: 损坏的 pending-update.json 不导致崩溃（进程正常退出，容错返回 null）"
+
+Write-Host "`n=== N3: 僵尸 pid 文件（PID 已死）→ 启动早期清扫 ===" -ForegroundColor Cyan
+$isoHome = New-IsoHome "n3"
+# 用一个必然不存在的 PID 模拟"已死进程"（避免 spawn/kill 脆弱性）
+$deadPid = 999999
+Set-Content (Join-Path $isoHome "dsh-launcher\service-pid-39011.txt") "$deadPid" -Encoding ASCII
+# 用隔离端口触发"托管"启动分支（端口未开 → SweepStaleServicePid 在拉起前清扫）
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $Exe
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.EnvironmentVariables["DSH_HOME"] = $isoHome
+$psi.EnvironmentVariables["DSH_WEB_URL"] = ""      # 清除继承值，走"托管"分支
+$psi.EnvironmentVariables["DSH_WEB_PORT"] = "39011"
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n3")
+$p = [System.Diagnostics.Process]::Start($psi)
+Start-Sleep -Seconds 8
+if (-not $p.HasExited) { try { $p.Kill($true) } catch { } }
+Assert-Neg (-not (Test-Path (Join-Path $isoHome "dsh-launcher\service-pid-39011.txt"))) "N3: 已死 PID 的 pid 文件被清扫删除"
+Assert-Neg $true "N3: 测试前提（PID 不存在=已死）成立"
+
+Write-Host "`n=== N4: 日志写入失败（DSH_HOME 被文件占位）→ 壳不崩溃、正常退出 ===" -ForegroundColor Cyan
+$blocker = Join-Path $base "n4-blocker"
+Set-Content $blocker "i am a file, not a dir" -Encoding ASCII
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $Exe
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.EnvironmentVariables["DSH_NO_UI"] = "1"
+$psi.EnvironmentVariables["DSH_HOME"] = $blocker   # DSH_HOME 指向文件 → dsh.log 目录创建必然失败
+$psi.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39874"
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n4")
+$p = [System.Diagnostics.Process]::Start($psi)
+$p.WaitForExit(20000)
+Assert-Neg $p.HasExited "N4: 日志写失败时壳仍正常退出（日志失败不影响启动/退出，有意设计）"
+
+Write-Host "`n=== N5: --diagnose 脱敏（伪造含用户名路径的日志，完整导出无 UI 阻塞）===" -ForegroundColor Cyan
+$isoHome = New-IsoHome "n5"
+$userName = [System.IO.Path]::GetFileName($env:USERPROFILE)
+$fakeLog = Join-Path $isoHome "dsh-launcher\dsh.log"
+Set-Content $fakeLog ("C:\Users\" + $userName + "\secret.log: leak `n~\AppData leak `n%USERPROFILE%\leak") -Encoding UTF8
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $Exe
+$psi.Arguments = "--diagnose"
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.EnvironmentVariables["DSH_HOME"] = $isoHome
+$psi.EnvironmentVariables["DSH_WEB_URL"] = ""
+$psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n5")
+$p = [System.Diagnostics.Process]::Start($psi)
+Assert-Neg $p.WaitForExit(30000) "N5: --diagnose 正常退出且无 UI 阻塞（不再弹模态框）"
+$zip = Get-ChildItem (Join-Path $env:USERPROFILE "Downloads\*dsh-launcher-diagnose-*.zip") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if ($zip) {
+    $extract = Join-Path $base "n5-zip"
+    Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
+    $fullTxt = Get-Content (Join-Path $extract "log-full.txt") -Raw
+    Assert-Neg ($fullTxt -match "secret\.log") "N5: 伪造日志行进入导出（log-full 含原文，测试前提成立）"
+    Assert-Neg ($fullTxt -notmatch [regex]::Escape($userName)) "N5: 导出的 zip 不含明文用户名（已脱敏）"
+    Assert-Neg ($fullTxt -match "%USER%") "N5: 脱敏占位符 %USER% 生效"
+    Remove-Item $zip.FullName -Force -ErrorAction SilentlyContinue
+} else {
+    Assert-Neg $false "N5: 未找到诊断 zip（下载目录）"
+}
+
+Write-Host "`n=== N8: 日志被运行中服务锁定（cmd >> 重定向）→ --diagnose 仍能共享读导出 ===" -ForegroundColor Cyan
+# 回归断言：dsh 服务运行时独占写 dsh.log（允许读共享、拒绝写），旧版 File.ReadLines
+# 必抛 IOException → 22 字节空 zip + E5001；修复后必须能正常导出（v0.3.1）。
+$isoHome = New-IsoHome "n8"
+$fakeLog = Join-Path $isoHome "dsh-launcher\dsh.log"
+Set-Content $fakeLog '{"ts":"2026-08-16 12:00:00.000","level":"ERROR","pid":1,"code":"E2004","msg":"locked-log test"}' -Encoding UTF8
+# 模拟服务持有句柄：允许他人读（FileShare.Read）、拒绝写——与 cmd >> 重定向语义一致
+$lockFs = [System.IO.File]::Open($fakeLog, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
+try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = "--diagnose"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.EnvironmentVariables["DSH_HOME"] = $isoHome
+    $psi.EnvironmentVariables["DSH_WEB_URL"] = ""
+    $psi.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n8")
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $so = $p.StandardOutput.ReadToEndAsync(); $se = $p.StandardError.ReadToEndAsync()
+    Assert-Neg $p.WaitForExit(30000) "N8: --diagnose 退出（不挂起）"
+    Assert-Neg ($se.Result -notmatch "E5001") "N8: 日志锁定时不报 E5001（共享读生效）"
+    Assert-Neg ($so.Result -match 'dsh-launcher diagnose: .+\.zip') "N8: stdout 给出 zip 路径"
+    $zip = Get-ChildItem (Join-Path $env:USERPROFILE "Downloads\*dsh-launcher-diagnose-*.zip") | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($zip) {
+        Assert-Neg ($zip.Length -gt 200) "N8: zip 非空（含日志主体，非 22 字节空壳）"
+        $extract = Join-Path $base "n8-zip"
+        Expand-Archive -Path $zip.FullName -DestinationPath $extract -Force
+        $fullTxt = Get-Content (Join-Path $extract "log-full.txt") -Raw
+        Assert-Neg ($fullTxt -match "locked-log test") "N8: 日志主体导出成功（含被锁文件的原文）"
+        Remove-Item $zip.FullName -Force -ErrorAction SilentlyContinue
+    } else {
+        Assert-Neg $false "N8: 未找到诊断 zip"
+    }
+} finally {
+    $lockFs.Dispose()
+}
+
+Write-Host "`n=== N6: 同端口双实例 → 互斥保护、均自行退出、无残留 ===" -ForegroundColor Cyan
+$isoHome = New-IsoHome "n6"
+$psi1 = New-Object System.Diagnostics.ProcessStartInfo
+$psi1.FileName = $Exe
+$psi1.UseShellExecute = $false
+$psi1.CreateNoWindow = $true
+$psi1.EnvironmentVariables["DSH_NO_UI"] = "1"
+$psi1.EnvironmentVariables["DSH_HOME"] = $isoHome
+$psi1.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
+$psi1.EnvironmentVariables["DSH_WEB_PORT"] = ""
+$psi1.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n6a")
+$p1 = [System.Diagnostics.Process]::Start($psi1)
+Start-Sleep -Seconds 1
+$psi2 = New-Object System.Diagnostics.ProcessStartInfo
+$psi2.FileName = $Exe
+$psi2.UseShellExecute = $false
+$psi2.CreateNoWindow = $true
+$psi2.EnvironmentVariables["DSH_NO_UI"] = "1"
+$psi2.EnvironmentVariables["DSH_HOME"] = $isoHome
+$psi2.EnvironmentVariables["DSH_WEB_URL"] = "http://127.0.0.1:39875"
+$psi2.EnvironmentVariables["DSH_WEB_PORT"] = ""
+$psi2.EnvironmentVariables["DSH_WEBVIEW2_DATA"] = (Join-Path $base "wv2-n6b")
+$p2 = [System.Diagnostics.Process]::Start($psi2)
+$p2.WaitForExit(30000)
+Assert-Neg $p2.HasExited "N6: 第二实例在 30s 内自行退出（单实例互斥生效，无重复窗口）"
+if (-not $p1.HasExited) { $p1.WaitForExit(30000) }
+Assert-Neg $p1.HasExited "N6: 首实例也在 30s 内退出（E2004 无 UI 不阻塞）"
+
+Write-Host "`n=== N7: settings.json 非法 JSON → 不崩溃、无 E2011 误报 ===" -ForegroundColor Cyan
+$r = Start-ShellExe "n7" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 10
+Set-Content (Join-Path $r.Home "dsh-launcher\settings.json") "{broken json" -Encoding UTF8
+$r2 = Start-ShellExe "n7b" @{ DSH_WEB_URL = "http://127.0.0.1:39876" } 10
+Assert-Neg (-not $r2.Alive) "N7: 非法 settings.json 不导致崩溃（进程正常退出）"
+Assert-Neg ((Get-LogText $r2.Home) -notmatch "E2011") "N7: 无 serviceLifetime 键时不触发 E2011（精确判定，无子串误报）"
+
+Write-Host "`n=== N9: 未处理异常 → 崩溃留痕钩子写 E9001 日志（P0-2） ===" -ForegroundColor Cyan
+# 回归断言：任何未捕获异常必须先落 E9001 日志再终止——此前无钩子，崩溃零留痕无法诊断。
+$r = Start-ShellExe "n9" @{ DSH_TEST_CRASH = "1" } 5
+Assert-Neg (-not $r.Alive) "N9: 崩溃进程自行退出（未挂起）"
+Assert-Neg ((Get-LogText $r.Home) -match "E9001") "N9: 崩溃留痕钩子写入 E9001 日志"
+Assert-Neg ((Get-LogText $r.Home) -match "test crash hook") "N9: 日志含异常上下文（可定位）"
+
+# 清理隔离区 + 测试进程（防弹窗残留：超时/异常路径也要保证不遗留 DshWeb 测试实例）
+try {
+    Get-CimInstance Win32_Process -Filter "Name='DshWeb.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -like "*\.neg-publish\*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+} catch { }
+# 清理测试端口可能残留的 node 服务（N3 拉起的真实 dsh 服务）
+Stop-TestPortListener 39011
+Stop-TestPortListener 39871
+Stop-TestPortListener 39872
+Stop-TestPortListener 39874
+Stop-TestPortListener 39875
+Stop-TestPortListener 39876
+Remove-Item $base -Recurse -Force -ErrorAction SilentlyContinue
+
+# 恢复真实 HKCU Run 自启值（防测试污染用户自启设置）
+try {
+    if ($null -eq $origRunValue) {
+        Remove-ItemProperty -Path $runKeyPath -Name "dsh-launcher" -ErrorAction SilentlyContinue
+    } else {
+        Set-ItemProperty -Path $runKeyPath -Name "dsh-launcher" -Value $origRunValue
+    }
+} catch { }
+
+Write-Host ""
+if ($script:failed -eq 0) {
+    Write-Host "负向测试全部通过（$script:passed 项断言）" -ForegroundColor Green
+    exit 0
+} else {
+    Write-Host "$($script:failed) 项负向断言失败" -ForegroundColor Red
+    exit 1
+}

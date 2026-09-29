@@ -1,0 +1,24 @@
+  pid=4576 port=5971 home=E:\dsh-launcher\sandbox\issue-verify\scene-T10\home
+  printed path: C:\Users\<localUser>\Downloads\dsh-launcher-diagnose-20260919-143908.zip
+  exited=True exitCode=0 zip=C:\Users\<localUser>\Downloads\dsh-launcher-diagnose-20260919-143908.zip
+  zip 1328 bytes, 6 entries
+    - log-full.txt
+    - env.txt
+    - versions.txt
+    - settings.txt
+    - state.txt
+    - errors.txt
+  evidence: logBody=True safeModeMention=True env=True
+  ---- state.txt / errors.txt excerpt ----
+    === log-full.txt ===
+    === env.txt ===
+    === versions.txt ===
+    === settings.txt ===
+    === state.txt ===
+    --- safe-mode.json ---
+    === errors.txt ===
+  removed test artifact C:\Users\<localUser>\Downloads\dsh-launcher-diagnose-20260919-143908.zip
+[PASS] T10 :: diagnostics zip (1328B, 6 parts) carries log body + safe-mode evidence; exit=0
+
+==== summary ====
+PASS   T10    diagnostics zip (1328B, 6 parts) carries log body + safe-mode evidence; exit=0

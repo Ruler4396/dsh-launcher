@@ -1,0 +1,12 @@
+{"ts":"2026-09-19 13:06:27.348","level":"INFO","pid":5044,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-19 13:06:27.437","level":"INFO","pid":5044,"msg":"start target=http://127.0.0.1:14775 external=False"}
+{"ts":"2026-09-19 13:06:27.439","level":"INFO","pid":5044,"msg":"first instance"}
+{"ts":"2026-09-19 13:06:29.626","level":"INFO","pid":5044,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-19 13:06:29.628","level":"INFO","pid":5044,"msg":"[boot-monitor] started url=http://127.0.0.1:14775 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-size\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-19 13:06:29.962","level":"INFO","pid":5044,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+{"ts":"2026-09-19 13:06:29.973","level":"INFO","pid":5044,"msg":"notice card self-test: presented=True"}
+{"ts":"2026-09-19 13:06:29.974","level":"INFO","pid":5044,"msg":"notice suppressed as duplicate (within cooldown)","ctx":{"title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","cooldownSeconds":60,"sinceAcceptedSeconds":0}}
+{"ts":"2026-09-19 13:06:30.017","level":"INFO","pid":5044,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-19 13:06:30.047","level":"INFO","pid":5044,"msg":"main form shown"}
+{"ts":"2026-09-19 13:06:30.050","level":"INFO","pid":5044,"msg":"display topology: winforms.workArea={X=68,Y=0,Width=1852,Height=1080} win32.rcWork={X=68,Y=0,Width=1852,Height=1080} win32.dpi=96 form.deviceDpi=96 screens=1 sameSpace=True"}
+{"ts":"2026-09-19 13:06:30.786","level":"INFO","pid":5044,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=0.1.2-rc.1 clear=False"}

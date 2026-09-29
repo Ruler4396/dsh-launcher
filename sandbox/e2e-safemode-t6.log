@@ -1,0 +1,18 @@
+scene=[E:\dsh-launcher\sandbox\issue25-card] exe=[E:/dsh-launcher/src/DshShell/bin/Debug/net10.0-windows10.0.19041.0/DshWeb.exe] home=[E:\dsh-launcher\sandbox\issue25-card\home-e2e]
+起步时 .dsh-safe 存在=False（应为 False：这正是触发 ensure 重建的前置条件）
+pid=14872 port=13960  port 独立、DSH_HOME 隔离
+[FATAL LOGGER] Main log locked by another process. Falling back to: D:\Temp\dsh-launcher-fallback-14872.log
+[E2004] dsh 服务不可用（端口无 HTTP 响应）。
+页面加载失败。
+
+请确认 http://127.0.0.1:13960 上运行的是 dsh 服务（端口可能被其他程序占用，或服务已异常退出）。
+
+统一日志：E:\dsh-launcher\sandbox\issue25-card\home-e2e\dsh-launcher\dsh.log
+阶段1 命中: 
+ensure 后 .dsh-safe/package.json 存在=False
+卡片窗口数=0（等待 1 秒内）
+截图 -> E:\dsh-launcher\sandbox\issue25-card\staging\e2e-1-sticky.png
+35 秒后卡片窗口数=0（sticky 应为 1）
+!! sticky 未生效：卡片已自动收起
+
+清理：按 pid=14872 taskkill /T /F，剩余=0

@@ -1,0 +1,4 @@
+  pid=26476 port=9713 home=E:\dsh-launcher\sandbox\issue-verify\scene-T11\home
+  secondary: \\.\DISPLAY2 bounds={X=1920,Y=-193,Width=1463,Height=914} work={X=1920,Y=-193,Width=1463,Height=874}
+[FAIL] T11 :: main window never appeared
+  cleanup taskkill /T /F pid=26476 left=0

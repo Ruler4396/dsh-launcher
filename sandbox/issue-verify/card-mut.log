@@ -1,0 +1,64 @@
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)的测试运行
+总共 1 个测试文件与指定模式相匹配。
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.12)
+[xUnit.net 00:00:00.09]   Discovering: DshShell.Tests
+[xUnit.net 00:00:00.29]   Discovered:  DshShell.Tests
+[xUnit.net 00:00:00.30]   Starting:    DshShell.Tests
+[xUnit.net 00:00:00.60]     DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It [FAIL]
+[xUnit.net 00:00:00.60]       通知卡片直角 + 强调条对齐 抛异常：Xunit.Sdk.TrueException: 第 0 列有 122 行不是强调色（行号 0,1,2,3,4,5；首行实测 Color [A=255, R=209, G=213, B=219]）
+[xUnit.net 00:00:00.60]          at Xunit.Assert.True(Nullable`1 condition, String userMessage) in /_/src/xunit.assert/Asserts/BooleanAsserts.cs:line 141
+[xUnit.net 00:00:00.60]          at Xunit.Assert.True(Boolean condition, String userMessage) in /_/src/xunit.assert/Asserts/BooleanAsserts.cs:line 123
+[xUnit.net 00:00:00.60]          at DshShell.Tests.Regression_NoticeCardSquareAccent.<RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It>b__2_0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 56
+[xUnit.net 00:00:00.60]          at DshShell.Tests.Regression_NoticeCardSquareAccent.<>c__DisplayClass6_0.<RunSta>b__0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 103
+[xUnit.net 00:00:00.60]       Stack Trace:
+[xUnit.net 00:00:00.60]         E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs(111,0): at DshShell.Tests.Regression_NoticeCardSquareAccent.RunSta(Action body, String what, Int32 timeoutSeconds)
+[xUnit.net 00:00:00.61]         E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs(33,0): at DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It()
+[xUnit.net 00:00:00.61]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 00:00:00.61]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+[xUnit.net 00:00:00.61]       Output:
+[xUnit.net 00:00:00.61]         card 445x122 dpi=96 accent=Color [A=255, R=216, G=30, B=6] border=Color [A=255, R=209, G=213, B=219]
+[xUnit.net 00:00:00.62]   Finished:    DshShell.Tests
+  失败 DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It [253 ms]
+  错误消息:
+   通知卡片直角 + 强调条对齐 抛异常：Xunit.Sdk.TrueException: 第 0 列有 122 行不是强调色（行号 0,1,2,3,4,5；首行实测 Color [A=255, R=209, G=213, B=219]）
+   at Xunit.Assert.True(Nullable`1 condition, String userMessage) in /_/src/xunit.assert/Asserts/BooleanAsserts.cs:line 141
+   at Xunit.Assert.True(Boolean condition, String userMessage) in /_/src/xunit.assert/Asserts/BooleanAsserts.cs:line 123
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.<RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It>b__2_0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 56
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.<>c__DisplayClass6_0.<RunSta>b__0() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 103
+  堆栈跟踪:
+     at DshShell.Tests.Regression_NoticeCardSquareAccent.RunSta(Action body, String what, Int32 timeoutSeconds) in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 111
+   at DshShell.Tests.Regression_NoticeCardSquareAccent.RealOs_AccentBar_CoversEveryRowOfLeftEdge_NoBorderLineOnTopOf_It() in E:\dsh-launcher\tests\DshShell.Tests\Regression_NoticeCardSquareAccent.RealOs.cs:line 33
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  标准输出消息:
+ card 445x122 dpi=96 accent=Color [A=255, R=216, G=30, B=6] border=Color [A=255, R=209, G=213, B=219]
+
+
+
+测试运行失败。
+测试总数: 1
+     失败数: 1
+总时间: 1.2149 秒

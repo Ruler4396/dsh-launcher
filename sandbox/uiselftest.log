@@ -1,0 +1,5 @@
+UI-SELFTEST splash ok  "取消" ink=24x17 box=60x22 dpi=96
+UI-SELFTEST splash ok  "正在准备启动…" ink=82x17 box=348x32 dpi=96
+UI-SELFTEST splash ok  "是" ink=12x17 box=62x22 dpi=96
+UI-SELFTEST splash ok  "否" ink=12x17 box=62x22 dpi=96
+UI-SELFTEST pass=True geometry=True splashLayout=True bound=(68,0,1852x1080) workarea=(68,0,1852x1080)

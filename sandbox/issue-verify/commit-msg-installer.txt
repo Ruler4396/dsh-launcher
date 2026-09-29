@@ -1,0 +1,34 @@
+fix(installer): 前置检查器不再需要 .NET 才能跑，环境缺失交回用户决定
+
+报告人实拍两张截图：没装 .NET 10 的机器上双击 MSI，先弹「You must install .NET Desktop
+Runtime to run this application」，紧接着弹「Windows Installer 程序包有问题」就没了。
+之前"没检测到 fnm 里的 node"也是同一条链路——检查器根本没执行到。
+
+根因是自我矛盾：PrereqCheck 是框架依赖的 WPF 单文件（177KB），而它要检测的第一件事就是
+"这台机器有没有 .NET"。没装的机器上 .NET apphost 抢先弹自己的缺运行时对话框，检查逻辑一行
+都没执行，"自动安装 .NET"分支永远走不到；它随后返回 2/3，而 CheckPrereq 是 Return="check"，
+MSI 把任何非零码都渲染成那句无指引的通用错误。
+
+1) UI 从 WPF 换成 user32!MessageBoxW：删掉 151 行托管窗口代码与 UseWPF。
+2) 发布改 Native AOT（build-release.ps1 -p:PublishAot=true），产物不依赖共享框架；
+   加体积闸：PrereqCheck.exe 小于 1MB 即判定 AOT 没生效并让构建失败，绝不退回
+   "需要 .NET 才能检查 .NET"的旧状态。
+3) 退出码只剩两个出口：0=继续安装（含用户明确选"仍然继续"）；1602=ERROR_INSTALL_USEREXIT，
+   MSI 据此干净报"用户已取消安装"。静默安装（/qn 没人能点）缺 .NET 返回 1602，
+   只缺 Node 放行——启动器首启会引导装便携版 Node，不该因此拒绝安装。
+4) 点一次【是】装齐缺失项：winget 静默安装 .NET Desktop Runtime 10 与 Node.js LTS，
+   每项单独复检、单独报告（winget 报成功但复检仍跑不到 node>=18 时如实说明可能要重开
+   资源管理器）；仍失败的列清单交给用户选【仍然继续】/【取消】。没有 winget 时给
+   【重试/取消】并打开下载页，不再把这种情况算成安装失败。
+
+真机实测：PREREQ_SIMULATE_MISSING=1 模拟双缺失 + 真实点击 MessageBox，【否】退出码 0、
+【取消】退出码 1602；product.wxs 过本地 wix build 校验（仅剩我测试用的假版本号告警）。
+如实标注两点：AOT 产物本机建不出来（无 MSVC 工具链），由 CI 打包步骤与体积闸把关；
+原生的 LaunchCondition 兜底没做成——WiX v5 不认 DirectorySearch 的 Set/Patterns，
+Package 也不接受 Condition 子元素，校验器直接报错，已删除并在 product.wxs 注释留线索。
+FolderPicker / FolderPickerCa 仍是框架依赖托管程序，同一类隐患，本次未动（只在点"浏览"
+时触发，那时 .NET 必然已装好）。
+
+CHANGELOG 定版 [0.5.2]：把上一轮已合并的两条发布链修复（build.yml 的 ref_type、
+发布正文换行归一）一并搬进版本标题，[Unreleased] 收回"（暂无）"，G7 无需抬数。
+scripts/test.ps1 全量 1366 例 + 580 条静态断言绿。

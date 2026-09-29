@@ -1,0 +1,51 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=10268 port=5971 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  cleanup taskkill /T /F pid=10268 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 profile now declares a third-party bundle (dependencies only, so dsh still boots)
+  pid=11116 port=6242 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step3 service attached: pid=9044 (from the shell's own log line)
+成功: 已终止 PID 21764 (属于 PID 9044 子进程)的进程。
+成功: 已终止 PID 9044 (属于 PID 11116 子进程)的进程。
+  step4 killed the service process (stands in for the plugin crashing node)
+  dialog [DeepSeek Harness - 启动异常] 487x259 at (758,442)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-1-safe-ask.png
+  Enter (default button) hwnd=9768506 fg=1246806
+  dialog survived Enter -> real click on IDYES rect (with retry + BM_CLICK fallback)
+clicked id=6 at (1078,667) in dialog [DeepSeek Harness - 启动异常] pid=11116
+  dialog still open -> second physical click
+  still open -> PostMessage BM_CLICK to the button
+  after BM_CLICK, dialog alive = False
+dialog alive at exit = False
+  dialog answered = True
+  step5 ladder: SAFEMODE: verification OK / SafeModeEntered
+  step6 same session: safe-mode.json={"active":true,"tier":1,"consecutiveBootFailures":1,"lastFailure":{"utc":"2026-09-20T05:32:42.9828354Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:32:42.9827212Z"},{"layer":"Http","summary":"HTTP\u63A2\u6D4B\u4ECD\u65E0\u54CD\u5E94\uFF08failed\u540E\u8865\u5145\u8BC1\u636E\uFF09","detail":null,"code":null,"utc":"2026-09-20T05:32:45.2410165Z"}]}}; title=[DeepSeek Harness（安全模式）]
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-2-in-safe-mode.png
+  cleanup taskkill /T /F pid=11116 left=0
+  step7 third-party declaration removed: gone=True
+  pid=20412 port=6332 home=E:\dsh-launcher\sandbox\issue-verify\scene-T14\home
+  step8 after restart: readiness=HEALTHY; sticky card=True; safe start=; flag={"active":true,"tier":1,"consecutiveBootFailures":0,"lastFailure":{"utc":"2026-09-20T05:32:42.9828354Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:32:42.9827212Z"},{"layer":"Http","summary":"HTTP\u63A2\u6D4B\u4ECD\u65E0\u54CD\u5E94\uFF08failed\u540E\u8865\u5145\u8BC1\u636E\uFF09","detail":null,"code":null,"utc":"2026-09-20T05:32:45.2410165Z"}]}}
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-3-sticky-card.png
+  click (1686,1048) sticky card action row
+  step9 exit result: exit-safe-mode: identity-driven start returned True
+  step10 back to normal: HEALTHY count=2; cards left=1; safe-mode.json={"active":false,"tier":1,"consecutiveBootFailures":0,"lastFailure":{"utc":"2026-09-20T05:32:42.9828354Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:32:42.9827212Z"},{"layer":"Http","summary":"HTTP\u63A2\u6D4B\u4ECD\u65E0\u54CD\u5E94\uFF08failed\u540E\u8865\u5145\u8BC1\u636E\uFF09","detail":null,"code":null,"utc":"2026-09-20T05:32:45.2410165Z"}]}}; normal-profile starts=3
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T14-4-back-to-normal.png
+[FAIL] T14 :: exit=exit-safe-mode: identity-driven start returned True flag={"active":false,"tier":1,"consecutiveBootFailures":0,"lastFailure":{"utc":"2026-09-20T05:32:42.9828354Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:32:42.9827212Z"},{"layer":"Http","summary":"HTTP\u63A2\u6D4B\u4ECD\u65E0\u54CD\u5E94\uFF08failed\u540E\u8865\u5145\u8BC1\u636E\uFF09","detail":null,"code":null,"utc":"2026-09-20T05:32:45.2410165Z"}]}} cards=1 normal=3
+    | {"ts":"2026-09-20 13:32:48.603","level":"INFO","pid":11116,"msg":"SAFEMODE(bg): stopping service"}
+    | {"ts":"2026-09-20 13:32:48.743","level":"INFO","pid":11116,"msg":"SAFEMODE(bg): StopShellService returned"}
+    | {"ts":"2026-09-20 13:32:48.820","level":"INFO","pid":11116,"msg":"service start via identity (SAFE profile): node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\29120_1789861604685\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 --profile .dsh-safe --host 127.0.0.1 --port 6242 --no-open"}
+    | {"ts":"2026-09-20 13:32:48.821","level":"INFO","pid":11116,"msg":"service start via identity (SAFE profile)"}
+    | {"ts":"2026-09-20 13:32:58.840","level":"INFO","pid":11116,"msg":"SAFEMODE: verification OK (ready \u002B crash signature absent)"}
+    | {"ts":"2026-09-20 13:32:58.846","level":"INFO","pid":11116,"msg":"lifecycle: EnteringSafeMode --SafeModeEntered--\u003E Running"}
+    | {"ts":"2026-09-20 13:33:03.635","level":"INFO","pid":20412,"msg":"service start via identity (SAFE profile): node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\29120_1789861604685\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 --profile .dsh-safe --host 127.0.0.1 --port 6332 --no-open"}
+    | {"ts":"2026-09-20 13:33:21.878","level":"INFO","pid":20412,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+    | {"ts":"2026-09-20 13:33:52.888","level":"INFO","pid":20412,"msg":"SAFEMODE: user exited safe mode via notice \u2192 restarting service with normal profile"}
+    | {"ts":"2026-09-20 13:33:52.896","level":"INFO","pid":20412,"msg":"exit-safe-mode: stopping service"}
+    | {"ts":"2026-09-20 13:33:55.408","level":"INFO","pid":20412,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\29120_1789861604685\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 6332 --no-open"}
+    | {"ts":"2026-09-20 13:33:55.409","level":"INFO","pid":20412,"msg":"service start via identity"}
+    | {"ts":"2026-09-20 13:33:55.410","level":"INFO","pid":20412,"msg":"exit-safe-mode: identity-driven start returned True"}
+    | {"ts":"2026-09-20 13:34:11.416","level":"INFO","pid":20412,"msg":"[boot-monitor] HEALTHY: \u9875\u9762\u63A2\u9488\u786E\u8BA4\u597D\u7B26\u53F7\uFF08__DSH_BOOT__ \u5C31\u7EEA\uFF09"}
+  cleanup taskkill /T /F pid=20412 left=0
+
+==== summary ====
+FAIL   T14    exit=exit-safe-mode: identity-driven start returned True flag={"active":false,"tier":1,"consecutiveBootFailures":0,"lastFailure":{"utc":"2026-09-20T05:32:42.9828354Z","code":"E2007","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","layers":[{"layer":"Process","summary":"dsh\u670D\u52A1\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF08exitcode=1\uFF09","detail":"pidexitcode=1","code":"E2007","utc":"2026-09-20T05:32:42.9827212Z"},{"layer":"Http","summary":"HTTP\u63A2\u6D4B\u4ECD\u65E0\u54CD\u5E94\uFF08failed\u540E\u8865\u5145\u8BC1\u636E\uFF09","detail":null,"code":null,"utc":"2026-09-20T05:32:45.2410165Z"}]}} cards=1 normal=3

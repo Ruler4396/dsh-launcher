@@ -1,0 +1,89 @@
+Refreshing run status every 45 seconds. Press Ctrl+C to quit.
+
+* v0.5.0 build · 35517888701
+Triggered via push about 2 minutes ago
+
+JOBS
+* build (ID 106096799445)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Run tests (unit + script/integration checks, no -Smoke)
+  - Upload test log on failure
+  ✓ Ensure Node.js (real environment, never skip)
+  * Run Real-OS integration tests
+  * Upload Real-OS log on failure
+  * Build release package (zip + msi + checksums)
+  * Upload release artifacts
+  * Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  * Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+X v0.5.0 build · 35517888701
+Triggered via push about 3 minutes ago
+
+JOBS
+✓ build in 2m44s (ID 106096799445)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Run tests (unit + script/integration checks, no -Smoke)
+  - Upload test log on failure
+  ✓ Ensure Node.js (real environment, never skip)
+  ✓ Run Real-OS integration tests
+  - Upload Real-OS log on failure
+  - Build release package (zip + msi + checksums)
+  - Upload release artifacts
+  ✓ Post Run actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+  ✓ Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Complete job
+X release in 14s (ID 106097158295)
+  ✓ Set up job
+  ✓ Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  X Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+  - Prepare release notes from CHANGELOG
+  - Publish GitHub Release
+  ✓ Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+build: .github#4
+
+! Possible null reference argument for parameter 'tail' in 'bool NpmHelpers.IsNpmNotFoundError(string tail)'.
+build: src/DshShell/Program.cs#2361
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#194
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#192
+
+! Possible null reference argument for parameter 'form' in 'void Program.DownloadDshUpdateStaged(Form form, string latest)'.
+build: src/DshShell/Program.cs#2088
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#104
+
+! Converting null literal or possible null value to non-nullable type.
+build: src/DshShell/Windows/LegacyUpgradeCleanup.cs#102
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Program.cs#2048
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Managers/WebViewManager.cs#142
+
+! Dereference of a possibly null reference.
+build: src/DshShell/Lifecycle/BootHealthMonitor.cs#296
+
+! 'SplashForm.Layout' hides inherited member 'Control.Layout'. Use the new keyword if hiding was intended.
+build: src/DshShell/Windows/SplashForm.cs#52
+
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11d5960a326750d5838078e36cf38b85af677262, actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+release: .github#2
+
+X Unable to download artifact(s): Artifact not found for name: dsh-launcher-windows
+        Please ensure that your artifact is not expired and the artifact was uploaded using a compatible version of toolkit/upload-artifact.
+        For more information, visit the GitHub Artifacts FAQ: https://github.com/actions/toolkit/blob/main/packages/artifact/docs/faq.md
+release: .github#13
+
+watch_exit=1

@@ -1,0 +1,12 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=5032 port=10863 home=E:\dsh-launcher\sandbox\issue-verify\scene-T12\home
+  main 1280x840 at (354,120) dpi=96; title bar 1278x32 at (355,121)
+  double-click (994,137) P1 title bar center
+  P1 double-click -> zoomed=True; window now 1852x1080 at (68,0)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T12-1-after-doubleclick.png
+  primary work=(68,0) 1852x1080; gaps vs maximized = 0/0/0/0; fit=True
+[PASS] T12 :: maximize reached rcWork exactly (path used: double-click)
+  cleanup taskkill /T /F pid=5032 left=0
+
+==== summary ====
+PASS   T12    maximize reached rcWork exactly (path used: double-click)

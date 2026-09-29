@@ -1,0 +1,40 @@
+{"ts":"2026-09-18 23:32:30.124","level":"INFO","pid":16204,"msg":"feature flag: DSH_USE_NEW_LIFECYCLE=unset (legacy)"}
+{"ts":"2026-09-18 23:32:30.204","level":"INFO","pid":16204,"msg":"start target=http://127.0.0.1:39543 external=True"}
+{"ts":"2026-09-18 23:32:30.206","level":"INFO","pid":16204,"msg":"first instance"}
+{"ts":"2026-09-18 23:32:30.416","level":"INFO","pid":16204,"msg":"lifecycle: Idle --StartRequested--\u003E CheckingInstance"}
+{"ts":"2026-09-18 23:32:30.417","level":"INFO","pid":16204,"msg":"lifecycle: CheckingInstance --InstanceConfirmed--\u003E ResolvingRuntime"}
+{"ts":"2026-09-18 23:32:30.537","level":"INFO","pid":16204,"msg":"lifecycle: ResolvingRuntime --RuntimeResolved--\u003E StartingService"}
+{"ts":"2026-09-18 23:32:30.538","level":"INFO","pid":16204,"msg":"lifecycle: StartingService --ServiceStarted--\u003E WaitingForReadiness"}
+{"ts":"2026-09-18 23:32:30.543","level":"INFO","pid":16204,"msg":"poll: networkDownloadFallback=False, budget=180s"}
+{"ts":"2026-09-18 23:32:30.662","level":"INFO","pid":16204,"msg":"poll: ready (tcp \u002B http)"}
+{"ts":"2026-09-18 23:32:30.664","level":"INFO","pid":16204,"msg":"lifecycle: WaitingForReadiness --ServiceReady--\u003E InitializingUI"}
+{"ts":"2026-09-18 23:32:30.665","level":"INFO","pid":16204,"msg":"lifecycle: InitializingUI --UIInitialized--\u003E Running"}
+{"ts":"2026-09-18 23:32:30.751","level":"INFO","pid":16204,"msg":"[boot-monitor] started (log\u002Bhttp layers)"}
+{"ts":"2026-09-18 23:32:30.752","level":"INFO","pid":16204,"msg":"[boot-monitor] started url=http://127.0.0.1:39543 log=E:\\dsh-launcher\\sandbox\\issue25-card\\home-probe2\\dsh-launcher\\dsh.log servicePid=n/a"}
+{"ts":"2026-09-18 23:32:30.853","level":"INFO","pid":16204,"msg":"main form shown"}
+{"ts":"2026-09-18 23:32:30.889","level":"INFO","pid":16204,"msg":"update network: launcher check attempting exit=direct"}
+{"ts":"2026-09-18 23:32:31.511","level":"INFO","pid":16204,"msg":"web cache invalidation: lastSeen=\u003Cnone\u003E current=\u003Cunprobed\u003E clear=False"}
+{"ts":"2026-09-18 23:32:31.570","level":"INFO","pid":16204,"msg":"webview nav completed: success=True http=200 url=http://127.0.0.1:39543/"}
+{"ts":"2026-09-18 23:32:31.571","level":"INFO","pid":16204,"msg":"[boot-monitor] page layer armed (grace=12000ms interval=2000ms threshold=5)"}
+{"ts":"2026-09-18 23:32:31.576","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe loop started"}
+{"ts":"2026-09-18 23:32:31.971","level":"INFO","pid":16204,"msg":"update network: launcher check exit=direct version=0.4.5"}
+{"ts":"2026-09-18 23:32:32.173","level":"INFO","pid":16204,"msg":"update network: dsh check ok via registry=https://registry.npmmirror.com exit=direct version=0.1.5-rc.2"}
+{"ts":"2026-09-18 23:32:32.174","level":"INFO","pid":16204,"msg":"dsh update check: latest=0.1.5-rc.2 local=\u003Cnull\u003E"}
+{"ts":"2026-09-18 23:32:32.175","level":"INFO","pid":16204,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting tray balloon"}
+{"ts":"2026-09-18 23:32:43.585","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 23:32:43.590","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: round done (rawLen=51)"}
+{"ts":"2026-09-18 23:32:43.592","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: good symbol absent (1/5)"}
+{"ts":"2026-09-18 23:32:45.607","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 23:32:45.610","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: round done (rawLen=51)"}
+{"ts":"2026-09-18 23:32:45.610","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: good symbol absent (2/5)"}
+{"ts":"2026-09-18 23:32:47.622","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 23:32:47.624","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: round done (rawLen=51)"}
+{"ts":"2026-09-18 23:32:47.625","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: good symbol absent (3/5)"}
+{"ts":"2026-09-18 23:32:49.637","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 23:32:49.639","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: round done (rawLen=51)"}
+{"ts":"2026-09-18 23:32:49.639","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: good symbol absent (4/5)"}
+{"ts":"2026-09-18 23:32:51.643","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: dispatching script"}
+{"ts":"2026-09-18 23:32:51.645","level":"INFO","pid":16204,"msg":"[boot-monitor] page probe: round done (rawLen=51)"}
+{"ts":"2026-09-18 23:32:51.648","level":"ERROR","pid":16204,"code":"E2008","msg":"[boot-monitor] FAILED layer=Page: \u597D\u7B26\u53F7\u8FDE\u7EED 5 \u6B21\u7F3A\u5E2D\uFF08\u9608\u503C 5\uFF09 | good symbol absent"}
+{"ts":"2026-09-18 23:32:51.669","level":"INFO","pid":16204,"msg":"boot-monitor: failure evidence persisted to safe-mode-state.json"}
+{"ts":"2026-09-18 23:32:51.903","level":"INFO","pid":16204,"msg":"boot-monitor: diagnostic package written: E:\\dsh-launcher\\sandbox\\issue25-card\\home-probe2\\dsh-launcher\\diagnostics\\boot-failure-20260918-153251.zip"}

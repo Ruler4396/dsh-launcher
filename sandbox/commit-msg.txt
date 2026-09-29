@@ -1,0 +1,34 @@
+fix(issue28): 版本徽标闪退根治（IME 护栏）+ 托盘退出条目排版 + 运行期服务自愈/残留服务真重启
+
+issue #28 三项 + 用户报告的"点版本号卡死闪退"一并修复。
+
+1) 点击标题栏版本徽标 → 启动器闪退（P0，0xc0000005）
+   事件日志实证：Application Error 1000 + .NET Runtime 1026，两条托管栈均以
+   ImmSetOpenStatus 结尾，且都经过 ShowVersionInfoDialog ← CustomTitleBar.OnMouseDown。
+   机理：WinForms 按 ImeMode 经 ImeContext 落地 IME 状态，第三方输入法（本机实测
+   手心输入法 PalmInput 3.2.9）给壳自有窗口返回不可用 HIMC → native AV → 进程 fail-fast。
+   修复：新增 Win32/ImeContextGuard，句柄创建即 ImmAssociateContext(hwnd, NULL)，
+   覆盖窗体/全部子控件/后续 ControlAdded；使 GetImeMode 恒 Disable、IsOpen 恒 false，
+   UpdateImeContextMode 短路、Disable() 不再调 SetOpenStatus、WmImeKillFocus 不初始化
+   PropagatingImeMode —— ImmSetOpenStatus 路径整体不可达。已接入 DshShellForm/
+   VersionInfoDialog/SplashForm/TrayMenuForm。
+
+2) 运行中重启服务必然弹"启动自检未通过"（issue #28 第 2 点）
+   BootHealthMonitor 新增 ServiceExitedWhileRunning：Healthy 之后的任何退出（含 exit 0）
+   走静默自愈（Suspend → 身份驱动重启 → 等新 token → 就绪 → ResumeAfterRestart → 重导航），
+   失败/冷却窗内连续超 3 次才升级为可见询问；自检未通过仍保持 E2007。
+   共用重启链抽为 Program.RestartDshServiceCoreAsync（返回精确结果，保留 E2001/E2004 语义）。
+
+3) 伪重启：关窗重开秒进、插件装了不生效（issue #28 第 3 点）
+   新增纯函数 LifecycleDecisions.ShouldRestartLeftoverService（非外部托管 × 账本内 ×
+   FollowWindow/Tray），命中即清理残留并按正常链路重拉；账本外 node 与 AlwaysOn 维持
+   "健康服务不杀也不动"，清理失败保底沿用旧服务。
+
+4) 托盘右键"退出"条目 UI 异常（issue #28 第 1 点）
+   TextRenderer 默认内边距（每字两侧 ~4-5px）叠加旧实现首字矩形 +4*s → 2px 字距被放大成
+   12px。修复：测量/绘制统一 NoPadding + 纯函数 ShellLogic.TrayMenuLayout.PlaceExitRow。
+
+测试：新增 4 个 Regression_Issue28_*（RealOS 零 Mock：真实 imm32 / 真实渲染像素 / 状态机）
++ TrayMenuLayoutContractTests + LauncherAppScenarioTests 健康残留三例 + E2E 真机真实鼠标点击
+版本徽标（TestHook 新增 GetVersionBadgeRect / ShowVersionDialog）。全量 966 例 + test.ps1
+静态断言全部通过。

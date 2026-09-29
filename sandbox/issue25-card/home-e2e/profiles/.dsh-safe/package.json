@@ -1,0 +1,12 @@
+{
+  "name": "dsh-profile-safe",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-web-app",
+        "@deepseek-ai/dsh-base"
+      ]
+    }
+  }
+}

@@ -1,0 +1,687 @@
+== 0. »·¾³ÎÀÉú£¨Çå³ý¿Ç×¢ÈëµÄ DSH_* ½ø³Ì±äÁ¿£©==
+== 1. C# µ¥Ôª²âÊÔ (dotnet test) ==
+  æ­£åœ¨ç¡®å®šè¦è¿˜åŽŸçš„é¡¹ç›®â€?
+  æ‰€æœ‰é¡¹ç›®å‡æ˜¯æœ€æ–°çš„ï¼Œæ— æ³•è¿˜åŽŸã€?
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: å‘çŽ°æ— æ³•è§£æžçš„â€œWindowsBaseâ€çš„ä¸åŒç‰ˆæœ¬ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸Žâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     å·²é€‰æ‹©â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ï¼Œå› ä¸ºå®ƒæ˜¯ä¸»ç‰ˆæœ¬è€Œâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸æ˜¯ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºŽâ€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]çš„å¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºŽæˆ–å·²ç»Ÿä¸€åˆ°â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[] çš„å¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\SplashForm.cs(52,47): warning CS0108: â€œSplashForm.Layoutâ€éšè—ç»§æ‰¿çš„æˆå‘˜â€œControl.Layoutâ€ã€‚å¦‚æžœæ˜¯æœ‰æ„éšè—ï¼Œè¯·ä½¿ç”¨å…³é”®å­?newã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Lifecycle\BootHealthMonitor.cs(296,46): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºçŽ°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\WebViewManager.cs(142,23): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºçŽ°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\RuntimeResolver.cs(116,51): warning CS8604: â€œTask<bool> RuntimeResolver.VerifySha256Async(string zipPath, string baseUrl, string version)â€ä¸­çš„å½¢å‚â€œbaseUrlâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(501,56): warning CS8604: â€œvoid Append(string line)â€ä¸­çš„å½¢å‚â€œlineâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(502,55): warning CS8604: â€œvoid Append(string line)â€ä¸­çš„å½¢å‚â€œlineâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2048,17): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºçŽ°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2088,60): warning CS8604: â€œvoid Program.DownloadDshUpdateStaged(Form form, string latest)â€ä¸­çš„å½¢å‚â€œformâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2361,61): warning CS8604: â€œbool NpmHelpers.IsNpmNotFoundError(string tail)â€ä¸­çš„å½¢å‚â€œtailâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(255,38): warning CS8604: â€œTask TcpClient.ConnectAsync(string host, int port)â€ä¸­çš„å½¢å‚â€œhostâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(279,42): warning CS8604: â€œValueTask TcpClient.ConnectAsync(string host, int port, CancellationToken cancellationToken)â€ä¸­çš„å½¢å‚â€œhostâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®žå‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(102,33): warning CS8600: å°?null æ–‡æœ¬æˆ–å¯èƒ½çš„ null å€¼è½¬æ¢ä¸ºä¸å¯ä¸?null ç±»åž‹ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(104,40): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºçŽ°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(192,29): warning CS8600: å°?null æ–‡æœ¬æˆ–å¯èƒ½çš„ null å€¼è½¬æ¢ä¸ºä¸å¯ä¸?null ç±»åž‹ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(194,27): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºçŽ°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+  DshShell -> E:\dsh-launcher\src\DshShell\bin\Release\net10.0-windows\DshWeb.dll
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: å‘çŽ°æ— æ³•è§£æžçš„â€œWindowsBaseâ€çš„ä¸åŒç‰ˆæœ¬ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸Žâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     å·²é€‰æ‹©â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ï¼Œå› ä¸ºå®ƒæ˜¯ä¸»ç‰ˆæœ¬è€Œâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸æ˜¯ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºŽâ€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]çš„å¼•ç”¨ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºŽæˆ–å·²ç»Ÿä¸€åˆ°â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[] çš„å¼•ç”¨ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\ConfigWaitingStateOutcomes.cs(33,29): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\OrphanServiceOutcomes.cs(98,13): warning CS0219: å˜é‡â€œstartCallsâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»Žæœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(187,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(204,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(216,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(235,20): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(255,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(274,20): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(299,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(534,18): warning CS8619: ç±»åž‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»åž‹çš„ä¸º Null æ€§ä¸Žç›®æ ‡ç±»åž‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\F11HookDecisionTests.cs(14,36): warning CS0414: å­—æ®µâ€œF11HookDecisionTests.SysKeyDownâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»Žæœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\ServiceRestartCoordinatorRegressionTests.cs(17,17): warning CS0414: å­—æ®µâ€œServiceRestartCoordinatorRegressionTests._restartCallsâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»Žæœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\F11HookDecisionTests.cs(13,36): warning CS0414: å­—æ®µâ€œF11HookDecisionTests.KeyDownâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»Žæœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Managers\UpdateFlowContractTests.cs(120,17): warning xUnit1012: Null should not be used for type parameter 'tail' of type 'string'. Use a non-null value, or convert the parameter to a nullable type. (https://xunit.net/xunit.analyzers/rules/xUnit1012) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Managers\UpdateFlowContractTests.cs(304,17): warning xUnit1012: Null should not be used for type parameter 'tail' of type 'string'. Use a non-null value, or convert the parameter to a nullable type. (https://xunit.net/xunit.analyzers/rules/xUnit1012) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\RecoveryOutcomes.cs(38,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\V030FeaturesTests.cs(292,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\SystemUpgradeOutcomeContracts.cs(246,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\RealOs\DshUpdatePipelineRealTests.cs(69,9): warning xUnit2020: Do not use Assert.True(false, message) to fail a test. Use Assert.Fail(message) instead. (https://xunit.net/xunit.analyzers/rules/xUnit2020) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\SystemUpgradeOutcomeContracts.cs(291,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(524,26): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(48,83): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(41,83): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(55,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(69,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(62,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(76,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(86,69): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(96,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(104,74): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\RealOs\DshUpdatePipelineRealTests.cs(200,90): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(111,74): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(118,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(141,68): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(134,68): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(127,78): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(153,69): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+  DshShell.Tests -> E:\dsh-launcher\tests\DshShell.Tests\bin\Release\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+E:\dsh-launcher\tests\DshShell.Tests\bin\Release\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)çš„æµ‹è¯•è¿è¡?
+æ€»å…± 1 ä¸ªæµ‹è¯•æ–‡ä»¶ä¸ŽæŒ‡å®šæ¨¡å¼ç›¸åŒ¹é…ã€?
+
+å·²é€šè¿‡! - å¤±è´¥:     0ï¼Œé€šè¿‡:  1366ï¼Œå·²è·³è¿‡:     0ï¼Œæ€»è®¡:  1366ï¼ŒæŒç»­æ—¶é—? 1 m 17 s - DshShell.Tests.dll (net10.0)
+[ OK ] dotnet test Í¨¹ý£¨È«Á¿£¬º¬ RealOS ÕæÊµ»·¾³Ã°ÑÌ£©
+
+== 1b. Real-OS ·Ö²ã¹éÊô¶ÏÑÔ£¨Ô´Âë¼¶£¬Áã±àÒë³É±¾£©==
+[ OK ] ·Ö²ã¹éÊôÕ¢ÖÁÉÙÉ¨µ½ 1 ¸ö Real-OS ÎÄ¼þ£¨Êµ²â 17£»Îª 0 = ±¾Õ¢ÒÑ¾­Ï¹ÁË£©
+[ OK ] Real-OS ²ãÎÄ¼þµÄÃ¿¸öÓÃÀý¶¼±ØÐëÏÔÊ½¹éÊô£¨Ïê¼ûÉÏÒ»Ìõ×¢ÊÍ£©£»ÃüÖÐ£º
+
+== 2. ½Å±¾¾²Ì¬»Ø¹é¶ÏÑÔ ==
+[ OK ] dsh-web.cmd ´Ó½Å±¾Í¬Ä¿Â¼Æô¶¯ DshWeb.exe
+[ OK ] dsh-web.cmd ²»ÔÙÒýÓÃ²»´æÔÚµÄ bin\ ×ÓÄ¿Â¼
+[ OK ] dsh-web.cmd »áµ÷ÓÃ start-dsh.vbs
+[ OK ] uninstall-autostart.cmd ²»ÔÙÉ¾³ý¼Æ»®ÈÎÎñ
+[ OK ] uninstall É¾³ýÆô¶¯ÎÄ¼þ¼Ð×ÔÆôÏî
+[ OK ] uninstall Í¬Ê±ÇåÀí¾É°æ dsh-autostart.vbs
+[ OK ] uninstall É¾³ý×ÀÃæ¿ì½Ý·½Ê½
+[ OK ] uninstall Ìá¹©ÏÔÊ½ -CleanData Êý¾ÝÇåÀí¿ª¹Ø
+[ OK ] uninstall -CleanData Ö»Çå DSH_HOME\dsh-launcher£¨ÑÓ³ÙÀ©Õ¹£©
+[ OK ] uninstall -CleanData Ê¹ÓÃÑÓ³ÙÀ©Õ¹£¨·À½âÎöÆÚ¿ÕÖµÎóÉ¾ÅÌ¸ù£¬ÀúÊ·ÊÂ¹Ê»Ø¹é¶ÏÑÔ£©
+[ OK ] uninstall ÆôÓÃÑÓ³ÙÀ©Õ¹
+[ OK ] start-dsh.vbs Èý·ÖÖ§Í³Ò»ÒÔ bootMode Æô¶¯ web£¨host/port/--no-open Ò»ÖÂ£©
+[ OK ] start-dsh.vbs Ä¬ÈÏ bootMode Îª dsh web ×ÓÃüÁî
+[ OK ] start-dsh.vbs Ö§³Ö°²È«Ä£Ê½ --profile ×¢Èë£¨ADR-022£©
+[ OK ] start-dsh.vbs È«·ÖÖ§Ð¯´ø --no-open£¨·ÀÏµÍ³ä¯ÀÀÆ÷µ¯Í¬´°£©
+[ OK ] start-dsh.vbs Ê¹ÓÃ¿Ç´«ÈëµÄÍ³Ò»ÈÕÖ¾Â·¾¶£¨DSH_LOG£©
+[ OK ] start-dsh.vbs »ØÍËÂ·¾¶Ò²ÊÇÍ³Ò» dsh.log
+[ OK ] start-dsh.vbs ¸ÄÎª×·¼ÓÄ£Ê½£¨8£©£¬²»ÔÙ½Ø¶Ï
+[ OK ] start-dsh.vbs ²»ÔÙÐ´¾ÉÊ½ .dsh-web.log
+[ OK ] start-dsh.vbs ÈÕÖ¾ÖØ¶¨Ïò¼ÓÒýºÅ£¨·ÀÓÃ»§Ãûº¬¿Õ¸ñ/Ôª×Ö·û×¢Èë£¬S5£©
+[ OK ] start-dsh.vbs °üº¬ npx »ØÍË£¨dsh ²»ÔÚ PATH Ê±£©
+[ OK ] check-prereq.cmd ¼ì²â .NET Desktop Runtime
+[ OK ] check-prereq.cmd ¼ì²â WebView2 Runtime
+[ OK ] check-prereq.cmd ¼ì²â Node.js 18+
+[ OK ] check-prereq.cmd Ö¸Òý --diagnose Õï¶Ïµ¼³ö
+[ OK ] check-prereq.cmd Ê¹ÓÃ CRLF »»ÐÐ£¨cmd Åú´¦ÀíÓ²ÐÔÒªÇó£©
+[ OK ] ¿Ç×ÔÆôÐ´ DshWeb.exe£¨À­¿Ç·½°¸£»ÊµÏÖÏÖ¾Ó AppEnvironment.EnsureAutoStartRequested£©
+[ OK ] ¿Ç×ÔÆô²»ÔÙÓÃ wscript+start-dsh.vbs
+[ OK ] ¿ÇÆô¶¯³õÊ¼»¯Í³Ò»ÈÕÖ¾
+[ OK ] ¿ÇÆô¶¯Ôç¶ÎÖ´ÐÐÈÕÖ¾ÂÖ×ª
+[ OK ] ¿ÇÖ§³Ö --diagnose Õï¶Ïµ¼³ö
+[ OK ] ¿Ç¼ì²â lifetime ²å¼þ£¨ÍÐÅÌ/ÅäÖÃ½µ¼¶£»Ì½²âÏÖ¾Ó AppEnvironment.ReadLifetimeMode£©
+[ OK ] ¿ÇÊµÏÖ dsh ÑÓ³ÙÓ¦ÓÃ¸üÐÂ£¨staged£»T2 ºóÔÝ´æÐ´ÈëÎ»ÓÚ DshUpdateManager£©
+[ OK ] DshUpdateManager Ö»ÔÊÐí 1 ´¦Ö±½Ó¹¹ÔìÍ¨Öª½áÂÛ£¨µ±Ç° 1£¬Ö»Ó¦ÊÇ test-hook-ignored£©£ºÆäÓàÒ»ÂÉ¾­ Decide£¬·ñÔò¼ÙÐÅºÅ»áÈÆ¹ýÒÑ×îÐÂ²»ÌáÊ¾µÄÃÅ
+[ OK ] Í¨Öª²Ã¾ö±ØÐëÖ»ÓÐÒ»¸öÈë¿Ú UpdateNoticeFlowPolicy.Decide£¨µ±Ç° 1£©
+[ OK ] Ìø¹ý°æ±¾±ØÐëÒÔ°æ±¾´®£¨ÎÞ¼ÇÂ¼=null£©´«½ø Decide£¬²»µÃ´«±È½Ï½á¹û int¡ª¡ªÉÚ±øÓëÅÐ¾Ý×²³µ»áÈÃ'´ÓÃ»Ìø¹ý¹ý'µÄÓÃ»§±»µ±³É'ÒÑÌø¹ý'
+[ OK ] Æô¶¯Ê§°Ü´¦Àí±ØÐë×ÉÑ¯ StartupFailureRecoveryPolicy£¨¾ÍÐ÷Ç°²å¼þ±ÀÀ£Ò²Òª¸ø°²È«Ä£Ê½Èë¿Ú£¬·ñÔòÓÃ»§Ö»Ê£Ò»¸ö'ÖªµÀÁË'£©
+[ OK ] Æô¶¯Ê§°Ü´ð¸´ÓÃ°²È«Ä£Ê½ºó±ØÐë¾ÍµØÖØÅÜÁ÷Ë®Ïß£¨RetryInSafeMode£©£¬²»µÃÖ»ÁôÒ»¾ä'ÇëÄã×Ô¼ºÖØ¿ª'
+[ OK ] readiness failed µÄÈÕÖ¾Âë²»µÃÓ²±àÂë´íÎóÂë
+[ OK ] readiness failed ÈÕÖ¾Âë±ØÐëÀ´×Ô MapVerdictErrorCode£¨ÓëÓÃ»§µ¯´°Í¬Ô´£©
+[ OK ] ¿Ç²»ÔÙÒýÓÃ¾ÉÊ½ .dsh-web.log Â·¾¶
+[ OK ] ¿ÇÔ´Âë²»µÃÔÙÒýÓÃ WPN/ÏµÍ³ Toast Í¨Â·£¨ÃüÖÐ£º£©
+[ OK ] °²È«Ä£Ê½»ØÖ´µ¯´°Óë'ÈÃÓÃ»§ÊÖ¶¯ÖØ¿ª'µÄ³ÐÅµ²»µÃ´æÔÚ£¨ÃüÖÐ£º£©
+[ OK ] ÍË³ö°²È«Ä£Ê½±ØÐëÁ¢¿Ì¸ø³ö¿É¼û·´À¡£¨µÈ´ýÌ¬ + ±êÌâÀ¸£©£¬²»ÄÜ°Ñ 20 Ãë¿Õ´°Áô¸øÓÃ»§²Â
+[ OK ] µÈ´ýÌ¬µ¼º½Ö»ÔÊÐíÒ»¸öÊµÏÖµã£¨ÃüÖÐ£ºWebViewManager.cs£©¡ª¡ª¶à´¦ NavigateToString ±ØÈ»ÓÐÒ»·Ý²»¹Ü UI Ïß³Ì/×ªÒå
+[ OK ] Lifecycle ²ã²»µÃÖ±½ÓÅö WebView2£ºµÈ´ýÌ¬±ØÐëÓÉ×éºÏ¸ù×¢ÈëÎ¯ÍÐ£¨CoreWebView2 ÊÇ UI Ïß³ÌÇ×ºÍ¶ÔÏó£©
+[ OK ] °²È«Ä£Ê½±êÌâÀ¸ÎÄ×ÖÖ»ÓÐÒ»¸öÐ´Èëµã ApplyTitle£¨Êµ²â 1£©¡ª¡ª¶à´¦Ð´ Text ¾ÍÊÇ'Ò»´¦¸ÄÒ»´¦Â©'µÄ³ÉÒò
+[ OK ] Î¨Ò»Í¨ÖªÊµÏÖ NoticeCard.cs ±ØÐë´æÔÚ
+[ OK ] Í¨Öª¿¨Æ¬·ÇÄ£Ì¬£ºÏÔÊ¾Ê±²»ÇÀ½¹µã
+[ OK ] Í¨Öª¿¨Æ¬¼¸ºÎÖ»Ïû·Ñ´¿º¯Êý£¨²»µÃ×Ô³Ë DPI ÏµÊý£©
+[ OK ] Í¨Öª¿¨Æ¬±ØÐëÖ±½Ç£º²»µÃÔÙÓÃ GraphicsPath/Region ²Ã½Ç£¨»á²Ãµô×ó²àÇ¿µ÷ÌõµÄÉÏÏÂÁ½Í·£©
+[ OK ] Ç¿µ÷Ìõ±ØÐë»­ÔÚ±ß¿ò**Ö®ºó**£¨±ß¿òÑ¹ÔÚÉ«ÌõÁÐÉÏ=ÓÃ»§¿´µ½µÄ×óÔµ°×Ïß£»µ±Ç° border@8975 accent@9132£©
+[ OK ] ¿¨Æ¬µã»÷±ØÐë×ß NoticeCardLayout.HitTest£¨Ö»ÓÐ ¡Á Óë¶¯×÷ÐÐ¿Éµã£©
+[ OK ] ¿¨Æ¬²»µÃÔÙÊÖÐ´ÃüÖÐÅÐ¶¨£¨¾ÉÊµÏÖ£º²»ÊÇ ¡Á µÄµØ·½È«¶¼´¥·¢¶¯×÷£©
+[ OK ] Í¨Öª¶ÔÏó±ØÐë¹ýÈ¥ÖØÕ¢ÃÅ£¨±£Ö¤²»ÖØ¸´ÌáÊ¾£©
+[ OK ] ÍÐÅÌÆøÅÝ²»ÔÙÊÇÍ¨ÖªÍ¨µÀ£¨±ÜÃâµÚ¶þÌ×³ÊÏÖÊµÏÖ»Ø³±£©
+[ OK ] °æ±¾ÐÅÏ¢´°°æÊ½±ØÐëÀ´×Ô´¿º¯Êý£¨²»µÃÔÙÐ´ËÀ 96dpi ÏñËØÁÐÎ»£©
+[ OK ] °æ±¾ÐÅÏ¢´°±ØÐëÏìÓ¦ DPI ±ä»¯ÕûÌåÖØÅÅ£¨¿çÆÁ/¸Ä±¶ÂÊ£©
+[ OK ] ÍÐÅÌ²Ëµ¥Ç¯Î»±ØÐëÓÃÎïÀíÏñËØ¹¤×÷Çø rcWork£¬²»ÊÇÂß¼­ Screen.WorkingArea
+[ OK ] ÍÐÅÌ²Ëµ¥Âäµã±ØÐëÊÇ´¿º¯Êý£¨Ìù±ßÆ«ÒÆËæ DPI ÕÛËãÒ»´Î£©
+[ OK ] ×Ô»æ±êÌâÀ¸²»µÃÓÃ Point µ¥Î»×ÖºÅ£¨s2 ¸ùÒò£¬¼û issue #28-3£©
+[ OK ] ±êÌâÀ¸ÍÏ×§±ØÐë¾­ WindowGeometry.ShouldStartCaptionDrag ãÐÖµÅÐ¶¨£¨·ñÔòË«»÷×î´ó»¯ÔÙ´Î±ä³ÉËÀ´úÂë£©
+[ OK ] ±êÌâÀ¸Ö»ÔÊÐí 1 ´¦ SendMessage(WM_NCLBUTTONDOWN) ½Ó¹Üµã£¨µ±Ç° 1£©£º¶àÒ»´¦¾Í¶àÒ»ÌõÈÆ¹ýãÐÖµ¡¢ÍÌµôË«»÷µÄÂ·¾¶
+[ OK ] Í¨Öª¿¨Æ¬µÄ¶¨Î»Óë DPI ±ØÐëÍ¬Ô´£¬ÇÒÈ¡ÎïÀíÏñËØ¹¤×÷Çø
+[ OK ] ´°Ìå DPI ±ä»¯±ØÐë¾­ WindowGeometry.RescaleWindowForDpi ¸úËæÐÂ±¶ÂÊ¸ÄÎïÀí³ß´ç
+[ OK ] ×éºÏ¸ù²»µÃÔÙ¹Ò DpiChanged ´¦ÀíÆ÷£¨µ±Ç° 0 ´¦£©£º¼¸ºÎÖØËãµÄÎ¨Ò»ËùÓÐÕßÊÇ DshShellForm.OnDpiChanged
+[ OK ] profile ×°ÊÎÖ»ÔÊÐí 1 ´¦µ÷ÓÃµã£¨µ±Ç° 1£©£º±ØÐëÊÕÔÚ EnsureSafeProfileIdentity ÄÚ
+[ OK ] ³õÊ¼Æô¶¯µÄÉí·Ý¹³×Ó±ØÐëµÈÓÚÖØÆôÂ·¾¶Í¬Ò»¸ö profile ensure Èë¿Ú£¨Á½²à¶Ô³Æ£©
+[ OK ] ÍË³ö¾ö²ß±ØÐë°Ñ WindowManager.Instance.TrayExitRequested ´«½ø ShouldStopServiceOnClose£¨Â©´«=ÍÐÅÌÍË³ö²»·þÎñ£¬Õæ»ú T9 Êµ²â¹ýµÄÈ±ÏÝ£©
+[ OK ] ¡¾Step6Íê³É¡¿Program.cs ²»º¬ Form ×ÓÀà£¨ÒÑÇ¨³ö Windows/£©
+[ OK ] ¡¾Step6Íê³É¡¿Program.cs ²»º¬ WndProc£¨ÒÑÇ¨³ö Windows/£©
+[ OK ] ¡¾Step6Íê³É¡¿Program.cs ²»º¬ CreateParams£¨ÒÑÇ¨³ö Windows/£©
+[ OK ] ¡¾Step4Íê³É¡¿Program.cs ²»º¬ WebView2 ÊÂ¼þ½ÓÏß£¨ÒÑÇ¨Èë WebViewManager£©
+[ OK ] ¡¾ADR-021¡¿src/ ÖÐÑÏ½û³öÏÖ cmd.exe µ÷ÓÃ£¨clean
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DiagnoseExport.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DiagnoseExport.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ErrorCodes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ErrorCodes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LauncherApp.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LauncherApp.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Logger.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Logger.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Program.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿RuntimeResolver.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿RuntimeResolver.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ShellLogic.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ShellLogic.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿StagedUpdate.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿StagedUpdate.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateChecker.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateChecker.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateDataGuard.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateDataGuard.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebCacheVersionLedger.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebCacheVersionLedger.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowStateStore.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowStateStore.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CustomTitleBar.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CustomTitleBar.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowChromeController.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowChromeController.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshDiscovery.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshDiscovery.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshRuntimeIdentity.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshRuntimeIdentity.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿JsEntryResolver.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿JsEntryResolver.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeLaunchPolicy.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeLaunchPolicy.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeState.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeState.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeProfileBuilder.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeProfileBuilder.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿BootHealthMonitor.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿BootHealthMonitor.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LauncherLifecycle.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LauncherLifecycle.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeLifecycle.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SafeModeLifecycle.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceRestartCoordinator.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceRestartCoordinator.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateRollbackCoordinator.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UpdateRollbackCoordinator.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AppEnvironment.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AppEnvironment.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshUpdateManager.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshUpdateManager.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿F11LowLevelHook.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿F11LowLevelHook.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ManagerInterfaces.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ManagerInterfaces.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ProcessRunner.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ProcessRunner.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿RuntimeManager.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿RuntimeManager.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SelftestReporter.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SelftestReporter.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceLifecycleOps.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceLifecycleOps.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceManager.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ServiceManager.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebRuntimeInstaller.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebRuntimeInstaller.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebViewManager.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WebViewManager.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowManager.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowManager.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ActivationFactory.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ActivationFactory.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AgileReference.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AgileReference.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AttributeMessages.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿AttributeMessages.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Attributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Attributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Bindable.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Bindable.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CastExtensions.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CastExtensions.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CollectionHybrid.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿CollectionHybrid.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ComWrappersSupport.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ComWrappersSupport.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ComWrappersSupport.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ComWrappersSupport.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Context.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Context.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DataErrorsChangedEventArgs.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DataErrorsChangedEventArgs.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DelegateExtensions.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DelegateExtensions.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DerivedComposed.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DerivedComposed.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandler.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandler.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandlerEventSource.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandlerEventSource.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandlerEventSource{T}.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventHandlerEventSource{T}.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventRegistrationToken.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventRegistrationToken.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventRegistrationTokenTable{T}.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventRegistrationTokenTable{T}.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSource{TDelegate}.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSource{TDelegate}.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSourceCache.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSourceCache.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSourceState{TDelegate}.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿EventSourceState{TDelegate}.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionErrorInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionErrorInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionErrorInfo.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionErrorInfo.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.Microsoft.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.Microsoft.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.Windows.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ExceptionHelpers.Windows.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿FeatureSwitches.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿FeatureSwitches.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿FundamentalMarshalers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿FundamentalMarshalers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿GenericDelegateHelper.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿GenericDelegateHelper.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Geometry.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Geometry.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿GuidGenerator.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿GuidGenerator.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IActivationFactory.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IActivationFactory.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IAgileReference.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IAgileReference.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ICommand.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ICommand.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IContextCallback.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IContextCallback.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ICustomPropertyProvider.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ICustomPropertyProvider.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDelegateVftbl.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDelegateVftbl.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDictionary.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDictionary.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDisposable.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IDisposable.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IEnumerable.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IEnumerable.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IID.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IID.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IInspectable.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IInspectable.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IInspectable.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IInspectable.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IList.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IList.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IMarshal.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IMarshal.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿InitializeProjection.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿InitializeProjection.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyCollectionChanged.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyCollectionChanged.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyDataErrorInfo.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyDataErrorInfo.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyPropertyChanged.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿INotifyPropertyChanged.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IPropertyValue.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IPropertyValue.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReadOnlyDictionary.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReadOnlyDictionary.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReadOnlyList.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReadOnlyList.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReferenceArray.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReferenceArray.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReferenceTracker.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IReferenceTracker.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IServiceProvider.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IServiceProvider.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IStringable.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IStringable.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IUnknownVftbl.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IUnknownVftbl.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IWeakReferenceSource.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IWeakReferenceSource.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IWinRTObject.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IWinRTObject.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿KeyValuePair.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿KeyValuePair.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Marshalers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Marshalers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Module.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Module.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonoSupport.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonoSupport.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedAction.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedAction.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedEventArgs.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedEventArgs.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedEventHandler.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NotifyCollectionChangedEventHandler.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Nullable.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Nullable.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Numerics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Numerics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ObjectReference.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ObjectReference.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Platform.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Platform.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.CustomTypeMappings.EventHandler.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.CustomTypeMappings.EventHandler.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.CustomTypeMappings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Projections.CustomTypeMappings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿PropertyChangedEventArgs.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿PropertyChangedEventArgs.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿PropertyChangedEventHandler.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿PropertyChangedEventHandler.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SingleInterfaceOptimizedObject.net5.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SingleInterfaceOptimizedObject.net5.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿StandardDelegates.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿StandardDelegates.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SystemTypes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SystemTypes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Type.ArrayMarshalling.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Type.ArrayMarshalling.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Type.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Type.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TypeExtensions.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TypeExtensions.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TypeNameSupport.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TypeNameSupport.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Uri.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Uri.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Data.Xml.Dom.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Data.Xml.Dom.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Collections.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Collections.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Diagnostics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Diagnostics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Metadata.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Metadata.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Numerics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Foundation.Numerics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.AccessCache.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.AccessCache.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.BulkAccess.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.BulkAccess.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Compression.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Compression.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.FileProperties.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.FileProperties.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Pickers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Pickers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Pickers.Provider.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Pickers.Provider.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Provider.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Provider.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Search.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Search.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Streams.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.Storage.Streams.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.DevicePortal.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.DevicePortal.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.Telemetry.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.Telemetry.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.TraceReporting.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Diagnostics.TraceReporting.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Display.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Display.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Inventory.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Inventory.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Power.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Power.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Power.Diagnostics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Power.Diagnostics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Preview.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Preview.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Profile.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Profile.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Profile.SystemManufacturers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Profile.SystemManufacturers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.RemoteDesktop.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.RemoteDesktop.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.RemoteSystems.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.RemoteSystems.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Threading.Core.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Threading.Core.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Threading.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Threading.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Update.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.Update.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.UserProfile.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.System.UserProfile.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.UI.Notifications.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Windows.UI.Notifications.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTEventHelpers.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTEventHelpers.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTGenericTypeInstantiations.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTGenericTypeInstantiations.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTRuntimeErrorStrings.Designer.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WinRTRuntimeErrorStrings.Designer.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WuxMuxProjectedTypeAttribute.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WuxMuxProjectedTypeAttribute.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿.NETCoreApp,Version=v10.0.AssemblyAttributes.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.AssemblyInfo.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShell.GlobalUsings.g.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DisplayMetricsProvider.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DisplayMetricsProvider.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ImeContextGuard.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿ImeContextGuard.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IScreenProvider.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿IScreenProvider.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorDpi.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorDpi.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorDpiMetrics.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorDpiMetrics.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorWorkArea.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿MonitorWorkArea.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NativeMethods.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NativeMethods.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UiTestHook.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UiTestHook.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowGeometry.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowGeometry.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShellForm.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿DshShellForm.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LegacyUpgradeCleanup.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿LegacyUpgradeCleanup.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NoticeCard.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿NoticeCard.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SplashForm.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿SplashForm.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TrayMenuForm.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿TrayMenuForm.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UiSelftestProbe.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿UiSelftestProbe.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿VersionInfoDialog.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿VersionInfoDialog.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowIcons.cs ²»º¬ DoEvents
+[ OK ] ¡¾¼¼ÊõÕ®¡¿WindowIcons.cs ²»º¬ Assembly.Location£¨SingleFile ²»¼æÈÝ£©
+[ OK ] ¡¾¼¼ÊõÕ®¡¿Kill() ±ØÐë´ø entireProcessTree£¨clean
+[ OK ] Ð¶ÔØ CA ÇåÀí DshWeb.exe ×ÔÆôÖµ
+[ OK ] Ð¶ÔØ CA ¼æÈÝÇåÀí¾É°æ start-dsh.vbs ×ÔÆôÖµ
+[ OK ] Ð¶ÔØ CA Ìá¹©ÓÃ»§Êý¾ÝÇåÀí£¨½ö×ÔÓÐÊý¾Ý£©
+[ OK ] Ð¶ÔØ CA ²»É¾³ý dsh profiles/²å¼þÄ¿Â¼
+[ OK ] ¿Çº¬¶Ë¿Ú¡úPID ·´²é£¨GetExtendedTcpTable/netstat£¬½©Ê¬¶Ë¿Ú¹éÊôÑéÖ¤£©
+[ OK ] ¿Çº¬ P/Invoke GetExtendedTcpTable£¨¾«È·¶Ë¿Ú¹éÊô£©
+[ OK ] ¿Çº¬½ø³ÌÊ÷Ç¿É±£¨taskkill /T /F ÓïÒå£©
+[ OK ] ¿Ç²»ÔÙÊÕ¼¯/É±ÉË×æÏÈ½ø³Ì£¨Toolhelp32 ËÀÁ´ÒÑ¸ù³ý£©
+[ OK ] ÏµÍ³º¬ npm Ê§°Ü¿ÉÖØÊÔÅÐ¶¨£¨pending ±£Áô/ÇåÀí²ßÂÔ£»ÏÖ¾Ó¸üÐÂÒýÇæ£©
+[ OK ] ¿Çº¬¸üÐÂÊ§°ÜÓÃ»§Í¨Öª£¨E4002 µ¯´°ÊÕ¿Ú£¬²ßÂÔÔÚÒýÇæ£©
+[ OK ] ¿Çº¬¸üÐÂ°²×°½ø¶ÈÉÏ±¨£¨Splash 'ÕýÔÚÓ¦ÓÃ¸üÐÂ (vX)¡­'£»ÏÖ¾ÓÒýÇæ£©
+[ OK ] npm ÊµÊ±ÈÕÖ¾ÖðÐÐÒì²½¶ÁÈ¡£¨·ÇÒ»´ÎÐÔ ReadToEnd£»ÏÖ¾Ó ProcessRunner£©
+[ OK ] Logger ÓÃ FileShare.ReadWrite ·ÀÈÕÖ¾ËøËÀ£¨¼æÈÝ cmd >> ¾ä±ú£©
+[ OK ] Logger º¬ %TEMP% fallback Â·¾¶£¨Ö÷ÈÕÖ¾±»ËøÊ±ÂäÅÌ£©
+[ OK ] Logger fallback Ê±Êä³ö Console.Error ÐÑÄ¿¸æ¾¯
+[ OK ] ServiceManager º¬¶Ë¿ÚÈýÖØÑéÖ¤£¨TCP+½ø³ÌÉí·Ý+HTTP£©
+[ OK ] ServiceManager º¬½©Ê¬½ø³ÌÊ÷ÇåÀí
+[ OK ] ServiceManager Çø·Ö Healthy/Zombie/Foreign ÈýÌ¬
+[ OK ] Splash Ö§³Ö¸üÐÂ°²×°½×¶Î±êÖ¾£¨È¡Ïû°´Å¥½ûÓÃ/°²×°ÖÐ¡­£©
+[ OK ] ¸üÐÂÓ¦ÓÃ Splash ÎÄ°¸Ã÷Ê¾ÏÖ³¡ÏÂÔØºÄÊ±£¨Ô¤¼Æ 1-2 ·ÖÖÓ£©£¬³ÏÊµ¹ÜÀíÔ¤ÆÚ
+[ OK ] ¿Çº¬±¾µØ tarball ¶¨Î»£¨Ó¦ÓÃÓÅÏÈ±¾µØ°²×°°ü£¬²»ÏÖ³¡À­È¡£©
+[ OK ] ¿Çº¬°²×°À´Ô´Ñ¡Ôñ£º±¾µØ tarball ÓÅÏÈ¡¢È±Ê§»ØÍË registry spec£¨À´Ô´¿ÉÕï¶Ï£©
+[ OK ] ¸üÐÂÑ¯ÎÊµ¯´°Ã÷Ê¾'ºóÌ¨¾²Ä¬ÏÂÔØ'£¨²»´ò¶Ïµ±Ç°Ê¹ÓÃ£©
+[ OK ] ¸üÐÂÆøÅÝ/µ¯´°ÎÄ°¸ÈçÊµ'ÐèÁªÍø½âÎöÒÀÀµ£¬Ô¤¼Æ 1-2 ·ÖÖÓ'£¨²»Îóµ¼'ÒÑÈ«²¿ÏÂÔØÍê'£©
+[ OK ] ¸üÐÂÎÄ°¸Çø·Ö'Ö÷³ÌÐòÒÑÏÂÔØ'Óë'ÒÀÀµÔÚÏß½âÎö'£¨³ÏÊµ¹ÜÀíÔ¤ÆÚ£©
+[ OK ] ÏÂÔØ¹ÜÏßÔÚ¸ôÀë staging buildDir ¹¹½¨ÔËÐÐÊ±£¨²»ÎÛÈ¾Éú²ú runtimes£©
+[ OK ] Ã¿´Î¹¹½¨Ç°Ç¿ÖÆÇå³¡ buildDir£¨·À²ÐÁô lockfile µ¼ÖÂ pnpm ¼Ù³É¹¦£©
+[ OK ] ÖØ½¨Ç°ÇåµôÖ¸Ïò±¾ buildDir µÄ stale pending£¨·À°ë³ÉÆ·±»Ç¿ÖÆÓ¦ÓÃ£©
+[ OK ] npm »ØÍË°²×°×ß --prefix ¾Ö²¿Ê÷£¨²»´¥ÅöÈ«¾Ö»·¾³£©
+[ OK ] °²×°Í³Ò» --no-audit --no-fund£¨Ìø¹ýÉó¼Æ/fund£¬¼ÓËÙ°²×°£©
+[ OK ] pack/build/apply ¹²ÓÃÍ¬Ò»Ô´ÐòÁÐ GetNpmRegistrySources£¨·À¿ç registry cache miss£©
+[ OK ] ¹¹½¨Ê§°Ü±£Áô tarball ´ýÏÂ´ÎÖØÊÔ£¨½µ¼¶²»¶ÏÁ´Â·£©
+[ OK ] npm ¹¹½¨Â·¾¶ÓÐ³¬Ê±ÉÏÏÞ£¨Ç¿ÖÆ kill£¬²»Áô½©Ê¬Ê÷£»ÄÚºËÏÖ¾Ó DshUpdateManager£©
+[ OK ] npm-cli.js Ì½²â´æÔÚ£¨node.exe Í¬¼¶ + AppData È«¾ÖÁ½ÓÅÏÈ¼¶£»ÏÖ¾Ó JsEntryResolver£©
+[ OK ] RunNpmCommand ÓÃ node.exe ¾ø¶ÔÂ·¾¶Æô¶¯£¨½µÎ¬´ò»÷£ºÈÆ¹ý .cmd/.bat/cmd.exe È«²¿ÏÝÚå£©
+[ OK ] µ×²ã½ø³ÌÖ´ÐÐÆ÷ RunProcessCaptured ´æÔÚ£¨¹© Real-OS ²âÊÔÁã Mock µ÷ÓÃ£»ÏÖ¾Ó ProcessRunner£©
+[ OK ] ÒÑ³¹µ×É¾³ý chcp 65001 Hack ´úÂë£¨±àÂë³åÍ»¸ù³ý£¬×¢ÊÍ±£ÁôËµÃ÷ÎÞº¦£©
+[ OK ] ÒÑÉ¾³ý cmd /c Ë«²ãÒýºÅ Hack£¨node ÒýÇæÌæ´ú£©
+[ OK ] node.exe È±Ê§Ê±¸ø³öÃ÷È·´íÎó£¨²»¼ÌÐøÖ´ÐÐ£»ÏÖ¾Ó ProcessRunner£©
+[ OK ] npm-cli.js È±Ê§Ê±¸ø³öÃ÷È·´íÎó£¨ÌáÊ¾ÖØ×° Node£»ÏÖ¾Ó ProcessRunner£©
+[ OK ] stderr ÏÔÊ½ UTF-8£¨npm¡Ý7 ÄÚ²¿¼´ UTF-8£¬ÈÎºÎ´úÂëÒ³¿É¶Á£©
+[ OK ] ÏÂÔØÊ§°Üµ¯´°±©Â¶ÕæÊµ errorTail£¨²»ÔÙÓ²±àÂë'ÏÂÔØÊ§°Ü'²ØÔ­Òò£©
+[ OK ] ´íÎó·ÖÀà´¿º¯Êý£¨npm »·¾³È±Ê§ vs ÍøÂç/registry£¬²»Í¬½¨ÒéÎÄ°¸£©
+[ OK ] ShellLogic Ìá¹© npm È±Ê§ÅÐ¶¨´¿º¯Êý£¨ÆõÔ¼²âÊÔËø¶¨£©
+[ OK ] ÕÒ²»µ½ UpdateNoticeFlowPolicy.Decide Ç©Ãû£¨²âÁ¿Æ÷ÍË»¯£¬ÏÈ²é´¿º¯ÊýÊÇ·ñ±»¸ÄÃû£©
+[ OK ] Decide ²»µÃÔÙÊÕ int ÐÍ±È½Ï½á¹ûÈë²Î£¨Êµ²âÇ©Ãû£ºpublic static Outcome Decide( string? pendingVersion, bool launcherShouldNotify, string? launcherVersion, string? launcherLocalVersion, string? latest, string? local, bool alreadyStagedThisSession, string? skippedVersion)£©
+[ OK ] RunNpmCommand Ö§³Ö¹¤×÷Ä¿Â¼²ÎÊý£¨Ïà¶ÔÂ·¾¶ ./<tarball> ÒÀÀµ¸ÃÄ¿Â¼£»ÏÖ¾Ó ProcessRunner£©
+[ OK ] npm ¹¹½¨´«Èë staging buildDir Îª¹¤×÷Ä¿Â¼£¨Ïà¶ÔÂ·¾¶ ./<tarball> ÒÀÀµ¸ÃÄ¿Â¼£»ÄÚºËÏÖ¾Ó DshUpdateManager£©
+[ OK ] pack Ç°ÏÈ´´½¨Ä¿±ê¹¹½¨Ä¿Â¼£¨ÀúÊ· ERROR_INVALID_NAME ³¡¾°µÄµÈ¼ÛÐÞ¸´£©
+[ OK ] StagedUpdate Ìá¹©±¾µØ tarball ¶¨Î»£¨Èý¼¶£ºpending Ãû¡úÃüÃû¹æÔò¡úglob£©
+[ OK ] pending-update.json ¼ÇÂ¼ tarball ÎÄ¼þÃû£¨Ó¦ÓÃÊ§°ÜÖØÊÔÈÔÓÃ±¾µØ°ü£©
+[ OK ] StagedUpdate ±£Áô prefetch_temp Ä¿Â¼¶¨Òå£¨¾É pending ¼ÇÂ¼¼æÈÝÇåÀí£©
+[ OK ] pending-update.json ±£Áô prefetched ±êÖ¾£¨¾É¼ÇÂ¼Ïòºó¼æÈÝ£»ÕæÊµ×´Ì¬²ÅÎª true£©
+[ OK ] ½ûÖ¹'ÒÀÀµÒÑÔ¤ÈÈ£¬Ô¤¼Æ 5-10 Ãë'Ðé¼Ù³ÐÅµ£¨ÎÄ°¸±ØÐë»ùÓÚÕæÊµ½ø¶È£¬²»µÃÐ´ËÀÃëÊý£©
+[ OK ] ¹¹½¨³É¹¦/Ê§°ÜÖÕÌ¬ÎÄ±¾Í³Ò»¾­ ComposeTerminalTitleText£¨½áÂÛ×¤Áô±êÌâÀ¸£¬²»ÔÙ¾²Ä¬ÏûÊ§£©
+[ OK ] ÏßÉÏ»ØÍËÂ·¾¶ÈçÊµÌáÊ¾'¿ÉÄÜÐèÒª¼¸·ÖÖÓ'£¨¹ÜÀíÔ¤ÆÚ£¬²»Ð´ËÀ 1-2 ·ÖÖÓ£»ÎÄ°¸ÏÖ¾ÓÒýÇæ Apply Â·¾¶ B£©
+[ OK ] Ê××°£¨ÎÞ dsh£©¸Ä×ß npm È«¾Ö°²×°£¨Ìæ´ú SelfContained Ë«·Ý¹¹½¨£¬Ê§°Ü²»¾²Ä¬Âä npx£»ÏÖ¾Ó¸üÐÂÒýÇæ£©
+[ OK ] Ê××°È«¾Ö°²×°´øÉ³ºÐÃÅ¿Ø£¨CI/É³ºÐÄ¬ÈÏÌø¹ýÕæÊµÍøÂç°²×°£©
+[ OK ] Ê××°°²×°³É¹¦ºóÊ§Ð§·¢ÏÖ²ã¼ÇÒä£¨ÐÂ×° shim/°æ±¾Á¢¼´¿É¼û£©
+[ OK ] ÖÕÌ¬±ÀÀ£¿É¼û»¯£ºUnhandledException ¡ú [E9001] µ¯´°£¨·ÇÎÞÍ·Ä£Ê½£©£¬Ë«»÷ÎÞÉùÏûÊ§ÓÐÏßË÷
+[ OK ] [E1009] ´ø Describe£¨µÚ¶þÊµÀýÖ÷´°Î´¾ÍÐ÷µÄ Info µ¯´°£©
+[ OK ] [E1012] ´ø Describe£¨Ê××° npm È«¾Ö°²×°Ê§°ÜµÄÕæÊµ¸ùÒòÕ¹Ê¾£©
+[ OK ] ·¢²¼Õ¢ÃÅ£ºtag Ìá½»È± CHANGELOG ÌõÄ¿Ê± fail-fast£¨v0.4.0 Õ¼Î»ÎÄ°¸ÊÂ¹Ê¸ùÖÎ£©
+[ OK ] Ô¤·¢²¼ tag£¨º¬ '-'£©ÕûÌåÌø¹ý×Ô¶¯Á÷Ë®Ïß£¨rc ÓÉÊÖ¶¯ gh --prerelease ·¢²¼£¬²»ÇÀÕýÊ½°æ£©
+[ OK ] µ¥²âÒÑ½ûÓÃ¼¯ºÏ¼ä²¢ÐÐ£¨StagedUpdate ¾²Ì¬×´Ì¬»¥²ÈËæ»úºì¸ùÖÎ£©
+
+== 2.2. Ë«¹ìÖÆÃÅ½û£¨ADR-024£ºProgram.cs ×éºÏ¸ù´¿¾»¶È£© ==
+[ OK ] ¡¾ADR-024¡¿Program.cs ÁãÒµÎñÔ­Óï£¨clean
+[ OK ] ×éºÏ¸ùÎ¨Ò»·þÎñÀ­ÆðÈë¿Ú StartDshServiceViaIdentity£¨°´ Identity Ö±Æô£©
+[ OK ] ¾É wscript/vbs Æô¶¯Á´Èë¿ÚÃûÒÑ´Ó×éºÏ¸ù¸ù³ý
+
+== 2.3 ÌåÁ¿ÓëÒÀÀµ·½Ïò¼¬ÂÖ£¨ADR-024 ²¹¿Ú£»Ö»½µ²»Éý£© ==
+[ OK ] ¡¾¼¬ÂÖ G1¡¿Program.cs ´úÂëÐÐÊý ¡Ü 2001£¨Êµ²â 2001£©
+[ OK ] ¡¾¼¬ÂÖ G1b¡¿ShellLogic.cs ²»´¿Ô­ÓïÐÐ ¡Ü 11£¨Êµ²â 11£ºÐÐ 251,271,1320,1494,1497¡­£©
+[ OK ] ¡¾¼¬ÂÖ G2¡¿Program.cs µ¥·½·¨ ¡Ü 300 ÐÐ£¨Êµ²â×î´ó RunUserInterface=297£©
+[ OK ] ¡¾G2 ×Ô¼ì¡¿·½·¨³¤¶ÈÉ¨ÃèÆ÷¹¤×÷Õý³££¨Êµ²â RunUserInterface=297£¬Ðë ¡Ý100 ²ÅËµÃ÷½âÎöÎ´ÍË»¯£©
+[ OK ] ¡¾G3 Ó²Õ¢¡¿ÏÂ²ã´úÂëÁã»Øµ÷ Program ¾²Ì¬£¨Êµ²â 0£ºclean£©
+[ OK ] ¡¾¼¬ÂÖ G4¡¿Manager »¥²»ÒýÓÃ£ºÐÖµÜÒýÓÃ ¡Ü 9 ´¦£¨Êµ²â 9£©
+[ OK ] ¡¾G5¡¿Program.cs Î´ÐÂÔö¶³½áÇåµ¥ÍâµÄ¾²Ì¬±êÁ¿Á÷³Ì×Ö¶Î£¨ÐÂÔö£ºÎÞ£©
+[ OK ] ¡¾¼¬ÂÖ G6¡¿src/DshShell ¿Õ catch ×ÜÊý ¡Ü 30£¨Êµ²â 30£©
+[ OK ] ¡¾G7¡¿CHANGELOG Ç¡ºÃ 1 ¸ö [Unreleased] Ãªµã£¨Êµ²â 1£©
+[ OK ] ¡¾G7¡¿CHANGELOG [Unreleased] ¶Î ¡Ü 22 ÐÐ£¨Êµ²â 4£»¶¨°æÊ±±ØÐëÕû¶Î°á½ø°æ±¾±êÌâ£©
+[ OK ] ¡¾G8¡¿docs/00 ²»µÃÕýÃæÃüÁîÊ¹ÓÃ cmd.exe /c »ò npm.cmd£¨Ê×Àý£ºclean£©
+[ OK ] ¡¾G8¡¿AGENTS.md ÏîÄ¿µØÍ¼ÁÐÈ« Managers/ ÏÂÃ¿¸ö¶ÔµÈ Manager£¨È±Ê§£ºÎÞ£©
+[ OK ] ¡¾G8¡¿refactor-static-mapping.md ²»µÃÔÚÎ´±ê×¢Ê±Ð§µÄÇé¿öÏÂ×Ô³ÆÎ¨Ò»È¨Íþ
+[ OK ] ¡¾G9¡¿ÒÑÇ¨³öµÄÔËÐÐÆÚÊÂÎñ·ûºÅÎ´»ØÁ÷×éºÏ¸ù£¨Ê×Àý£ºclean£©
+[ OK ] ¡¾G9¡¿»Ø¹ö¸´ÓÃ ServiceRestartCoordinator£¬ÎÞÊÖÐ´×èÈûÂÖÑ¯£¨Ê×Àý£ºclean£©
+[ OK ] ¡¾G9¡¿»Ø¹ö¾ÍÐ÷Ô¤ËãÔÚÐ­µ÷Æ÷ÄÚÏÔÊ½ÉùÃ÷£¨¿É±»²âÊÔ¶¤×¡£©
+[ OK ] ¡¾G9¡¿µ¼º½×¢Èë±ØÐë×ß UI Í¶µÝÏß³Ì£¨ÂãÎ¯ÍÐ»áÅ×¿çÏß³ÌÒì³££ºclean£©
+[ OK ] ¡¾G10 Ó²Õ¢¡¿DPI Ç¯ÖÆÖ»ÔÚ ShellLogic.DpiScale Ò»´¦£¨µÚ¶þ·Ý£ºclean£©
+[ OK ] ¡¾G10 Ó²Õ¢¡¿ÎÞÎ´Ç¯ÖÆµÄÂã /96f »»Ëã£¨DPI¡úÏµÊýÖ»×ß DpiScale.Of£»Ê×Àý£ºclean£©
+[ OK ] ¡¾G11¡¿src ÄÚ taskkill Æô¶¯µãÎ¨Ò»£¨Êµ²â 1£ºShellLogic.cs: var psi = new System.Diagnostics.ProcessStartInfo("taskkill.exe", args)£©
+[ OK ] ¡¾G12¡¿RunCapture ÒÑÊÇ¶Ì½ø³Ì²É¼¯Ö÷Â·¾¶£¨µ÷ÓÃµã 5£¬¡Ý5£©
+[ OK ] ¡¾¼¬ÂÖ G12¡¿RunCapture Ö®ÍâÊÖÐ´ÏÞÊ± WaitForExit µÄ²É¼¯µã ¡Ü 2£¨Êµ²â 2£ºShellLogic.cs: p.WaitForExit(3000);£©
+[ OK ] ¡¾G13 Ó²Õ¢¡¿°üÃû/Â·¾¶¶Î/scope Ç°×º×ÖÃæÁ¿Ö»´Ó DshDiscovery È¡£¨Ê×Àý£ºclean£©
+[ OK ] ¡¾G13¡¿bundle scope Ç°×º´Ó PackageScope ÅÉÉú£¬²»µÃÁíÁ¢µÚ¶þ·Ý×ÖÃæÁ¿
+
+== 2.5. Sandbox ¾²Ì¬¶ÏÑÔ ==
+[ OK ] Program.cs ±©Â¶ IsSandboxMode ÊôÐÔ£¨DSH_SANDBOX=1 ÅÐ¶¨£©
+[ OK ] CleanupProgramDataResidue ´æÔÚÇÒ IsSandboxMode ´æÔÚ£¨ÃÅ¿Ø£©
+[ OK ] EnsureAutoStartRequested ´æÔÚÇÒ IsSandboxMode ´æÔÚ£¨ÃÅ¿Ø£©
+[ OK ] TryPromptOldVersionCleanup ´æÔÚÇÒ IsSandboxMode ´æÔÚ£¨ÃÅ¿Ø£©
+[ OK ] CleanupOrphanShortcuts ´æÔÚÇÒ IsSandboxMode ´æÔÚ£¨ÃÅ¿Ø£©
+[ OK ] EnsureSingleInstanceAndAutostart ÓÃ !IsSandboxMode ÃÅ¿Ø¸±×÷ÓÃ
+[ OK ] CleanupProgramDataResidue ·½·¨ÌåÄÚÓÐ IsSandboxMode ÔçÆÚ·µ»Ø£¨AppEnvironment£©
+[ OK ] EnsureAutoStartRequested ·½·¨ÌåÄÚÓÐ IsSandboxMode ÔçÆÚ·µ»Ø£¨AppEnvironment£©
+[ OK ] ×éºÏ¸ù±£Áô CleanupProgramDataResidue µ÷ÓÃÓë !IsSandboxMode ÃÅ¿Ø
+[ OK ] RuntimeResolver Ö§³Ö DSH_PORTABLE_NODE_DIR »·¾³¸²¸Ç
+[ OK ] RuntimeResolver.RuntimeStatePath ×ðÖØ DSH_HOME »·¾³±äÁ¿
+[ OK ] UpdateChecker Ö§³Ö DSH_NPM_REGISTRY »·¾³¸²¸Ç
+[ OK ] UpdateChecker Í¨¹ý NpmRegistryBase ÊôÐÔÍ³Ò» registry »ùÖ·
+[ OK ] ÎÞ registry.npmjs.org Ó²±àÂë£¨clean
+
+== 3. uninstall-autostart.cmd ÐÐÎª²âÊÔ ==
+'—å†…æ‰' ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî£¬Ò²²»ÊÇ¿ÉÔËÐÐµÄ³ÌÐò
+»òÅú´¦ÀíÎÄ¼þ¡£
+[ OK ] É¾³ýÆô¶¯ÎÄ¼þ¼Ð×ÔÆôÏî
+[ OK ] É¾³ý¾É°æ dsh-autostart.vbs
+[ OK ] É¾³ý DshWeb.lnk
+[ OK ] É¾³ý DeepSeek Harness.lnk
+[ OK ] ²»Ó°ÏìÎÞ¹ØÎÄ¼þ
+
+== 3.5. -CleanData Êý¾ÝÇåÀíÐÐÎª²âÊÔ£¨DSH_HOME/USERPROFILE ¾ù¸ôÀëµ½ %TEMP%£© ==
+[ OK ] Î±Ôì DSH_HOME ±ØÐëÎ»ÓÚ %TEMP% ÄÚ
+'—å†…æ‰' ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî£¬Ò²²»ÊÇ¿ÉÔËÐÐµÄ³ÌÐò
+»òÅú´¦ÀíÎÄ¼þ¡£
+[ OK ] Ä¬ÈÏÔËÐÐ²»É¾³ýÊý¾ÝÄ¿Â¼
+'—å†…æ‰' ²»ÊÇÄÚ²¿»òÍâ²¿ÃüÁî£¬Ò²²»ÊÇ¿ÉÔËÐÐµÄ³ÌÐò
+»òÅú´¦ÀíÎÄ¼þ¡£
+[ OK ] -CleanData É¾³ý DSH_HOME\dsh-launcher
+[ OK ] -CleanData ²»´¥Åö profiles/ ²å¼þÊý¾Ý
+
+È«²¿²âÊÔÍ¨¹ý
+pwsh_exit=0

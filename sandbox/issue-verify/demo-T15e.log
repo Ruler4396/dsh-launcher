@@ -1,0 +1,28 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=2604 port=6605 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  cleanup taskkill /T /F pid=2604 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 broken bundle written into dsh.profile.bundles (crashes dsh before readiness)
+  pid=1972 port=6700 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step3 startup verdict: service readiness failed
+  dialog [DeepSeek Harness - 启动异常] 492x227 at (756,458)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-1-startup-ask.png
+  Enter (default button) hwnd=4851982 fg=4851982
+  dialog answered = True
+  step4 same-process recovery: armed=SAFEMODE: armed at startup safeStart=service start via identity (SAFE profile) ready=HEALTHY card=True extraAsk=0 exited=False title=DeepSeek Harness（安全模式）（有更新）
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-2-in-safe-mode.png
+  click (1686,946) card BODY (must NOT trigger the action)
+  step5a body click: leaked=False; 'click ignored' log lines=1
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-after-body-click.png
+  click (1686,1048) sticky card action row
+  step6 back to normal: exit=; HEALTHY count=1; flag={
+  "active": true,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; normal starts=2
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-back-to-normal.png
+[FAIL] T15 :: exit= healthy=1 flag={"active":true,"tier":1,"consecutiveBootFailures":0} normal=2
+  cleanup taskkill /T /F pid=1972 left=0
+
+==== summary ====
+FAIL   T15    exit= healthy=1 flag={"active":true,"tier":1,"consecutiveBootFailures":0} normal=2

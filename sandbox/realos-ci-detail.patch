@@ -1,0 +1,28 @@
+diff --git a/.github/workflows/realos-test.yml b/.github/workflows/realos-test.yml
+index f7c87dd3..fa0624aa 100644
+--- a/.github/workflows/realos-test.yml
++++ b/.github/workflows/realos-test.yml
+@@ -52,11 +52,22 @@ jobs:
+           $env:DSH_FORCE_NPM_SMOKE = "1"
+           # RealNet 类别排除：依赖真实镜像网络下载构建（40 分钟级、境外 runner 不可达境内源），
+           # 属于本地强制硬门禁而非 CI 门禁——CI 环境差异不应劫持发布流水线
++          # console;verbosity=normal 是**故意**的：-v q 会把 xUnit 的 Error Message/Stack Trace
++          # 整段吞掉，2026-09-19 那条真红（BootHealthMonitor 真实进程退出码用例）就是这么变成
++          # "只知道红了一条、不知道为什么红"。红必须自我说明。
+           dotnet test "tests\DshShell.Tests" -c Release --nologo -v q `
++            --logger "console;verbosity=normal" `
+             --filter "(Category=RealOS|FullyQualifiedName~RealWorldNpmExecutionTests)&Category!=RealNet" 2>&1 | Tee-Object -FilePath realos.log
+           $code = $LASTEXITCODE
+           if ($code -ne 0) {
+-            Select-String -Path realos.log -Pattern '\[FAIL\]|失败!' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
++            $lines = @(Get-Content realos.log)
++            for ($i = 0; $i -lt $lines.Count; $i++) {
++              if ($lines[$i] -match '\[FAIL\]') {
++                $end = [Math]::Min($i + 16, $lines.Count - 1)
++                foreach ($l in $lines[$i..$end]) { Write-Output ("::error file=tests::" + $l.Trim()) }
++              }
++            }
++            Select-String -Path realos.log -Pattern 'Failed!|失败!' | ForEach-Object { Write-Output ("::error file=tests::" + $_.Line.Trim()) }
+             exit $code
+           }
+ 

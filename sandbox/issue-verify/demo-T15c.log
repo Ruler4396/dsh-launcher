@@ -1,0 +1,36 @@
+  harness dpi awareness: before=0 set(PMv2)=True after=2
+  pid=18020 port=6727 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  cleanup taskkill /T /F pid=18020 left=0
+  step1 baseline (clean profile): HEALTHY
+  step2 broken bundle written into dsh.profile.bundles (crashes dsh before readiness)
+  pid=12236 port=6818 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step3 startup verdict: service readiness failed
+  dialog [DeepSeek Harness - 启动异常] 490x243 at (756,450)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-1-startup-ask.png
+  Enter (default button) hwnd=16123570 fg=16123570
+[E2010] dsh 服务进程在就绪前已退出，启动失败（详见统一日志中的进程输出与退出码）。
+已启用安全模式。
+
+关闭本提示后重新打开 dsh-launcher，将以安全模式启动（第三方插件临时禁用，仅保留 dsh 核心功能）。启动后通知卡上可随时退出安全模式。
+  dialog answered = True
+  step4 info logged=True; host exited=True; safe-mode.json={
+  "active": true,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; .dsh-safe built=True
+  pid=27196 port=6852 home=E:\dsh-launcher\sandbox\issue-verify\scene-T15\home
+  step5 reopened: readiness=HEALTHY; safe start=service start via identity (SAFE profile); sticky card=True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-3-in-safe-mode.png
+  click (1686,1048) sticky card action row
+  step6 back to normal: exit=exit-safe-mode: identity-driven start returned True; HEALTHY count=2; flag={
+  "active": false,
+  "tier": 1,
+  "consecutiveBootFailures": 0
+}; normal starts=3
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T15-4-back-to-normal.png
+[PASS] T15 :: pre-readiness plugin crash now offers safe mode -> armed .dsh-safe -> relaunch runs in safe mode (HEALTHY + sticky card) -> plugin removed -> real click exits back to normal profile
+  cleanup taskkill /T /F pid=27196 left=0
+  cleanup taskkill /T /F pid=12236 left=0
+
+==== summary ====
+PASS   T15    pre-readiness plugin crash now offers safe mode -> armed .dsh-safe -> relaunch runs in safe mode (HEALTHY + sticky card) -> plugin removed -> real click exits back to normal profile

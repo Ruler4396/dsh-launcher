@@ -1,0 +1,200 @@
+生成启动时间为 2026/9/20 20:27:42。
+     1>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”在节点 1 上(Restore 个目标)。
+     1>_GetAllRestoreProjectPathItems:
+         正在确定要还原的项目…
+     1>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1)正在节点 1 上生成“E:\dsh-launcher\src\DshShell\DshShell.csproj”(2:4) (_GenerateProjectRestoreGraph 个目标)。
+     2>AddPrunePackageReferences:
+         Loading prune package data from PrunePackageData folder
+         Failed to load prune package data from PrunePackageData folder, loading from targeting packs instead
+         Looking for targeting packs in C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref
+         Pack directories found: C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.11
+         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12
+         Found package overrides file C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\data\PackageOverrides.txt
+         Loading prune package data from PrunePackageData folder
+         Failed to load prune package data from PrunePackageData folder, loading from targeting packs instead
+         Looking for targeting packs in C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Ref
+         Pack directories found: C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.11
+         C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.12
+         Found package overrides file C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.12\data\PackageOverrides.txt
+     2>已完成生成项目“E:\dsh-launcher\src\DshShell\DshShell.csproj”(_GenerateProjectRestoreGraph 个目标)的操作。
+     1>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1)正在节点 1 上生成“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1:6) (_GenerateProjectRestoreGraph 个目标)。
+     1>AddPrunePackageReferences:
+         Loading prune package data from PrunePackageData folder
+         Failed to load prune package data from PrunePackageData folder, loading from targeting packs instead
+         Looking for targeting packs in C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref
+         Pack directories found: C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.11
+         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12
+         Found package overrides file C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\data\PackageOverrides.txt
+     1>已完成生成项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(_GenerateProjectRestoreGraph 个目标)的操作。
+     1>Restore:
+         X.509 证书链验证将使用 .NET 选择的默认信任存储进行代码签名。
+         X.509 证书链验证将使用 .NET 选择的默认信任存储进行时间戳。
+         资产文件未改变。跳过资产文件写入。路径: E:\dsh-launcher\tests\DshShell.Tests\obj\project.assets.json
+         资产文件未改变。跳过资产文件写入。路径: E:\dsh-launcher\src\DshShell\obj\project.assets.json
+         已还原 E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj (用时 63 毫秒)。
+         已还原 E:\dsh-launcher\src\DshShell\DshShell.csproj (用时 63 毫秒)。
+         
+         使用的 NuGet 配置文件:
+             C:\Users\<localUser>\AppData\Roaming\NuGet\NuGet.Config
+         
+         使用的源:
+             https://api.nuget.org/v3/index.json
+         所有项目均是最新的，无法还原。
+     1>已完成生成项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(Restore 个目标)的操作。
+   1:7>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”在节点 1 上(VSTest 个目标)。
+     1>BuildProject:
+         已开始生成，请等待...
+   1:7>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1:7)正在节点 1 上生成“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1:8) (默认目标)。
+   1:8>项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(1:8)正在节点 1 上生成“E:\dsh-launcher\src\DshShell\DshShell.csproj”(2:6) (默认目标)。
+     2>C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+     2>GenerateTargetFrameworkMonikerAttribute:
+       正在跳过目标“GenerateTargetFrameworkMonikerAttribute”，因为所有输出文件相对于输入文件而言都是最新的。
+       CoreGenerateAssemblyInfo:
+       正在跳过目标“CoreGenerateAssemblyInfo”，因为所有输出文件相对于输入文件而言都是最新的。
+       _GenerateSourceLinkFile:
+         Source Link 文件 "obj\Debug\net10.0-windows\DshShell.sourcelink.json" 是最新的。
+       CoreCompile:
+       正在跳过目标“CoreCompile”，因为所有输出文件相对于输入文件而言都是最新的。
+       _CreateAppHost:
+       正在跳过目标“_CreateAppHost”，因为所有输出文件相对于输入文件而言都是最新的。
+       _CopyOutOfDateSourceItemsToOutputDirectory:
+       正在跳过目标“_CopyOutOfDateSourceItemsToOutputDirectory”，因为所有输出文件相对于输入文件而言都是最新的。
+       GenerateBuildDependencyFile:
+       正在跳过目标“GenerateBuildDependencyFile”，因为所有输出文件相对于输入文件而言都是最新的。
+       GenerateBuildRuntimeConfigurationFiles:
+       正在跳过目标“GenerateBuildRuntimeConfigurationFiles”，因为所有输出文件相对于输入文件而言都是最新的。
+       CopyFilesToOutputDirectory:
+         DshShell -> E:\dsh-launcher\src\DshShell\bin\Debug\net10.0-windows\DshWeb.dll
+     2>已完成生成项目“E:\dsh-launcher\src\DshShell\DshShell.csproj”(默认目标)的操作。
+     1>C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+     1>GenerateTargetFrameworkMonikerAttribute:
+       正在跳过目标“GenerateTargetFrameworkMonikerAttribute”，因为所有输出文件相对于输入文件而言都是最新的。
+       CoreGenerateAssemblyInfo:
+       正在跳过目标“CoreGenerateAssemblyInfo”，因为所有输出文件相对于输入文件而言都是最新的。
+       _GenerateSourceLinkFile:
+         Source Link 文件 "obj\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.sourcelink.json" 是最新的。
+       CoreCompile:
+       正在跳过目标“CoreCompile”，因为所有输出文件相对于输入文件而言都是最新的。
+       _CopyOutOfDateSourceItemsToOutputDirectory:
+       正在跳过目标“_CopyOutOfDateSourceItemsToOutputDirectory”，因为所有输出文件相对于输入文件而言都是最新的。
+       GenerateBuildDependencyFile:
+       正在跳过目标“GenerateBuildDependencyFile”，因为所有输出文件相对于输入文件而言都是最新的。
+       GenerateBuildRuntimeConfigurationFiles:
+       正在跳过目标“GenerateBuildRuntimeConfigurationFiles”，因为所有输出文件相对于输入文件而言都是最新的。
+       CopyFilesToOutputDirectory:
+         DshShell.Tests -> E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+     1>已完成生成项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(默认目标)的操作。
+     1>BuildProject:
+         完成的生成。
+         
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)的测试运行
+总共 1 个测试文件与指定模式相匹配。
+E:\dsh-launcher\tests\DshShell.Tests\bin\Debug\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.12)
+[xUnit.net 00:00:00.09]   Discovering: DshShell.Tests
+[xUnit.net 00:00:00.29]   Discovered:  DshShell.Tests
+[xUnit.net 00:00:00.29]   Starting:    DshShell.Tests
+[xUnit.net 00:00:03.64]     DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps [FAIL]
+[xUnit.net 00:00:03.64]       Assert.Contains() Failure: Sub-string not found
+[xUnit.net 00:00:03.64]       String:    "{"ts":"2026-09-20 20:27:45.472","level":""···
+[xUnit.net 00:00:03.64]       Not found: "notice suppressed as duplicate"
+[xUnit.net 00:00:03.64]       Stack Trace:
+[xUnit.net 00:00:03.64]         E:\dsh-launcher\tests\DshShell.Tests\Regression_Issue25_WpnToastGuard.RealOs.cs(241,0): at DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps()
+[xUnit.net 00:00:03.64]         --- End of stack trace from previous location ---
+[xUnit.net 00:00:03.64]       Output:
+[xUnit.net 00:00:03.64]         started pid=30032 port=5661
+[xUnit.net 00:00:03.64]         alive=True after 45s
+[xUnit.net 00:00:03.64]         ---- dsh.log (notice lines) ----
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:46.111","level":"INFO","pid":30032,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:46.122","level":"INFO","pid":30032,"msg":"notice card self-test: presented=True"}
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:46.124","level":"INFO","pid":30032,"msg":"notice already on screen; request is a no-op","ctx":{"Title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","explicitRequest":false}}
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:47.436","level":"INFO","pid":30032,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting update notice"}
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:47.439","level":"INFO","pid":30032,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+[xUnit.net 00:00:03.64]         {"ts":"2026-09-20 20:27:47.441","level":"INFO","pid":30032,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+[xUnit.net 00:00:03.66]   Finished:    DshShell.Tests
+  失败 DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps [3 s]
+  错误消息:
+   Assert.Contains() Failure: Sub-string not found
+String:    "{"ts":"2026-09-20 20:27:45.472","level":""···
+Not found: "notice suppressed as duplicate"
+  堆栈跟踪:
+     at DshShell.Tests.Regression_Issue25_WpnToastGuard_RealOs.RealOs_DshWeb_NoticeCard_PresentsWithoutWpnApps() in E:\dsh-launcher\tests\DshShell.Tests\Regression_Issue25_WpnToastGuard.RealOs.cs:line 241
+--- End of stack trace from previous location ---
+  标准输出消息:
+ started pid=30032 port=5661
+ alive=True after 45s
+ ---- dsh.log (notice lines) ----
+ {"ts":"2026-09-20 20:27:46.111","level":"INFO","pid":30032,"msg":"notice displayed: dsh-launcher \u901A\u77E5\u81EA\u68C0","ctx":{"kind":"Info","ms":15000,"queued":0,"w":445,"h":84,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+ {"ts":"2026-09-20 20:27:46.122","level":"INFO","pid":30032,"msg":"notice card self-test: presented=True"}
+ {"ts":"2026-09-20 20:27:46.124","level":"INFO","pid":30032,"msg":"notice already on screen; request is a no-op","ctx":{"Title":"dsh-launcher \u901A\u77E5\u53BB\u91CD\u81EA\u68C0","explicitRequest":false}}
+ {"ts":"2026-09-20 20:27:47.436","level":"INFO","pid":30032,"msg":"dsh update 0.1.5-rc.2 available (local=\u003Cnull\u003E); prompting update notice"}
+ {"ts":"2026-09-20 20:27:47.439","level":"INFO","pid":30032,"msg":"update notice presented: dsh \u6709\u65B0\u7248\u672C / \u68C0\u6D4B\u5230 dsh 0.1.5-rc.2\uFF08\u5F53\u524D \uFF09\u3002\u70B9\u51FB\u6B64\u5904\u5728\u540E\u53F0\u4E0B\u8F7D\u66F4\u65B0\u3002"}
+ {"ts":"2026-09-20 20:27:47.441","level":"INFO","pid":30032,"msg":"update notice state marked on title bar: \uFF08\u6709\u66F4\u65B0\uFF09"}
+
+
+
+测试运行失败。
+测试总数: 1
+     失败数: 1
+总时间: 4.2301 秒
+       _VSTestConsole:
+         MSB4181: “VSTestTask”任务返回了 false，但未记录错误。
+     1>已完成生成项目“E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(VSTest 个目标)的操作 - 失败。
+
+生成失败。
+
+       “E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(VSTest 目标) (1:7) ->
+       “E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(默认目标) (1:8) ->
+       “E:\dsh-launcher\src\DshShell\DshShell.csproj”(默认目标) (2:6) ->
+       (ResolveAssemblyReferences 目标) -> 
+         C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+
+
+       “E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(VSTest 目标) (1:7) ->
+       “E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj”(默认目标) (1:8) ->
+         C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“WindowsBase”的不同版本之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”与“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”之间存在冲突。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”，因为它是主版本而“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”不是。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“WindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35”[] 的引用。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll”的项目文件项 Include 特性。 [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+       C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+
+    2 个警告
+    0 个错误
+
+已用时间 00:00:06.32

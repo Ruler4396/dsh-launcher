@@ -1,0 +1,130 @@
+== 0. »·¾³ÎÀÉú£¨Çå³ı¿Ç×¢ÈëµÄ DSH_* ½ø³Ì±äÁ¿£©==
+== 1. C# µ¥Ôª²âÊÔ (dotnet test) ==
+  æ­£åœ¨ç¡®å®šè¦è¿˜åŸçš„é¡¹ç›®â€?
+  æ‰€æœ‰é¡¹ç›®å‡æ˜¯æœ€æ–°çš„ï¼Œæ— æ³•è¿˜åŸã€?
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: å‘ç°æ— æ³•è§£æçš„â€œWindowsBaseâ€çš„ä¸åŒç‰ˆæœ¬ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     å·²é€‰æ‹©â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ï¼Œå› ä¸ºå®ƒæ˜¯ä¸»ç‰ˆæœ¬è€Œâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸æ˜¯ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºâ€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]çš„å¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºæˆ–å·²ç»Ÿä¸€åˆ°â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[] çš„å¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\SplashForm.cs(52,47): warning CS0108: â€œSplashForm.Layoutâ€éšè—ç»§æ‰¿çš„æˆå‘˜â€œControl.Layoutâ€ã€‚å¦‚æœæ˜¯æœ‰æ„éšè—ï¼Œè¯·ä½¿ç”¨å…³é”®å­?newã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Lifecycle\BootHealthMonitor.cs(296,46): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºç°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\RuntimeResolver.cs(116,51): warning CS8604: â€œTask<bool> RuntimeResolver.VerifySha256Async(string zipPath, string baseUrl, string version)â€ä¸­çš„å½¢å‚â€œbaseUrlâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\WebViewManager.cs(142,23): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºç°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(501,56): warning CS8604: â€œvoid Append(string line)â€ä¸­çš„å½¢å‚â€œlineâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Managers\ServiceManager.cs(502,55): warning CS8604: â€œvoid Append(string line)â€ä¸­çš„å½¢å‚â€œlineâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(102,33): warning CS8600: å°?null æ–‡æœ¬æˆ–å¯èƒ½çš„ null å€¼è½¬æ¢ä¸ºä¸å¯ä¸?null ç±»å‹ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(104,40): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºç°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(192,29): warning CS8600: å°?null æ–‡æœ¬æˆ–å¯èƒ½çš„ null å€¼è½¬æ¢ä¸ºä¸å¯ä¸?null ç±»å‹ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Windows\LegacyUpgradeCleanup.cs(194,27): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºç°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(255,38): warning CS8604: â€œTask TcpClient.ConnectAsync(string host, int port)â€ä¸­çš„å½¢å‚â€œhostâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\ShellLogic.cs(279,42): warning CS8604: â€œValueTask TcpClient.ConnectAsync(string host, int port, CancellationToken cancellationToken)â€ä¸­çš„å½¢å‚â€œhostâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2037,17): warning CS8602: è§£å¼•ç”¨å¯èƒ½å‡ºç°ç©ºå¼•ç”¨ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2077,60): warning CS8604: â€œvoid Program.DownloadDshUpdateStaged(Form form, string latest)â€ä¸­çš„å½¢å‚â€œformâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+E:\dsh-launcher\src\DshShell\Program.cs(2350,61): warning CS8604: â€œbool NpmHelpers.IsNpmNotFoundError(string tail)â€ä¸­çš„å½¢å‚â€œtailâ€å¯èƒ½ä¼ å…?null å¼•ç”¨å®å‚ã€?[E:\dsh-launcher\src\DshShell\DshShell.csproj]
+  DshShell -> E:\dsh-launcher\src\DshShell\bin\Release\net10.0-windows\DshWeb.dll
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: å‘ç°æ— æ³•è§£æçš„â€œWindowsBaseâ€çš„ä¸åŒç‰ˆæœ¬ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¹‹é—´å­˜åœ¨å†²çªã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     å·²é€‰æ‹©â€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ï¼Œå› ä¸ºå®ƒæ˜¯ä¸»ç‰ˆæœ¬è€Œâ€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€ä¸æ˜¯ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºâ€œWindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll]çš„å¼•ç”¨ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref\net10.0\WindowsBase.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.12\ref/net10.0/WindowsBase.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     ä¾èµ–äºæˆ–å·²ç»Ÿä¸€åˆ°â€œWindowsBase, Version=5.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35â€[] çš„å¼•ç”¨ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           å¯¼è‡´å¼•ç”¨â€œC:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dllâ€çš„é¡¹ç›®æ–‡ä»¶é¡?Include ç‰¹æ€§ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.401\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\<localUser>\.nuget\packages\microsoft.web.webview2\1.0.4129.50\buildTransitive\..\\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(187,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(204,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(216,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(235,20): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(255,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(274,20): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(299,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(534,18): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\ConfigWaitingStateOutcomes.cs(33,29): warning CS8619: ç±»å‹â€œTask<string>â€çš„å€¼ä¸­å¼•ç”¨ç±»å‹çš„ä¸º Null æ€§ä¸ç›®æ ‡ç±»å‹â€œTask<string?>â€ä¸åŒ¹é…ã€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\OrphanServiceOutcomes.cs(98,13): warning CS0219: å˜é‡â€œstartCallsâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»æœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\F11HookDecisionTests.cs(14,36): warning CS0414: å­—æ®µâ€œF11HookDecisionTests.SysKeyDownâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»æœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\F11HookDecisionTests.cs(13,36): warning CS0414: å­—æ®µâ€œF11HookDecisionTests.KeyDownâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»æœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\ServiceRestartCoordinatorRegressionTests.cs(17,17): warning CS0414: å­—æ®µâ€œServiceRestartCoordinatorRegressionTests._restartCallsâ€å·²è¢«èµ‹å€¼ï¼Œä½†ä»æœªä½¿ç”¨è¿‡å®ƒçš„å€?[E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Managers\UpdateFlowContractTests.cs(313,17): warning xUnit1012: Null should not be used for type parameter 'tail' of type 'string'. Use a non-null value, or convert the parameter to a nullable type. (https://xunit.net/xunit.analyzers/rules/xUnit1012) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Managers\UpdateFlowContractTests.cs(120,17): warning xUnit1012: Null should not be used for type parameter 'tail' of type 'string'. Use a non-null value, or convert the parameter to a nullable type. (https://xunit.net/xunit.analyzers/rules/xUnit1012) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Lifecycle\BootHealthMonitorTests.cs(524,26): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\RealOs\DshUpdatePipelineRealTests.cs(69,9): warning xUnit2020: Do not use Assert.True(false, message) to fail a test. Use Assert.Fail(message) instead. (https://xunit.net/xunit.analyzers/rules/xUnit2020) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\RecoveryOutcomes.cs(38,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\RealOs\DshUpdatePipelineRealTests.cs(200,90): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\SystemUpgradeOutcomeContracts.cs(246,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\Outcomes\SystemUpgradeOutcomeContracts.cs(291,56): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\V030FeaturesTests.cs(292,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(41,83): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(48,83): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(62,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(55,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(86,69): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(69,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(76,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(96,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(104,74): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(111,74): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(118,73): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(127,78): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(134,68): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(141,68): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+E:\dsh-launcher\tests\DshShell.Tests\UpdateCheckerTests.cs(153,69): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [E:\dsh-launcher\tests\DshShell.Tests\DshShell.Tests.csproj]
+  DshShell.Tests -> E:\dsh-launcher\tests\DshShell.Tests\bin\Release\net10.0-windows10.0.19041.0\DshShell.Tests.dll
+E:\dsh-launcher\tests\DshShell.Tests\bin\Release\net10.0-windows10.0.19041.0\DshShell.Tests.dll (.NETCoreApp,Version=v10.0)çš„æµ‹è¯•è¿è¡?
+æ€»å…± 1 ä¸ªæµ‹è¯•æ–‡ä»¶ä¸æŒ‡å®šæ¨¡å¼ç›¸åŒ¹é…ã€?
+
+å·²é€šè¿‡! - å¤±è´¥:     0ï¼Œé€šè¿‡:  1358ï¼Œå·²è·³è¿‡:     0ï¼Œæ€»è®¡:  1358ï¼ŒæŒç»­æ—¶é—? 1 m 16 s - DshShell.Tests.dll (net10.0)
+[ OK ] dotnet test Í¨¹ı£¨º¬ÕæÊµ»·¾³Ã°ÑÌ²âÊÔ£©
+
+== 2. ½Å±¾¾²Ì¬»Ø¹é¶ÏÑÔ ==
+[ OK ] dsh-web.cmd ´Ó½Å±¾Í¬Ä¿Â¼Æô¶¯ DshWeb.exe
+[ OK ] dsh-web.cmd ²»ÔÙÒıÓÃ²»´æÔÚµÄ bin\ ×ÓÄ¿Â¼
+[ OK ] dsh-web.cmd »áµ÷ÓÃ start-dsh.vbs
+[ OK ] uninstall-autostart.cmd ²»ÔÙÉ¾³ı¼Æ»®ÈÎÎñ
+[ OK ] uninstall É¾³ıÆô¶¯ÎÄ¼ş¼Ğ×ÔÆôÏî
+[ OK ] uninstall Í¬Ê±ÇåÀí¾É°æ dsh-autostart.vbs
+[ OK ] uninstall É¾³ı×ÀÃæ¿ì½İ·½Ê½
+[ OK ] uninstall Ìá¹©ÏÔÊ½ -CleanData Êı¾İÇåÀí¿ª¹Ø
+[ OK ] uninstall -CleanData Ö»Çå DSH_HOME\dsh-launcher£¨ÑÓ³ÙÀ©Õ¹£©
+[ OK ] uninstall -CleanData Ê¹ÓÃÑÓ³ÙÀ©Õ¹£¨·À½âÎöÆÚ¿ÕÖµÎóÉ¾ÅÌ¸ù£¬ÀúÊ·ÊÂ¹Ê»Ø¹é¶ÏÑÔ£©
+[ OK ] uninstall ÆôÓÃÑÓ³ÙÀ©Õ¹
+[ OK ] start-dsh.vbs Èı·ÖÖ§Í³Ò»ÒÔ bootMode Æô¶¯ web£¨host/port/--no-open Ò»ÖÂ£©
+[ OK ] start-dsh.vbs Ä¬ÈÏ bootMode Îª dsh web ×ÓÃüÁî
+[ OK ] start-dsh.vbs Ö§³Ö°²È«Ä£Ê½ --profile ×¢Èë£¨ADR-022£©
+[ OK ] start-dsh.vbs È«·ÖÖ§Ğ¯´ø --no-open£¨·ÀÏµÍ³ä¯ÀÀÆ÷µ¯Í¬´°£©
+[ OK ] start-dsh.vbs Ê¹ÓÃ¿Ç´«ÈëµÄÍ³Ò»ÈÕÖ¾Â·¾¶£¨DSH_LOG£©
+[ OK ] start-dsh.vbs »ØÍËÂ·¾¶Ò²ÊÇÍ³Ò» dsh.log
+[ OK ] start-dsh.vbs ¸ÄÎª×·¼ÓÄ£Ê½£¨8£©£¬²»ÔÙ½Ø¶Ï
+[ OK ] start-dsh.vbs ²»ÔÙĞ´¾ÉÊ½ .dsh-web.log
+[ OK ] start-dsh.vbs ÈÕÖ¾ÖØ¶¨Ïò¼ÓÒıºÅ£¨·ÀÓÃ»§Ãûº¬¿Õ¸ñ/Ôª×Ö·û×¢Èë£¬S5£©
+[ OK ] start-dsh.vbs °üº¬ npx »ØÍË£¨dsh ²»ÔÚ PATH Ê±£©
+[ OK ] check-prereq.cmd ¼ì²â .NET Desktop Runtime
+[ OK ] check-prereq.cmd ¼ì²â WebView2 Runtime
+[ OK ] check-prereq.cmd ¼ì²â Node.js 18+
+[ OK ] check-prereq.cmd Ö¸Òı --diagnose Õï¶Ïµ¼³ö
+[ OK ] check-prereq.cmd Ê¹ÓÃ CRLF »»ĞĞ£¨cmd Åú´¦ÀíÓ²ĞÔÒªÇó£©
+[ OK ] ¿Ç×ÔÆôĞ´ DshWeb.exe£¨À­¿Ç·½°¸£»ÊµÏÖÏÖ¾Ó AppEnvironment.EnsureAutoStartRequested£©
+[ OK ] ¿Ç×ÔÆô²»ÔÙÓÃ wscript+start-dsh.vbs
+[ OK ] ¿ÇÆô¶¯³õÊ¼»¯Í³Ò»ÈÕÖ¾
+[ OK ] ¿ÇÆô¶¯Ôç¶ÎÖ´ĞĞÈÕÖ¾ÂÖ×ª
+[ OK ] ¿ÇÖ§³Ö --diagnose Õï¶Ïµ¼³ö
+[ OK ] ¿Ç¼ì²â lifetime ²å¼ş£¨ÍĞÅÌ/ÅäÖÃ½µ¼¶£»Ì½²âÏÖ¾Ó AppEnvironment.ReadLifetimeMode£©
+[ OK ] ¿ÇÊµÏÖ dsh ÑÓ³ÙÓ¦ÓÃ¸üĞÂ£¨staged£»T2 ºóÔİ´æĞ´ÈëÎ»ÓÚ DshUpdateManager£©
+[ OK ] DshUpdateManager Ö»ÔÊĞí 1 ´¦Ö±½Ó¹¹ÔìÍ¨Öª½áÂÛ£¨µ±Ç° 1£¬Ö»Ó¦ÊÇ test-hook-ignored£©£ºÆäÓàÒ»ÂÉ¾­ Decide£¬·ñÔò¼ÙĞÅºÅ»áÈÆ¹ıÒÑ×îĞÂ²»ÌáÊ¾µÄÃÅ
+[ OK ] Í¨Öª²Ã¾ö±ØĞëÖ»ÓĞÒ»¸öÈë¿Ú UpdateNoticeFlowPolicy.Decide£¨µ±Ç° 1£©
+[ OK ] Ìø¹ı°æ±¾±ØĞëÒÔ°æ±¾´®£¨ÎŞ¼ÇÂ¼=null£©´«½ø Decide£¬²»µÃ´«±È½Ï½á¹û int¡ª¡ªÉÚ±øÓëÅĞ¾İ×²³µ»áÈÃ'´ÓÃ»Ìø¹ı¹ı'µÄÓÃ»§±»µ±³É'ÒÑÌø¹ı'
+[ OK ] Æô¶¯Ê§°Ü´¦Àí±ØĞë×ÉÑ¯ StartupFailureRecoveryPolicy£¨¾ÍĞ÷Ç°²å¼ş±ÀÀ£Ò²Òª¸ø°²È«Ä£Ê½Èë¿Ú£¬·ñÔòÓÃ»§Ö»Ê£Ò»¸ö'ÖªµÀÁË'£©
+[ OK ] Æô¶¯Ê§°Ü´ğ¸´ÓÃ°²È«Ä£Ê½ºó±ØĞë¾ÍµØÖØÅÜÁ÷Ë®Ïß£¨RetryInSafeMode£©£¬²»µÃÖ»ÁôÒ»¾ä'ÇëÄã×Ô¼ºÖØ¿ª'
+[31;1mWhere-Object: [0mE:\dsh-launcher\scripts\test.ps1:149[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m 149 | [0m $receiptHits = @($srcAll | [36;1mWhere-Object {[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                            ~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mÎŞ·¨½«×Ô±äÁ¿°ó¶¨µ½²ÎÊı 'Path'£¬ÒòÎªËüÎª null¡£[0m

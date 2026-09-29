@@ -1,0 +1,8 @@
+scene=[E:\dsh-launcher\sandbox\issue25-card] exe=[E:\dsh-launcher\src\DshShell\bin\Debug\net10.0-windows\DshWeb.exe]
+New-Item : 具有指定名称 E:\dsh-launcher\sandbox\issue25-card\home-e2e 的项已存在。
+所在位置 E:\dsh-launcher\sandbox\issue25-card\e2e-safemode.ps1:13 字符: 1
++ New-Item -ItemType Directory -Path $home_, $wv2, (Join-Path $home_ 'd ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceExists: (E:\dsh-launcher...5-card\home-e2e:String) [New-Item], IOException
+    + FullyQualifiedErrorId : DirectoryExist,Microsoft.PowerShell.Commands.NewItemCommand
+ 

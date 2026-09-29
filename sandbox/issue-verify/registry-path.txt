@@ -1,0 +1,4 @@
+MACHINE=C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot\bin;C:\Program Files\PowerShell\7;E:\Git\bin;C:\Users\<localUser>\AppData\Local\Microsoft\WindowsApps;E:\Microsoft VS Code\bin;C:\Program Files\CMake\bin;E:\MiKTeX\miktex\bin\x64\;C:\Windows\System32;C:\Program Files\Docker\Docker\resources\bin;C:\Users\<localUser>\.local\bin;C:\Program Files\GitHub CLI\;C:\Program Files\dotnet\;E:\Git\cmd
+USER=E:\Git\bin;E:\Git\cmd;E:\Microsoft VS Code\bin;C:\Users\<localUser>\.dotnet\tools;C:\Program Files\Pandoc\;E:\workbench;C:\Users\<localUser>\AppData\Local\Microsoft\WinGet\Packages\Schniz.fnm_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\<localUser>\AppData\Local\Microsoft\WinGet\Links;C:\Users\<localUser>\7-Zip;C:\Users\<localUser>\.dotnet\tools
+HKLM-NodeKey=True
+fnm-multishell-count=364

@@ -1,0 +1,6 @@
+GET / HTTP/1.1
+GET / HTTP/1.1
+GET /favicon.ico HTTP/1.1
+GET / HTTP/1.1
+GET /?safe_mode=1 HTTP/1.1
+GET /favicon.ico HTTP/1.1

@@ -1,0 +1,24 @@
+=== ×¢²á±í PATH£¨ĞÂ½ø³Ì / msiexec Êµ¼Ê¿´µ½µÄ£©===
+=== ±¾ shell µÄ PATH ÀïÓĞÃ»ÓĞ node.exe£¨»á±» profile ×¢ÈëÎÛÈ¾£©===
+  this-shell PATH has node dir: C:\Users\<localUser>\AppData\Local\fnm_multishells\19068_1789891024642 | C:\Users\<localUser>\AppData\Local\fnm_multishells\22856_1789891024445
+=== ×¢²á±í PATH ÀïÄÜ²»ÄÜÕÒµ½ node.exe ===
+  NONE ¡ª¡ª ´Ó×¢²á±í PATH ÕÒ²»µ½ÈÎºÎ node.exe
+=== ¹Ù·½°²×°Æ÷ / fnm / nvm µÄÂäµã ===
+  C:\Program Files\nodejs\node.exe -> False
+  C:\Users\<localUser>\AppData\Roaming\fnm -> True
+  C:\Users\<localUser>\AppData\Local\fnm -> False
+  C:\Users\<localUser>\.fnm -> False
+  C:\Users\<localUser>\AppData\Roaming\nvm -> False
+  C:\Users\<localUser>\AppData\Roaming\npm -> False
+=== fnm µÄ node-versions Êµ¼ÊÄÚÈİ ===
+  root=C:\Users\<localUser>\AppData\Roaming\fnm\node-versions
+    .downloads installation\node.exe -> False
+    v24.21.0 installation\node.exe -> True
+    alias default
+    alias lts-latest
+=== ×¢²á±í Node.js\InstallPath£¨MSI µÄ¶µµ×ÅĞ¾İ£©===
+[31;1mWrite-: [0mE:\dsh-launcher\sandbox\issue-verify\probe-node-detect.ps1:45[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  45 | [0m     if (Test-Path $k) { [36;1mWrite-[0m "  $k -> $((Get-ItemProperty $k).Insta ¡­[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                         ~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mÊõÓï 'Write-' ²»»á±»Ê¶±ğÎª cmdlet¡¢º¯Êı¡¢½Å±¾ÎÄ¼ş»ò¿ÉÖ´ĞĞ³ÌĞòµÄÃû³Æ¡£ Çë¼ì²éÃû³ÆµÄÆ´Ğ´»òÑéÖ¤Â·¾¶ÊÇ·ñÕıÈ·(Èç¹û°üº¬Â·¾¶)£¬È»ºóÖØÊÔ¡£[0m

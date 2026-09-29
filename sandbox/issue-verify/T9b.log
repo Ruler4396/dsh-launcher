@@ -1,0 +1,15 @@
+  pid=4716 port=9103 home=E:\dsh-launcher\sandbox\issue-verify\scene-T9\home
+  service: HEALTHY
+  click (1610,136) main window close (X) #1
+  after close: windows visible = 0, host alive = True (Tray mode expects 0 + True)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T9-0-after-close.png
+top-level windows: 22
+Shell_TrayWnd=True NotifyIconOverflowWindow=False
+  opening overflow via [系统升级的通知区域] at 27,861
+  (15 descendants under tray)
+  toolbars recorded: 2
+  sweeping 2 toolbar area(s) for pid 4716 menu 136x60
+  sweep found no menu for the target pid
+  tray-probe rc=3
+[SKIP] T9 :: tray menu window (136x60) not found; probe rc=3 — 需要人工把图标拖到可见区再测
+  cleanup taskkill /T /F pid=4716 left=0

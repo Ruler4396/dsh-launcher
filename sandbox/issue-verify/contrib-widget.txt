@@ -1,0 +1,9 @@
+CONTAINERS(nearest last):
+<h2>
+<h2>
+<div data-view-component="true" class="Box-footer">
+<div class="tmp-mb-3">
+<h3 data-view-component="true" class="mb-2 tmp-mb-2">
+
+RAW BEFORE:
+sh-launcher-windows-0.5.0.zip 72d3f383e756afc8d6b2a2efd97f808ca80fe552d4c75103a5c35852019b2a2d dsh-launcher-0.5.0.msi"><pre lang="text" class="notranslate"><code>179d4a958b266a09b4446818856e7513ea8fadfc8538a3b21c0500c6ec819485 dsh-launcher-windows-0.5.0.zip 72d3f383e756afc8d6b2a2efd97f808ca80fe552d4c75103a5c35852019b2a2d dsh-launcher-0.5.0.msi </code></pre></div> <hr> <h2>安装与卸载 / Install & Uninstall</h2> <p><strong>MSI 安装包（推荐新手）</strong>：双击安装，向导里可勾选是否开机自启；自动创建桌面与开始菜单快捷方式（含"卸载 dsh-launcher"）。卸载：设置 → 应用 → dsh-launcher → 卸载。</p> <p><strong>便携版 ZIP</strong>：解压即用，双击 <code>DshWeb.exe</code>；删文件夹即卸载（自启/快捷方式用 <code>uninstall-autostart.cmd</code> 清理）。ZIP 为框架依赖发布，<strong>解压后建议先运行同目录 <code>check-prereq.cmd</code> 确认已安装 .NET Desktop Runtime 10 与 Node.js 18+</strong>（MSI 安装包自带前置检查，无需手动）。</p> <blockquote> <p>MSI 与 ZIP 内容完全相同；区别只在安装方式：MSI 有标准安装/卸载流程，适合新手；ZIP 免安装，适合便携党。<br> The MSI and ZIP contain the same files; the MSI adds a standard install/uninstall flow for new users, the ZIP is portable and install-free.</p> </blockquote></div> </div> <div data-view-component="true" class="Box-footer"> <div class="tmp-mb-3"> <h3 data-view-component="true" class="mb-2 tmp-mb-2">

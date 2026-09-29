@@ -1,0 +1,29 @@
+  pre-condition: .dsh-safe exists = False (must be False)
+  pid=17024 port=5335 home=E:\dsh-launcher\sandbox\issue-verify\scene-T567\home
+  T7 ensure hit: rebuilt before launch
+  .dsh-safe/package.json after ensure = True
+[PASS] T7 :: missing sticky profile rebuilt -> launched with --profile .dsh-safe -> UI HEALTHY (user can reach the exit)
+  sticky card 445x182 at (1463,886)
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T567-1-sticky.png
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T567-2-after-60s.png
+[PASS] T5 :: sticky card still on screen 60s after display (no auto-dismiss)
+  click (1685,1048) sticky card action row
+  exit result: exit-safe-mode: identity-driven start returned True
+  shot -> E:\dsh-launcher\sandbox\issue-verify\shots\T567-3-after-exit.png
+  safe-mode.json before: {"active":true,"tier":1}
+  safe-mode.json after : {"active":false,"tier":1,"consecutiveBootFailures":0}
+    | {"ts":"2026-09-19 22:30:38.170","level":"INFO","pid":17024,"msg":"SAFEMODE: sticky profile missing \u2192 rebuilt before launch"}
+    | {"ts":"2026-09-19 22:30:38.851","level":"INFO","pid":17024,"msg":"service start via identity (SAFE profile): node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\28216_1789826119608\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 --profile .dsh-safe --host 127.0.0.1 --port 5335 --no-open"}
+    | {"ts":"2026-09-19 22:30:45.031","level":"INFO","pid":17024,"msg":"notice displayed: dsh \u5DF2\u4EE5\u5B89\u5168\u6A21\u5F0F\u542F\u52A8","ctx":{"kind":"Urgent","ms":0,"queued":0,"w":445,"h":182,"dpi":96,"textW":400,"pad":16,"gap":8,"accent":5,"em":"16/14"}}
+    | {"ts":"2026-09-19 22:31:59.331","level":"INFO","pid":17024,"msg":"SAFEMODE: user exited safe mode via notice \u2192 restarting service with normal profile"}
+    | {"ts":"2026-09-19 22:31:59.341","level":"INFO","pid":17024,"msg":"exit-safe-mode: stopping service"}
+    | {"ts":"2026-09-19 22:32:01.878","level":"INFO","pid":17024,"msg":"service start via identity: node.exe \u0022C:\\Users\\<localUser>\\AppData\\Local\\fnm_multishells\\28216_1789826119608\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js\u0022 web --host 127.0.0.1 --port 5335 --no-open"}
+    | {"ts":"2026-09-19 22:32:01.878","level":"INFO","pid":17024,"msg":"service start via identity"}
+    | {"ts":"2026-09-19 22:32:01.879","level":"INFO","pid":17024,"msg":"exit-safe-mode: identity-driven start returned True"}
+[PASS] T6 :: real click exited safe mode: normal profile relaunched (web subcommand), sticky flag cleared
+  cleanup taskkill /T /F pid=17024 left=0
+
+==== summary ====
+PASS   T7     missing sticky profile rebuilt -> launched with --profile .dsh-safe -> UI HEALTHY (user can reach the exit)
+PASS   T5     sticky card still on screen 60s after display (no auto-dismiss)
+PASS   T6     real click exited safe mode: normal profile relaunched (web subcommand), sticky flag cleared
