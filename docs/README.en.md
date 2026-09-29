@@ -1,6 +1,9 @@
 # dsh-launcher
 
-> ⚠️ **Sunset notice**: An official desktop app is in the works. Once it ships, this project will stop being updated along with it — please be aware.
+> ⚠️ **Discontinued (2026-09-29)**: the official DeepSeek Harness desktop app has launched →
+> **<https://www.deepseek.com/download/>** , please switch to it. This project stops being updated:
+> **v0.5.3 is the final release** (an announcement only — it ships no installer), and issues and PRs
+> will no longer receive replies. The source, docs, tests and past releases stay publicly readable.
 
 <div align="center">
 
